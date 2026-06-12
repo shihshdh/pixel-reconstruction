@@ -1,0 +1,24 @@
+{
+  "name": "ruhua",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@mkkellogg/gaussian-splats-3d": "0.4.7",
+    "mp4-muxer": "5.2.2",
+    "mp4-muxer": "^5.2.2",
+    "next": "15.1.6",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "three": "0.168.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/three": "0.168.0",
+    "typescript": "^5"
+  }
+}
