@@ -2,20 +2,15 @@
 
 照片 → Apple SHARP 高斯泼溅 → 3D 场景 + 云端渲染的运镜视频。
 
-整条链路长这样：
+整条链路
 
-```
-你的浏览器                Modal 云端 (A10G GPU)
+浏览器                Modal 云端 (A10G GPU)
 ┌──────────┐  POST /generate   ┌──────────────────────┐
 │ Next.js  │ ────────────────► │ sharp predict → .ply │
 │ 前端     │  轮询 /status     │ sharp render  → .mp4 │
 │          │ ◄──────────────── │ 存进云端硬盘(Volume) │
 │ 3D查看器 │  GET /file/...    └──────────────────────┘
 └──────────┘ ◄──── .ply / .mp4 直接拉回来
-```
-
-前端不碰 GPU，GPU 不管页面，中间就三个 HTTP 接口。没有数据库、没有对象存储、
-没有要配的第三方 token——只有 Modal 一个
 
 ---
 
@@ -26,8 +21,7 @@
 ---
 
 ## 第 1 步 · 装基础工具
-
-需要两样东西：**Node.js**（跑前端）和 **Python**（用来操作 Modal）。
+**Node.js**（跑前端）和 **Python**（用来操作 Modal）。
 
 1. Node.js：去 https://nodejs.org 下载 **LTS 版**，一路下一步安装。
 2. Python：去 https://www.python.org/downloads/ 下载 3.11 或 3.12。
