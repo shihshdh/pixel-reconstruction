@@ -81,7 +81,7 @@ $env:Path += ";$env:APPDATA\Python\Python312\Scripts"
 
 ---
 
-## 第 3 步 · 部署 GPU 后端（动手 1 分钟，等待 10~20 分钟）
+## 第 3 步 · 部署 GPU 后端
 
 在项目根目录（能看到 `backend` 和 `app` 两个文件夹的那层）执行：
 
