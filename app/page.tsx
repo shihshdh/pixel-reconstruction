@@ -20,7 +20,7 @@ import PixelLoader from "@/components/PixelLoader";
 import { MorphIcon } from "morphicons/react";
 import { ICON } from "@/lib/icons";
 import AuthorContact from "@/components/AuthorContact";
-import { isDesktopApp, openWorksFolder } from "@/lib/desktop";
+import { DESKTOP_DOWNLOAD, isDesktopApp, openWorksFolder } from "@/lib/desktop";
 // 现有 API（lib/api.ts）——创作/工作室/修图都用它
 import {
   submitPhoto, checkStatus, editImage, requestRerender,
@@ -175,7 +175,8 @@ const GLOBAL_CSS = `
 .nav-download svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round;}
 .nav-download:hover{background:color-mix(in srgb,currentColor 5%,transparent);border-color:color-mix(in srgb,currentColor 8%,transparent);}
 .nav-download:active{transform:scale(.96);}
-@media(max-width:1023px){.nav-download{display:none;}}
+@media(max-width:1023px){.nav-download{padding:0;width:32px;justify-content:center;}.nav-download span{display:none;}}
+@media(max-width:767px){.nav-download{display:none;}}
 .gallery-folder{margin-left:10px;padding:4px 12px;border:1px solid var(--line);border-radius:99px;background:var(--card);color:var(--ink);font-size:12px;}
 @media(max-width:640px){
   .nav-bar{padding:0 14px;height:50px;}
@@ -604,9 +605,6 @@ function DropZone({ onFile }) {
 // ============================================================
 // 顶部导航
 // ============================================================
-// Windows 客户端安装包：随站点一起发布（见 desktop/README.md）。
-const DESKTOP_DOWNLOAD = "/download/PixelReconstruction-Setup.exe";
-
 function DesktopDownload() {
   // 在客户端里（__PIXEL_DESKTOP__ 由客户端注入）不再提示下载
   const [show, setShow] = useState(false);

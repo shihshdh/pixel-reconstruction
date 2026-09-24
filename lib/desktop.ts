@@ -12,6 +12,9 @@ function api(): Internals | undefined {
 
 export const isDesktopApp = () => !!api();
 
+/** Windows 客户端安装包：随站点一起发布（见 desktop/README.md）。 */
+export const DESKTOP_DOWNLOAD = "/download/PixelReconstruction-Setup.exe";
+
 /** 每件作品一个文件夹，名字只由任务 ID 决定，工作室导出的视频也能放回同一处。 */
 export const workFolder = (jobId: string) => "scene_" + jobId.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
 

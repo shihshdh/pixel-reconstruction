@@ -46,3 +46,5 @@
 .invitationSub{translate:0 calc((1 - var(--reveal)) * -12px)}
 .poster{scale:calc(1 + var(--depth) * .05)}
 @media(prefers-reduced-motion:reduce){.eyebrow,.intro h1,.intro p,.invitationNote,.invitationSub{translate:none}.poster{scale:none}}
+
+.headerActions{display:flex;align-items:center;gap:10px}.download{color:inherit;text-decoration:none;display:inline-flex;align-items:center}

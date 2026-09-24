@@ -1,5 +1,6 @@
 "use client";
 
+import { DESKTOP_DOWNLOAD, isDesktopApp } from "@/lib/desktop";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import dynamic from "next/dynamic";
 import type { LandingLoadProgress, LandingSceneStatus } from "./LandingSplat";
@@ -9,6 +10,9 @@ import styles from "./LandingExperience.module.css";
 const LandingSplat = dynamic(() => import("./LandingSplat"), { ssr: false });
 
 export default function LandingExperience({ onEnter, onExitStart, exitDuration = 540 }: { onEnter: () => void; onExitStart?: () => void; exitDuration?: number }) {
+  // 客户端里和手机上不显示下载入口
+  const [showDownload, setShowDownload] = useState(false);
+  useEffect(() => { setShowDownload(!isDesktopApp() && !matchMedia("(max-width: 767px)").matches); }, []);
   const scrollRef = useRef<HTMLDivElement>(null);
   const exitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const quietTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -95,7 +99,10 @@ export default function LandingExperience({ onEnter, onExitStart, exitDuration =
             <BrandMark size={40} />
             <span>Pixel<br />Reconstruction<small>SINGLE-IMAGE 3D</small></span>
           </div>
+          <div className={styles.headerActions}>
+          {showDownload && <a className={`${styles.skip} ${styles.download}`} href={DESKTOP_DOWNLOAD} download>下载 Windows 客户端 <span aria-hidden="true">↓</span></a>}
           <button className={styles.skip} onClick={enter} onPointerEnter={restoreCopy} onFocus={restoreCopy}>直接进入 <span aria-hidden="true">↗</span></button>
+          </div>
         </header>
 
         <div className={styles.intro} aria-hidden={reveal > .5}>
