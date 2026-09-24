@@ -1,37 +1,71 @@
-# Pixel Reconstruction
+<div align="center">
 
-把一张照片重建成可以在浏览器里浏览的 3D 高斯泼溅（Gaussian Splatting）场景。
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/wordmark-dark.svg">
+  <img src="docs/images/wordmark.svg" alt="Pixel Reconstruction" width="460">
+</picture>
 
-在线地址：<https://pixel-reconstruction.netlify.app>
+<p>把一张照片重建成可以在浏览器里走进去的 3D 场景。</p>
 
-重建使用 Apple 的 [SHARP](https://github.com/apple/ml-sharp) 模型，在云端 GPU 上完成单图推理；查看、运镜和视频导出都在浏览器本地进行。
+<p>
+  <a href="https://pixel-reconstruction.netlify.app"><img src="https://img.shields.io/badge/%E5%9C%A8%E7%BA%BF%E4%BD%93%E9%AA%8C-pixel--reconstruction.netlify.app-087bf0?style=flat-square" alt="在线体验"></a>
+</p>
+<p>
+  <img src="https://img.shields.io/badge/Next.js-15-000000?style=flat-square&logo=nextdotjs" alt="Next.js 15">
+  <img src="https://img.shields.io/badge/three.js-0.168-000000?style=flat-square&logo=threedotjs" alt="three.js">
+  <img src="https://img.shields.io/badge/Apple-SHARP-555555?style=flat-square&logo=apple" alt="Apple SHARP">
+  <img src="https://img.shields.io/badge/GPU-Beam%20%C2%B7%20RTX%204090-76b900?style=flat-square&logo=nvidia&logoColor=white" alt="Beam RTX 4090">
+  <img src="https://img.shields.io/badge/%E9%83%A8%E7%BD%B2-Netlify-00c7b7?style=flat-square&logo=netlify&logoColor=white" alt="Netlify">
+</p>
+
+<img src="docs/images/hero.jpg" alt="首页：由单张图片重建的 3D 场景" width="100%">
+
+</div>
+
+<br>
+
+重建使用 Apple 的 [SHARP](https://github.com/apple/ml-sharp) 模型，在云端 GPU 上完成单图推理，一次大约一分钟。查看、运镜和视频导出都在浏览器本地完成，不需要安装任何软件。
+
+## 效果
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/develop.jpg" alt="显影过程"></td>
+    <td width="50%"><img src="docs/images/studio.jpg" alt="工作室"></td>
+  </tr>
+  <tr>
+    <td><b>显影</b><br>上传后，云端开始重建。等待时，照片以粒子形式由中心向外逐步聚合。</td>
+    <td><b>工作室</b><br>在重建出的场景里自由移动，编排镜头序列，导出 MP4。</td>
+  </tr>
+</table>
+
+<p align="center"><img src="docs/images/companion.jpg" alt="助手的几种状态" width="720"></p>
+<p align="center"><sub>页面右下角的助手会随时间更换道具与动作，也可以回答使用问题。</sub></p>
 
 ## 功能
 
-- **重建**：上传一张照片（JPG / PNG / WebP / HEIC，20MB 以内），云端生成高斯泼溅场景，一般在一分钟左右完成。首次唤醒 GPU 会更慢。
-- **查看**：鼠标拖动转向、滚轮推拉。电脑上可用 W/A/S/D 前后左右移动，空格上升，Shift 下降。
-- **运镜与导出**：内置 14 种镜头轨迹，可以串成一条序列预览，再用 WebCodecs 在本地编码成 MP4。
-- **修图后重建**：用自然语言调用豆包 Seedream 修图、扩图，满意后用新图重新生成场景。
-- **作品库**：原图和场景文件保存在浏览器 IndexedDB 中，离线也能打开。
-- **助手**：页面右下角的 Live2D 形象，通过 DeepSeek 回答使用问题。用户同意后，它可以读取当前页面或截图。
+| | |
+| --- | --- |
+| **重建** | 支持 JPG、PNG、WebP、HEIC，20MB 以内。首次唤醒 GPU 需要多等一会儿 |
+| **查看** | 拖动转向，滚轮推拉；电脑上用 W/A/S/D 前后左右移动，空格上升，Shift 下降 |
+| **运镜** | 14 种镜头轨迹，可以串成一条序列预览，再用 WebCodecs 在本地编码成 MP4 |
+| **修图后重建** | 用自然语言调用豆包 Seedream 修图、扩图，满意后用新图重新生成场景 |
+| **作品库** | 原图和场景保存在浏览器 IndexedDB 中，离线也能打开；下载支持断点续传 |
+| **助手** | Live2D 形象，通过 DeepSeek 回答使用问题；用户同意后可以读取当前页面或截图 |
 
 ## 架构
 
-```
-浏览器（Next.js 静态站点，托管在 Netlify）
-  │
-  ├─ /scene-file/*  ──  Netlify Edge Function，同源转发场景文件
-  │
-  └─ HTTPS  ──►  Beam CPU 网关（FastAPI）
-                    │  任务授权、签名下载、修图、助手对话
-                    ▼
-                 Beam GPU 队列（RTX 4090，按需启动）
-                    │  SHARP 推理 → PLY → 浏览器用 .splat
-                    ▼
-                 持久卷：任务状态、生成结果、模型权重缓存
+```mermaid
+flowchart LR
+    B["浏览器<br/>Next.js 静态站点"] -->|上传 / 轮询 / 修图| API["Beam CPU 网关<br/>FastAPI"]
+    B -->|/scene-file/*| EF["Netlify<br/>Edge Function"]
+    EF -->|签名下载| API
+    API -->|仅生成时唤醒| GPU["Beam GPU 队列<br/>RTX 4090 · SHARP"]
+    API --- V[("持久卷<br/>任务 · 结果 · 权重缓存")]
+    GPU --- V
 ```
 
-- 只有“生成”和“重新生成”会唤醒 GPU。浏览、轮询状态、下载和修图都在 CPU 网关上处理。
+- 只有“生成”和“重新生成”会唤醒 GPU。浏览、轮询、下载和修图都在 CPU 网关上处理。
 - GPU 和 CPU 服务都配置为最少 0 个实例、不保温，没有请求时自动缩容。
 - 每个任务有独立的随机 Token，服务端只保存哈希。文件通过 24 小时有效的签名链接下载。
 
@@ -48,7 +82,7 @@ backend/local_server.py  本地 GPU 后端（可选），说明见 backend/本�
 netlify/edge-functions/  场景文件转发
 public/                  首页示例场景、演示视频、品牌素材、Live2D 模型
 scripts/                 发布检查、部署辅助与浏览器验证脚本
-docs/                    开发与验收记录
+docs/                    开发记录与文档图片
 ```
 
 ## 本地运行
@@ -69,7 +103,8 @@ npm run dev
 
 ## 部署
 
-**前端**
+<details>
+<summary><b>前端 · Netlify</b></summary>
 
 ```sh
 npm run build                     # 输出到 out/
@@ -79,7 +114,10 @@ netlify deploy --dir=out --prod
 
 发布时要连同 `netlify/edge-functions/` 一起部署，只上传 `out/` 的静态文件是不够的。更换 CPU 网关地址时，要同时修改 `.env.local` 和 `netlify/edge-functions/scene-file.ts` 里写死的网关地址。
 
-**后端**
+</details>
+
+<details>
+<summary><b>后端 · Beam</b></summary>
 
 在 Linux 或 WSL 环境中安装 `beam-client` 并登录，然后在 `backend/beam/` 目录下执行：
 
@@ -90,12 +128,17 @@ beam deploy beam_app.py:api
 
 需要配置哪些 Secrets、如何限制额度，见 [backend/beam/README.md](backend/beam/README.md)。
 
-**测试**
+</details>
+
+<details>
+<summary><b>测试</b></summary>
 
 ```sh
 npm run build                                                        # 类型检查与构建
 python -m unittest discover -s backend/beam -p "test_*.py"           # 后端离线测试
 ```
+
+</details>
 
 ## 已知限制
 

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="112" viewBox="0 0 640 112" fill="none">
+  <title>Pixel Reconstruction</title>
+  <g transform="translate(12 16) scale(1.25)" color="#4ea3ff">
+    <rect x="4" y="12" width="9" height="9" rx="1.5" fill="currentColor" opacity=".36"/>
+    <rect x="17" y="5" width="9" height="9" rx="1.5" fill="currentColor" opacity=".64"/>
+    <rect x="4" y="27" width="9" height="9" rx="1.5" fill="currentColor" opacity=".64"/>
+    <rect x="4" y="42" width="9" height="9" rx="1.5" fill="currentColor"/>
+    <path d="M37 12 58 24V47L37 59 17 47V24L37 12Z" fill="currentColor" fill-opacity=".08" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/>
+    <path d="m17 24 20 12 21-12M37 36v23" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/>
+    <path d="m37 12 21 12-21 12-20-12 20-12Z" fill="currentColor" fill-opacity=".18"/>
+    <path d="M17 32v15l12 7V40L17 32Z" fill="currentColor" fill-opacity=".48"/>
+  </g>
+  <text x="110" y="64" font-family="Arial,Helvetica,sans-serif" font-size="39" font-weight="600" letter-spacing="-1.2" fill="#e8eaee">Pixel Reconstruction</text>
+  <text x="112" y="88" font-family="Arial,Helvetica,sans-serif" font-size="10" letter-spacing="3.6" fill="#9aa3af">SINGLE-IMAGE 3D RECONSTRUCTION</text>
+</svg>
