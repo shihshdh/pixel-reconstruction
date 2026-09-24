@@ -6,6 +6,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import type { AssistMood } from "@/lib/api";
+import { detectTier } from "@/lib/perf";
 
 export type WhaleStageHandle = {
   setMood: (mood: AssistMood) => void;
@@ -155,6 +156,8 @@ const WhaleStage = forwardRef<WhaleStageHandle, Props>(function WhaleStage({ wid
           powerPreference: "low-power",
         });
         appRef.current = app;
+        // 低档硬件上助手动画限 30 帧，把性能留给 3D 场景
+        if (detectTier() === "low") app.ticker.maxFPS = 30;
         const model = await Live2DModel.from(MODEL_URL, { autoInteract: false });
         if (disposed) { model.destroy(); return; }
         modelRef.current = model;

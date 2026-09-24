@@ -1,5 +1,5 @@
-// Pixel Reconstruction 的 Windows 客户端：一个装着线上站点的原生窗口。
-// 站点更新后客户端自动是最新版；外部链接交给系统浏览器打开。
+// Pixel Reconstruction 的 Windows 客户端。网站的静态文件打包在客户端里，从本地加载；
+// 只有生成、修图、下载作品这些 API 请求走网络。外部链接交给系统浏览器打开。
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::path::PathBuf;
@@ -148,6 +148,15 @@ fn main() {
                 .min_inner_size(960.0, 640.0)
                 .center()
                 .background_color(tauri::window::Color(246, 244, 239, 255))
+                // 让网页自己处理拖进来的照片（否则窗口层面会先截走文件拖放）
+                .disable_drag_drop_handler()
+                // 硬件加速：双显卡时用独显，驱动在黑名单里也不退回软件渲染，
+                // 光栅化和视频帧走 GPU。前一段是 wry 的默认参数，覆盖时必须保留。
+                .additional_browser_args(concat!(
+                    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
+                    " --force_high_performance_gpu --ignore-gpu-blocklist",
+                    " --enable-gpu-rasterization --enable-zero-copy"
+                ))
                 // 让站点知道自己运行在客户端里（比如隐藏“下载客户端”入口）
                 .initialization_script(concat!(
                     "window.__PIXEL_DESKTOP__ = { version: '",

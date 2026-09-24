@@ -1,5 +1,7 @@
 "use client";
 
+import { isDesktopApp } from "@/lib/desktop";
+import { perfProfile } from "@/lib/perf";
 import { useEffect, useRef } from "react";
 import { INTRO_SCENE_START } from "@/lib/intro";
 
@@ -144,7 +146,9 @@ export default function LandingSplat({ depth, reducedMotion, onStatus, onInterac
       arm(STALL_MS);
       try {
         const navigatorInfo = navigator as Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };
-        const low = window.innerWidth < 768 || (navigatorInfo.deviceMemory || 8) <= 4 || navigatorInfo.connection?.saveData;
+        // 客户端里文件在本地，不必为流量省；只有低档硬件才用轻量版首页场景
+        const desktopProfile = isDesktopApp() ? perfProfile() : null;
+        const low = desktopProfile ? desktopProfile.tier === "low" : window.innerWidth < 768 || (navigatorInfo.deviceMemory || 8) <= 4 || navigatorInfo.connection?.saveData;
         // Both .ksplat files are served with a one-year immutable cache (netlify.toml).
         // Bump v= whenever an asset changes, or returning visitors keep the old scene.
         const path = (low ? "/scene/landing-lo.ksplat" : "/scene/landing.ksplat") + "?v=clarity-2";
@@ -153,8 +157,8 @@ export default function LandingSplat({ depth, reducedMotion, onStatus, onInterac
         if (!asset.ok) throw new Error("Scene unavailable");
         const [GS, THREE] = await Promise.all([import("@mkkellogg/gaussian-splats-3d"), import("three")]);
         if (disposed) return;
-        renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: "low-power" });
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, low ? 1.25 : 1.5));
+        renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: isDesktopApp() ? "high-performance" : "low-power" });
+        renderer.setPixelRatio(desktopProfile ? desktopProfile.maxPixelRatio : Math.min(window.devicePixelRatio || 1, low ? 1.25 : 1.5));
         renderer.setClearColor(0x171710, 1);
         renderer.setSize(mount.clientWidth, mount.clientHeight);
         renderer.domElement.setAttribute("aria-label", "由照片生成的三维高斯场景");

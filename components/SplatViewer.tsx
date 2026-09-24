@@ -6,6 +6,7 @@ import { prefersReduced, useFlipList } from "@/lib/motion";
 import { downloadJobFile } from "@/lib/api";
 import { downloadAsset, type DownloadProgress } from "@/lib/asset-download";
 import { isDesktopApp, openWorksFolder, saveWorkFile, workFolder } from "@/lib/desktop";
+import { createFrameGovernor, perfProfile, readPerfChoice, savePerfChoice, type PerfChoice, type PerfProfile } from "@/lib/perf";
 
 /**
  * SplatViewer 2.0
@@ -244,6 +245,28 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
 
   const nameOf = (p: Preset) => PRESETS.find((x) => x.id === p)!.name;
 
+  // ---- 画质档位：按硬件自动选，也可以手动指定；运行中按帧率微调渲染分辨率 ----
+  const [perfChoice, setPerfChoice] = useState<PerfChoice>("auto");
+  const [perfInfo, setPerfInfo] = useState<{ tier: string; ratio: number } | null>(null);
+  const profileRef = useRef<PerfProfile | null>(null);
+  const governorRef = useRef<ReturnType<typeof createFrameGovernor> | null>(null);
+  const applyPixelRatio = (ratio: number) => {
+    const renderer = rendererRef.current, mount = mountRef.current;
+    if (!renderer || !mount) return;
+    renderer.setPixelRatio(ratio);
+    renderer.setSize(mount.clientWidth || 960, mount.clientHeight || 600);
+    viewerRef.current?.forceRenderNextFrame?.();
+    setPerfInfo(info => ({ tier: profileRef.current?.tier || info?.tier || "", ratio }));
+  };
+  useEffect(() => { setPerfChoice(readPerfChoice()); }, []);
+  function choosePerf(choice: PerfChoice) {
+    setPerfChoice(choice); savePerfChoice(choice);
+    const profile = perfProfile(choice);
+    profileRef.current = profile;
+    governorRef.current?.set(profile.maxPixelRatio);
+    applyPixelRatio(profile.maxPixelRatio);
+  }
+
   // ---- 键盘飞行：W/S 前后，A/D 左右，空格上升，Shift 下降 ----
   const heldKeysRef = useRef(new Set<string>());
   const readyRef = useRef(false);
@@ -411,10 +434,15 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
         threeRef.current = THREE;
 
         const mount = mountRef.current;
-        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const profile = perfProfile();
+        profileRef.current = profile;
+        const dpr = profile.maxPixelRatio;
+        governorRef.current = createFrameGovernor(() => profileRef.current || profile, dpr);
+        setPerfInfo({ tier: profile.tier, ratio: dpr });
         const W = mount.clientWidth || 960;
         const H = mount.clientHeight || 600;
         const renderer = new THREE.WebGLRenderer({
+          powerPreference: "high-performance", // 双显卡电脑上用独显
           antialias: false,
           precision: "highp",
           preserveDrawingBuffer: true, // 录制抓帧的前提
@@ -530,6 +558,8 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
           raf = requestAnimationFrame(tick);
           const dt = lastTick ? Math.min(0.1, (now - lastTick) / 1000) : 0;
           lastTick = now;
+          const adjusted = governorRef.current?.tick(now, recordingRef.current || document.hidden);
+          if (adjusted) applyPixelRatio(adjusted);
           if (recordingRef.current || document.hidden) return;
           const v = viewerRef.current;
           const cam = v?.camera;
@@ -679,11 +709,16 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
 
     const canvas: HTMLCanvasElement =
       rendererRef.current?.domElement || viewer.renderer.domElement;
-    let w = canvas.width;
-    let h = canvas.height;
-    const scale = Math.min(1, 1280 / w);
-    w = Math.floor((w * scale) / 2) * 2;
-    h = Math.floor((h * scale) / 2) * 2;
+    // 导出分辨率固定（高/均衡档 1920 宽，流畅档 1280 宽），与实时预览降没降档无关：
+    // 录制期间临时按目标宽度离屏渲染，结束后恢复。
+    const profile = profileRef.current || perfProfile();
+    const cssW = canvas.clientWidth || mountRef.current?.clientWidth || 960;
+    const cssH = canvas.clientHeight || mountRef.current?.clientHeight || 600;
+    const w = Math.floor(profile.exportWidth / 2) * 2;
+    const h = Math.floor((profile.exportWidth * cssH / cssW) / 2) * 2;
+    const liveRatio = governorRef.current?.ratio ?? profile.maxPixelRatio;
+    rendererRef.current?.setPixelRatio(profile.exportWidth / cssW);
+    rendererRef.current?.setSize(cssW, cssH);
 
     const area = w * h;
     let codec = "avc1.42001f";
@@ -703,7 +738,10 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
         video: { codec: "avc", width: w, height: h, frameRate: fps },
         fastStart: "in-memory",
       });
-      const config = { codec, width: w, height: h, bitrate: 8_000_000, framerate: fps };
+      // 优先用显卡编码；不支持时再退回默认（可能是软件编码，慢一些）
+      const base = { codec, width: w, height: h, bitrate: profile.exportBitrate, framerate: fps };
+      let config: VideoEncoderConfig = { ...base, hardwareAcceleration: "prefer-hardware" };
+      if (!(await VideoEncoder.isConfigSupported(config)).supported) config = base;
       if (!(await VideoEncoder.isConfigSupported(config)).supported) {
         throw new Error("当前设备不支持此尺寸的 H.264 编码，请缩小窗口后重试。");
       }
@@ -714,10 +752,22 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
       encoder.configure(config);
 
       const cam = viewer.camera;
-      const nextFrame = () =>
-        new Promise<void>((r) =>
-          requestAnimationFrame(() => requestAnimationFrame(() => r()))
-        );
+      // 不等屏幕刷新：直接驱动查看器更新并绘制这一帧。排序在后台线程进行，
+      // 只有正在排序时才等它（最多 250ms），导出速度不再受显示器刷新率限制。
+      const drawFrame = async () => {
+        viewer.update();
+        if (viewer.sortRunning && viewer.sortPromise) {
+          await Promise.race([viewer.sortPromise, new Promise((r) => setTimeout(r, 250))]);
+        }
+        viewer.render();
+      };
+      // 编码积压时只等队列降下来，不整体 flush（flush 会让整条流水线停住）
+      const drainTo = (limit: number) => new Promise<void>((resolve) => {
+        if (!encoder || encoder.encodeQueueSize <= limit) return resolve();
+        const check = () => { if (!encoder || encoder.encodeQueueSize <= limit) { encoder?.removeEventListener("dequeue", check); resolve(); } };
+        encoder.addEventListener("dequeue", check);
+      });
+      const direct = w === canvas.width && h === canvas.height;
 
       for (let i = 0; i < total; i++) {
         if (!recordingRef.current || viewerRef.current !== viewer) return;
@@ -725,22 +775,20 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
         const { pose, splat } = sampleTimeline(tl, i / fps);
         applyPose(cam, pose);
         setSplat(splat);
-        viewer.forceRenderNextFrame?.();
-        await nextFrame();
+        await drawFrame();
         if (!recordingRef.current || viewerRef.current !== viewer) return;
 
-        const bitmap = await createImageBitmap(canvas, {
-          resizeWidth: w, resizeHeight: h, resizeQuality: "high",
-        });
-        const frame = new VideoFrame(bitmap, {
-          timestamp: Math.round((i / fps) * 1_000_000),
-          duration: Math.round(1_000_000 / fps),
-        });
+        const timing = { timestamp: Math.round((i / fps) * 1_000_000), duration: Math.round(1_000_000 / fps) };
+        const bitmap = direct ? null : await createImageBitmap(canvas, { resizeWidth: w, resizeHeight: h, resizeQuality: "high" });
+        const frame = new VideoFrame(bitmap || canvas, timing);
         encoder.encode(frame, { keyFrame: i % fps === 0 });
         frame.close();
-        bitmap.close();
-        setRecProgress(Math.round(((i + 1) / total) * 100));
-        if (encoder.encodeQueueSize > 8) await encoder.flush();
+        bitmap?.close();
+        const percent = Math.round(((i + 1) / total) * 100);
+        if (percent !== Math.round((i / total) * 100)) setRecProgress(percent);
+        await drainTo(6);
+        // 偶尔让出主线程，进度条和界面才能刷新
+        if (i % 6 === 5) await new Promise((r) => setTimeout(r, 0));
       }
 
       await encoder.flush();
@@ -765,6 +813,7 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
     } finally {
       if (encoder && encoder.state !== "closed") encoder.close();
       recordingRef.current = false;
+      applyPixelRatio(liveRatio);
       setSplat(1);
       selectPreset(exportSeq[exportSeq.length - 1] ?? "free");
       setRecording(false);
@@ -814,7 +863,16 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
       <div className="rig">
         {/* 运镜选择 */}
         <div className="rig-card">
-          <div className="rig-card-title">运镜 <span>选一种，预览即所见</span></div>
+          <div className="rig-card-title">运镜 <span>选一种，预览即所见</span>
+            <label className="perf-choice" title={perfInfo ? `当前渲染倍率 ${perfInfo.ratio.toFixed(2)}×` : undefined}>画质
+              <select value={perfChoice} onChange={(e) => choosePerf(e.target.value as PerfChoice)} disabled={recording}>
+                <option value="auto">自动{perfInfo && perfChoice === "auto" ? `（${{ high: "高", mid: "均衡", low: "流畅" }[perfInfo.tier as "high"] || ""}）` : ""}</option>
+                <option value="high">高 · 超采样，导出 1920 宽</option>
+                <option value="mid">均衡 · 导出 1920 宽</option>
+                <option value="low">流畅 · 导出 1280 宽</option>
+              </select>
+            </label>
+          </div>
           <div className="rig-deck">
             <button
               className={`key ${preset === "free" && !seqPlaying ? "active" : ""}`}

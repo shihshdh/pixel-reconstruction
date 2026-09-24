@@ -39,3 +39,4 @@ public/download/
 # Windows 客户端的编译产物
 desktop/src-tauri/target/
 desktop/src-tauri/gen/
+desktop/dist/

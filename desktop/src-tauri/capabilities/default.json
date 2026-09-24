@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "本地启动页：只用基础能力。",
+  "description": "打包在客户端里的网站：只能把作品写进本地作品文件夹、打开该文件夹。",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "allow-save-work-file", "allow-open-works-folder"]
 }

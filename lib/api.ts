@@ -163,13 +163,46 @@ export async function ping(base = getBase()): Promise<{ ok: boolean; device?: st
     return { ok: data.ok === true, device: data.device, enhance: !!data.enhance, serverless: !!data.serverless, assist: data.assist === true, assist_vision: data.assist_vision === true, assist_search: data.assist_search === true };
   } catch { return { ok: false }; }
 }
-export async function submitPhoto(file: File, renderVideo: boolean, enhance: boolean, base = getBase()) {
+export type UploadProgress = { sent: number; total: number; bytesPerSecond: number };
+
+/** multipart 上传，汇报进度。慢网络下不按总时长判超时：连续 60 秒没有进展才放弃。 */
+function uploadWithProgress<T>(path: string, body: FormData, base: string, onProgress: (p: UploadProgress) => void): Promise<T> {
+  const url = endpoint(path, base);
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const started = performance.now();
+    let idle: ReturnType<typeof setTimeout> | undefined;
+    const arm = (ms: number, message: string) => { clearTimeout(idle); idle = setTimeout(() => { xhr.abort(); reject(new Error(message)); }, ms); };
+    arm(60000, "上传长时间没有进展，请检查网络后重试。");
+    xhr.upload.onprogress = event => {
+      arm(60000, "上传长时间没有进展，请检查网络后重试。");
+      const seconds = Math.max(.001, (performance.now() - started) / 1000);
+      onProgress({ sent: event.loaded, total: event.lengthComputable ? event.total : body.get("image") instanceof File ? (body.get("image") as File).size : 0, bytesPerSecond: event.loaded / seconds });
+    };
+    // 照片传完后，服务端还要存档并排队，留足时间
+    xhr.upload.onload = () => arm(120000, "等待服务响应超时。首次启动可能较慢，请稍后重试。");
+    xhr.onerror = () => { clearTimeout(idle); reject(new Error("无法连接后端，请检查地址、网络和服务是否已部署。")); };
+    xhr.onload = () => {
+      clearTimeout(idle);
+      const response = new Response(xhr.responseText, { status: xhr.status });
+      if (xhr.status < 200 || xhr.status >= 300) { void apiError(response).then(reject); return; }
+      try { resolve(JSON.parse(xhr.responseText)); } catch { reject(new Error("后端返回了无效响应，请确认填写的是 API 网关地址。")); }
+    };
+    xhr.open("POST", url);
+    xhr.send(body);
+  });
+}
+
+export async function submitPhoto(file: File, renderVideo: boolean, enhance: boolean, base = getBase(), onProgress?: (p: UploadProgress) => void) {
   if (file.size > 20 * 1024 * 1024) throw new Error("请选择 20MB 以内的照片。");
   const fd = new FormData();
   fd.append("image", file);
   fd.append("render_video", String(renderVideo));
   fd.append("enhance", String(enhance));
-  const result = await request<{ call_id: string; job_id: string; job_token?: string; file_urls?: Record<string, string> }>("/generate", { method: "POST", body: fd }, base, 120000);
+  type Accepted = { call_id: string; job_id: string; job_token?: string; file_urls?: Record<string, string> };
+  const result = onProgress
+    ? await uploadWithProgress<Accepted>("/generate", fd, base, onProgress)
+    : await request<Accepted>("/generate", { method: "POST", body: fd }, base, 120000);
   registerJobAccess(result.job_id, result.job_token, result.file_urls);
   taskJobs.set(result.call_id, result.job_id);
   return result;

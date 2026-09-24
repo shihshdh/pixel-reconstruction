@@ -1,11 +1,11 @@
 {
   "name": "pixel-reconstruction-desktop",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "scripts": {
     "icons": "tauri icon app-icon.png",
-    "dev": "tauri dev",
-    "build": "tauri build"
+    "dev": "node prepare-dist.cjs --skip-site-build && tauri dev",
+    "build": "node prepare-dist.cjs && tauri build"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

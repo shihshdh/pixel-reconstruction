@@ -770,7 +770,12 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
     const started = Date.now();
     clockRef.current = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
     try {
-      const { call_id } = await submitPhoto(file, renderVideo, false, taskBase);
+      const { call_id } = await submitPhoto(file, renderVideo, false, taskBase, ({ sent, total, bytesPerSecond }) => {
+        if (token !== generation.current) return;
+        const mb = (n: number) => (n / 1048576).toFixed(1);
+        const speed = bytesPerSecond >= 1048576 ? `${mb(bytesPerSecond)} MB/s` : `${Math.round(bytesPerSecond / 1024)} KB/s`;
+        setStage(total && sent < total ? `照片上传中 · ${mb(sent)} / ${mb(total)} MB · ${speed}` : "照片已上传 · 等待服务确认");
+      });
       if (token !== generation.current) return;
       stopTimers(); setPhase("processing"); setStage("已接收 · 等待 GPU 唤醒");
       const task = { id: call_id, base: taskBase, started };
@@ -797,7 +802,7 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
     </>}
     {busy && <section className="develop-stage" aria-busy="true">
       <DevelopPainting file={pickedFile} />
-      <div className="develop-caption" role="status" aria-live="polite"><span className="status-orb" /><span key={stage} className="img-pop">{stage}</span><span className="develop-time">{String(Math.floor(elapsed / 60)).padStart(2, "0")}:{String(elapsed % 60).padStart(2, "0")}</span></div>
+      <div className="develop-caption" role="status" aria-live="polite"><span className="status-orb" /><span key={stage.split(" · ")[0]} className="img-pop">{stage}</span><span className="develop-time">{String(Math.floor(elapsed / 60)).padStart(2, "0")}:{String(elapsed % 60).padStart(2, "0")}</span></div>
       <p className="compute-note" style={{ textAlign: "center" }}>首次唤醒可能需要几分钟。画面展示显影过程，任务状态以云端返回为准。</p>
     </section>}
     {phase === "done" && <div style={{ textAlign: "center", padding: 40 }}><OkMark /><p>显影完成，已保存到作品库。</p></div>}
