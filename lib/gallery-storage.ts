@@ -1,5 +1,6 @@
 // The gallery owns durable metadata and binary assets. No automatic expiry or count limit.
 import { fileUrl, registerJobAccess, downloadJobFile, prepareMobilePreview, type JobResult } from './api';
+import { isDesktopApp, saveWorkFile, workFolder } from './desktop';
 
 const DB_NAME = 'ruhua-gallery';
 const LEGACY_KEY = 'ruhua-gallery-v1';
@@ -27,6 +28,13 @@ type GalleryInput = JobResult & Partial<GalleryItem>;
 const fallbackRecords = new Map<string, GalleryItem>();
 const activeSaves = new Map<string, AbortController>();
 const saveCompletions = new Map<string, Promise<void>>();
+// 客户端里，作品另存一份到本地“作品”文件夹（网页版不做）。缩略图和手机轻量版不另存。
+const DISK_NAMES: Partial<Record<AssetKind, string>> = { original: 'original.jpg', viewer: 'scene.splat', ply: 'scene.ply' };
+function writeWorkInfo(item: GalleryItem) {
+  // 只写展示用的信息，不写任务 Token 或下载链接
+  const info = { title: item.title, date: item.date, createdAt: new Date(item.createdAt).toISOString(), source: item.meta, job_id: item.job_id };
+  return saveWorkFile(workFolder(item.job_id), 'info.json', JSON.stringify(info, null, 2));
+}
 let database: Promise<IDBDatabase> | undefined;
 let migration: Promise<void> | undefined;
 
@@ -234,6 +242,7 @@ export async function cacheGalleryItem(input: GalleryInput, options: { quality?:
   try {
     if (changedVersion) for (const kind of ['ply', 'viewer', 'mobile', 'video']) await transaction('assets', 'readwrite', store => store.delete(`${item.id}:${kind}`));
     await writeMetadata(item, controller);
+    if (isDesktopApp()) void writeWorkInfo(item);
     // Current signed links can be used immediately; the downloader renews them only on 403.
     try { item.persistent = await navigator.storage?.persist?.() || false; } catch { item.persistent = false; }
     const errors: string[] = [];
@@ -241,7 +250,11 @@ export async function cacheGalleryItem(input: GalleryInput, options: { quality?:
       stillPresent();
       try {
         let blob = await getGalleryAsset(item.id, kind, filename);
-        if (!blob) { blob = kind !== 'original' && options.sceneBlob ? options.sceneBlob : await downloadJobFile(item.job_id, filename, item.backend_url, { signal: controller.signal }); stillPresent(); await putAsset(item.id, kind, blob, controller, filename); }
+        if (!blob) {
+          blob = kind !== 'original' && options.sceneBlob ? options.sceneBlob : await downloadJobFile(item.job_id, filename, item.backend_url, { signal: controller.signal }); stillPresent(); await putAsset(item.id, kind, blob, controller, filename);
+          const diskName = DISK_NAMES[kind];
+          if (diskName && isDesktopApp()) void saveWorkFile(workFolder(item.job_id), diskName, blob);
+        }
         item[ready] = true;
         if (kind === 'original' && !await getGalleryAsset(item.id, 'thumbnail')) {
           try { await putAsset(item.id, 'thumbnail', await thumbnail(blob), controller); item.thumbnailReady = true; }

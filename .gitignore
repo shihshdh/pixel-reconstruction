@@ -32,3 +32,10 @@ _backup*/
 Claude outputs/
 deno.lock
 *.bat
+
+# Windows 客户端安装包：随站点发布，不进仓库（从 GitHub Releases 获取）
+public/download/
+
+# Windows 客户端的编译产物
+desktop/src-tauri/target/
+desktop/src-tauri/gen/

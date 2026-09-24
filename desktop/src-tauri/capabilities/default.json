@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "本地启动页：只用基础能力。",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

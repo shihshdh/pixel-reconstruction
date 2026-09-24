@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-work-file"
+description = "Enables the save_work_file command without any pre-configured scope."
+commands.allow = ["save_work_file"]
+
+[[permission]]
+identifier = "deny-save-work-file"
+description = "Denies the save_work_file command without any pre-configured scope."
+commands.deny = ["save_work_file"]

@@ -26,6 +26,8 @@
 
 重建使用 Apple 的 [SHARP](https://github.com/apple/ml-sharp) 模型，在云端 GPU 上完成单图推理，一次大约一分钟。查看、运镜和视频导出都在浏览器本地完成，不需要安装任何软件。
 
+也可以使用 Windows 客户端（Windows 10/11，64 位）：[从网站下载](https://pixel-reconstruction.netlify.app/download/PixelReconstruction-Setup.exe) · [GitHub Releases](https://github.com/shihshdh/pixel-reconstruction/releases/latest)。客户端是一个独立窗口，内容和网站同步更新，说明见 [desktop/README.md](desktop/README.md)。
+
 ## 效果
 
 <table>
@@ -79,6 +81,7 @@ components/              查看器、运镜、显影动画、助手等组件
 lib/                     后端通信、下载与续传、作品库存储
 backend/beam/            Beam 后端：CPU 网关、GPU worker、授权与签名、测试
 backend/local_server.py  本地 GPU 后端（可选），说明见 backend/本地GPU指南.md
+desktop/                 Windows 客户端（Tauri 2）
 netlify/edge-functions/  场景文件转发
 public/                  首页示例场景、演示视频、品牌素材、Live2D 模型
 scripts/                 发布检查、部署辅助与浏览器验证脚本

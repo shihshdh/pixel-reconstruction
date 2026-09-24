@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/remote-schema.json",
+  "identifier": "site-works",
+  "description": "线上站点只能把作品写进本地“作品”文件夹、打开该文件夹，没有其他本地权限。",
+  "windows": ["main"],
+  "remote": { "urls": ["https://pixel-reconstruction.netlify.app/*"] },
+  "permissions": ["allow-save-work-file", "allow-open-works-folder"]
+}

@@ -20,6 +20,7 @@ import PixelLoader from "@/components/PixelLoader";
 import { MorphIcon } from "morphicons/react";
 import { ICON } from "@/lib/icons";
 import AuthorContact from "@/components/AuthorContact";
+import { isDesktopApp, openWorksFolder } from "@/lib/desktop";
 // 现有 API（lib/api.ts）——创作/工作室/修图都用它
 import {
   submitPhoto, checkStatus, editImage, requestRerender,
@@ -170,6 +171,12 @@ const GLOBAL_CSS = `
 .nav-right{margin-left:auto;display:flex;align-items:center;gap:14px;flex:none;padding-left:12px;}
 .nav-cta{font-size:13px;padding:8px 18px;white-space:nowrap;}
 .nav-theme{width:34px;height:34px;font-size:15px;flex:none;}
+.nav-download{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 9px;border:1px solid transparent;border-radius:11px;color:inherit;font-size:12px;white-space:nowrap;text-decoration:none;transition:background 180ms,border-color 180ms,transform 180ms;}
+.nav-download svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round;}
+.nav-download:hover{background:color-mix(in srgb,currentColor 5%,transparent);border-color:color-mix(in srgb,currentColor 8%,transparent);}
+.nav-download:active{transform:scale(.96);}
+@media(max-width:1023px){.nav-download{display:none;}}
+.gallery-folder{margin-left:10px;padding:4px 12px;border:1px solid var(--line);border-radius:99px;background:var(--card);color:var(--ink);font-size:12px;}
 @media(max-width:640px){
   .nav-bar{padding:0 14px;height:50px;}
   .nav-logo{font-size:13px;margin-right:14px;letter-spacing:0;}
@@ -597,6 +604,20 @@ function DropZone({ onFile }) {
 // ============================================================
 // 顶部导航
 // ============================================================
+// Windows 客户端安装包：随站点一起发布（见 desktop/README.md）。
+const DESKTOP_DOWNLOAD = "/download/PixelReconstruction-Setup.exe";
+
+function DesktopDownload() {
+  // 在客户端里（__PIXEL_DESKTOP__ 由客户端注入）不再提示下载
+  const [show, setShow] = useState(false);
+  useEffect(() => { setShow(!(window as Window & { __PIXEL_DESKTOP__?: unknown }).__PIXEL_DESKTOP__); }, []);
+  if (!show) return null;
+  return <a className="nav-download" href={DESKTOP_DOWNLOAD} download title="下载 Windows 客户端（Windows 10/11，64 位）">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10.5 M7.5 10.5 12 15l4.5-4.5 M5 19.5h14" /></svg>
+    <span>Windows 客户端</span>
+  </a>;
+}
+
 function Nav({ page, setPage, theme, toggleTheme, onShowcase, logoReady = true }) {
   const tabsRef = useRef<HTMLDivElement>(null);
   const [tabRect, setTabRect] = useState({ x: 0, width: 0 });
@@ -638,6 +659,7 @@ function Nav({ page, setPage, theme, toggleTheme, onShowcase, logoReady = true }
         ))}
       </div>
       <div className="nav-right">
+        <DesktopDownload />
         <AuthorContact className="nav-contact" />
         <button className="nav-theme" onClick={toggleTheme} title="切换主题" aria-label={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"} style={{
           border: "1px solid var(--line)", background: "var(--card)", borderRadius: 980,
@@ -1159,6 +1181,8 @@ function GalleryThumbnail({ item }: { item: GalleryItem }) {
 }
 
 function GalleryPage({ setPage, onOpen, onDelete }) {
+  const [desktop, setDesktop] = useState(false);
+  useEffect(() => setDesktop(isDesktopApp()), []);
   const [list, setList] = useState<GalleryItem[]>([]);
   const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(true);
@@ -1193,7 +1217,9 @@ function GalleryPage({ setPage, onOpen, onDelete }) {
       <div><div className="eyebrow">作品库 · {list.length} 件作品</div><h1 style={{ fontSize: "clamp(32px,5vw,52px)", fontWeight: 600, letterSpacing: "-.025em" }}>你显影过的场景。</h1></div>
       <LiquidToggle tone="light" size="md" value={filter} onChange={setFilter} options={[{ id: "all", label: "全部" }, { id: "recent", label: "最近" }, { id: "fav", label: "收藏" }]} />
     </div>
-    <p className="gallery-storage-note">作品保存到当前浏览器，不设数量上限或自动到期时间。页面与查看器已加载后，已保存的场景可离线查看；修图仍需要云端服务。</p>
+    {desktop
+      ? <p className="gallery-storage-note">原图、3D 场景和导出的视频会另存一份到本机的 D:\Pixel Reconstruction\作品（没有 D 盘时放在安装目录下），卸载客户端也会保留。<button type="button" className="gallery-folder" onClick={() => void openWorksFolder()}>打开作品文件夹</button></p>
+      : <p className="gallery-storage-note">作品保存到当前浏览器，不设数量上限或自动到期时间。页面与查看器已加载后，已保存的场景可离线查看；修图仍需要云端服务。</p>}
     {error && <p className="creation-error" role="alert">{error}</p>}
     {loading ? <p role="status" className="gallery-storage-note">正在读取作品…</p> : shown.length === 0 ? <div className="gallery-empty">
       <p>{filter === "fav" ? "还没有收藏的场景。" : "这里还空着。显影一张照片，它就会出现在这里。"}</p><button onClick={() => setPage("create")}>开始创作</button>

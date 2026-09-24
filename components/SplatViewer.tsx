@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { prefersReduced, useFlipList } from "@/lib/motion";
 import { downloadJobFile } from "@/lib/api";
 import { downloadAsset, type DownloadProgress } from "@/lib/asset-download";
+import { isDesktopApp, openWorksFolder, saveWorkFile, workFolder } from "@/lib/desktop";
 
 /**
  * SplatViewer 2.0
@@ -748,6 +749,11 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
       const names = exportSeq.map(nameOf);
       const label = names.length > 3 ? `${names.slice(0, 3).join("")}等${names.length}段` : names.join("");
       const blob = new Blob([muxer.target.buffer], { type: "video/mp4" });
+      // 客户端：直接存进这件作品的本地文件夹并打开它；失败再走普通下载
+      if (isDesktopApp()) {
+        const folder = jobId ? workFolder(jobId) : "exports";
+        if (await saveWorkFile(folder, `video_${Date.now()}.mp4`, blob)) { void openWorksFolder(folder); return; }
+      }
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
