@@ -1,0 +1,6 @@
+{
+  "Type": "Live2D Expression",
+  "Parameters": [
+    { "Id": "point", "Value": 0.0, "Blend": "Overwrite" }
+  ]
+}

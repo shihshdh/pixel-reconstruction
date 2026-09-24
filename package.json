@@ -1,5 +1,5 @@
 {
-  "name": "ruhua",
+  "name": "pixel-reconstruction",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -8,9 +8,12 @@
   },
   "dependencies": {
     "@mkkellogg/gaussian-splats-3d": "0.4.7",
-    "mp4-muxer": "5.2.2",
+    "@pixi/unsafe-eval": "6.5.10",
+    "morphicons": "1.7.1",
     "mp4-muxer": "^5.2.2",
     "next": "15.1.6",
+    "pixi-live2d-display": "0.4.0",
+    "pixi.js": "6.5.10",
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "three": "0.168.0"
@@ -19,6 +22,8 @@
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/three": "0.168.0",
+    "playwright": "^1.49.1",
     "typescript": "^5"
   }
 }
+

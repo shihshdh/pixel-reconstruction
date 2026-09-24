@@ -1,0 +1,8 @@
+beam-client==0.2.211
+fastapi==0.115.6
+python-multipart==0.0.20
+pillow==11.0.0
+pillow-heif==0.21.0
+requests==2.32.3
+httpx==0.28.1
+pytest==8.3.5

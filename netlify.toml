@@ -1,0 +1,46 @@
+[build]
+  command = "npm run build"
+  publish = "out"
+
+[[edge_functions]]
+  path = "/scene-file/*"
+  function = "scene-file"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer"
+    X-Frame-Options = "SAMEORIGIN"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data:; connect-src 'self' blob: https: http://localhost:* http://127.0.0.1:*; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"
+
+# The landing scenes are requested as ?v=<version> (components/LandingSplat.tsx),
+# so they can be cached for a year. Bump v= whenever a .ksplat changes.
+[[headers]]
+  for = "/scene/landing.ksplat"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/scene/landing-lo.ksplat"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Unversioned URLs keep a short cache so replacing them takes effect within a day.
+[[headers]]
+  for = "/scene/landing.jpg"
+  [headers.values]
+    Cache-Control = "public, max-age=86400"
+
+[[headers]]
+  for = "/scene/scene-manifest.json"
+  [headers.values]
+    Cache-Control = "public, max-age=86400"
+
+# Companion model (unmodified files; see public/companion/whale/LICENSE-Live2D.txt). A week is plenty for
+# a 4 MB asset that only changes when the model is replaced.
+[[headers]]
+  for = "/companion/*"
+  [headers.values]
+    Cache-Control = "public, max-age=604800"

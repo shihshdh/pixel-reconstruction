@@ -2,3 +2,33 @@ node_modules
 .next
 .env.local
 .DS_Store
+
+backend/local_jobs/
+
+.beam-token
+.beam-tools/
+# Any stray key file near the Beam tools (e.g. a mistyped .beam-toolsdeepseek.env) must never be committed.
+.beam-tools*
+*.env
+.netlify-local/
+.netlify/
+.beam/
+.venv-beam/
+.venv-tests/
+.delivery-backup/
+artifacts/
+__pycache__/
+*.pyc
+out/
+*.zip
+_backup*/
+*.tsbuildinfo
+*.bak
+
+.netlify-local-new/
+.netlify-site.json
+
+# 本地工具与临时产物，不属于项目源码
+Claude outputs/
+deno.lock
+*.bat

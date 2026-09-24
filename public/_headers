@@ -1,0 +1,21 @@
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  X-Frame-Options: SAMEORIGIN
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data:; connect-src 'self' blob: https: http://localhost:* http://127.0.0.1:*; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'
+
+/scene/landing.ksplat
+  Cache-Control: public, max-age=31536000, immutable
+
+/scene/landing-lo.ksplat
+  Cache-Control: public, max-age=31536000, immutable
+
+/scene/landing.jpg
+  Cache-Control: public, max-age=86400
+
+/scene/scene-manifest.json
+  Cache-Control: public, max-age=86400
+
+/companion/*
+  Cache-Control: public, max-age=604800

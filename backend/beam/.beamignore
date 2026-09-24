@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.env*
+*.token
+test_*.py
+verify_*.cjs
+README.md
+requirements-dev.txt

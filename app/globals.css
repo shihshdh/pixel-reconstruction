@@ -1,5 +1,5 @@
 /* ============================================================
-   入画 · 视觉系统 2.0 —— 液态玻璃
+   Pixel Reconstruction · 视觉系统 2.0 —— 液态玻璃
    设计语言：iOS Liquid Glass。深色底 + 极光色斑 + 毛玻璃面板，
    大圆角、胶囊按钮、顶部高光、克制的渐变点缀。
    ============================================================ */
@@ -30,6 +30,78 @@
      否则退到幼圆 → 雅黑，全程不依赖外网字体 */
   --font-round: "MiSans", "MiSans VF", "HarmonyOS Sans SC", "Yuanti SC",
     "YouYuan", "幼圆", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+
+  /* 极光四色 + 暗/亮模式标记，主题覆盖这些即可整体换肤 */
+  --aurora-1: rgba(10, 132, 255, 0.32);
+  --aurora-2: rgba(191, 90, 242, 0.26);
+  --aurora-3: rgba(255, 100, 130, 0.16);
+  --aurora-4: rgba(48, 209, 88, 0.10);
+  --screen-bg: #04060a;
+  --dock-bg: rgba(10, 13, 20, 0.55);
+}
+
+/* ============ 主题：暗色三套 ============ */
+[data-theme="obsidian"] {
+  --bg: #0c0d10;
+  --aurora-1: rgba(120, 130, 150, 0.22);
+  --aurora-2: rgba(90, 100, 120, 0.18);
+  --aurora-3: rgba(70, 80, 95, 0.14);
+  --aurora-4: rgba(140, 150, 165, 0.10);
+  --blue: #6e7b91; --violet: #8a93a8;
+  --screen-bg: #050608;
+  --dock-bg: rgba(12, 13, 16, 0.6);
+}
+[data-theme="sakura-night"] {
+  --bg: #100a10;
+  --aurora-1: rgba(255, 130, 175, 0.30);
+  --aurora-2: rgba(200, 110, 220, 0.24);
+  --aurora-3: rgba(255, 160, 190, 0.16);
+  --aurora-4: rgba(150, 110, 200, 0.12);
+  --blue: #ff7eb3; --violet: #c98bff;
+  --screen-bg: #08040a;
+  --dock-bg: rgba(18, 10, 18, 0.55);
+}
+
+/* ============ 主题：亮色两套 ============ */
+[data-theme="daylight"] {
+  --bg: #eef2f8;
+  --txt: #1a1f2b;
+  --txt-2: rgba(30, 40, 60, 0.6);
+  --txt-3: rgba(30, 40, 60, 0.4);
+  --glass: rgba(255, 255, 255, 0.55);
+  --glass-strong: rgba(255, 255, 255, 0.78);
+  --stroke: rgba(20, 30, 50, 0.12);
+  --stroke-soft: rgba(20, 30, 50, 0.07);
+  --aurora-1: rgba(10, 132, 255, 0.18);
+  --aurora-2: rgba(191, 90, 242, 0.14);
+  --aurora-3: rgba(255, 130, 160, 0.12);
+  --aurora-4: rgba(48, 209, 120, 0.10);
+  --screen-bg: #dfe5ee;
+  --dock-bg: rgba(255, 255, 255, 0.72);
+}
+[data-theme="paper"] {
+  --bg: #f3efe6;
+  --txt: #2a261f;
+  --txt-2: rgba(50, 44, 34, 0.6);
+  --txt-3: rgba(50, 44, 34, 0.4);
+  --glass: rgba(255, 252, 245, 0.6);
+  --glass-strong: rgba(255, 252, 245, 0.82);
+  --stroke: rgba(60, 50, 30, 0.14);
+  --stroke-soft: rgba(60, 50, 30, 0.08);
+  --blue: #c08a3e; --violet: #a86b4f;
+  --aurora-1: rgba(200, 150, 90, 0.16);
+  --aurora-2: rgba(170, 120, 80, 0.13);
+  --aurora-3: rgba(210, 170, 120, 0.12);
+  --aurora-4: rgba(150, 160, 110, 0.10);
+  --screen-bg: #e6ddcc;
+  --dock-bg: rgba(243, 239, 230, 0.78);
+}
+
+/* 亮色模式下 .key.active 用深色反白要调整 */
+[data-theme="daylight"] .key.active,
+[data-theme="paper"] .key.active {
+  background: rgba(26, 31, 43, 0.9);
+  color: #fff;
 }
 
 * { box-sizing: border-box; }
@@ -51,10 +123,10 @@ body::before {
   inset: -20%;
   z-index: -1;
   background:
-    radial-gradient(38% 30% at 18% 12%, rgba(10, 132, 255, 0.32), transparent 70%),
-    radial-gradient(34% 30% at 84% 18%, rgba(191, 90, 242, 0.26), transparent 70%),
-    radial-gradient(40% 34% at 70% 88%, rgba(255, 100, 130, 0.16), transparent 70%),
-    radial-gradient(30% 26% at 12% 78%, rgba(48, 209, 88, 0.10), transparent 70%);
+    radial-gradient(38% 30% at 18% 12%, var(--aurora-1), transparent 70%),
+    radial-gradient(34% 30% at 84% 18%, var(--aurora-2), transparent 70%),
+    radial-gradient(40% 34% at 70% 88%, var(--aurora-3), transparent 70%),
+    radial-gradient(30% 26% at 12% 78%, var(--aurora-4), transparent 70%);
   filter: blur(70px) saturate(130%);
   animation: aurora 36s ease-in-out infinite alternate;
 }
@@ -98,6 +170,8 @@ button { font-family: inherit; }
   align-items: baseline;
   justify-content: space-between;
   gap: 16px;
+  position: relative;
+  z-index: 50;
 }
 
 .slate h1 {
@@ -123,7 +197,7 @@ button { font-family: inherit; }
   line-height: 1.8;
 }
 
-.stage {
+.legacy-page-stage {
   max-width: 1000px;
   margin: 0 auto;
   padding: 26px 20px 90px;
@@ -224,18 +298,115 @@ button { font-family: inherit; }
 .screen {
   position: relative;
   width: 100%;
-  aspect-ratio: 16 / 10;
-  background: #04060a;
 }
 
-.screen .viewer-mount, .screen video {
+/* 画面区：承载 3D / overlay，比例偏方一点以减少黑边 */
+.stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  background: var(--screen-bg);
+  border-radius: 18px;
+  overflow: hidden;
+}
+
+.stage .viewer-mount, .stage video {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
 }
 
-.screen video { object-fit: contain; background: #04060a; }
+.stage video { object-fit: cover; background: var(--screen-bg); }
+.stage canvas { display: block; width: 100% !important; height: 100% !important; }
+
+/* 电脑端键位提示：只在有键盘+精确指针的设备上出现 */
+.fly-hint { display: none; }
+@media (hover: hover) and (pointer: fine) {
+  .fly-hint {
+    display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+    position: absolute; left: 12px; bottom: 12px; z-index: 2; pointer-events: none;
+    padding: 6px 10px; border-radius: 10px; font-size: 11px; letter-spacing: .02em;
+    color: #e8e6de; background: rgba(12, 14, 13, .52);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  }
+  .fly-hint kbd {
+    font: inherit; font-size: 10px; min-width: 18px; padding: 1px 5px; text-align: center;
+    border-radius: 5px; border: 1px solid rgba(255, 255, 255, .28); background: rgba(255, 255, 255, .08);
+  }
+}
+
+/* 兼容旧选择器（保险） */
+.screen .viewer-mount { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+/* —— 运镜工作台 —— */
+.rig { margin-top: 20px; display: flex; flex-direction: column; gap: 16px; }
+.rig-card {
+  background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 20px 22px;
+}
+.rig-card-title {
+  font-size: 16px; font-weight: 600; color: var(--ink); margin-bottom: 14px;
+}
+.rig-card-title span { font-size: 13px; font-weight: 400; color: var(--ink3); margin-left: 8px; }
+
+.rig-deck { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+.rig-grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 16px; align-items: stretch; }
+
+.seq-area {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 50px;
+  padding: 12px; border-radius: 12px; background: var(--bg2); border: 1px solid var(--line);
+}
+.seq-empty, .seq-hint { font-size: 13px; color: var(--ink3); }
+.seq-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
+.seq-actions .total { margin-left: auto; font-size: 13px; color: var(--ink3); font-variant-numeric: tabular-nums; }
+
+.export-card { display: flex; flex-direction: column; }
+.export-desc { font-size: 13px; color: var(--ink2); line-height: 1.6; margin-bottom: 16px; }
+.export-hint { font-size: 12.5px; color: var(--ink3); margin-top: 12px; line-height: 1.5; }
+.rig-warn { margin-top: 12px; font-size: 12.5px; color: #ff9f0a; line-height: 1.5; }
+
+.key.big {
+  width: 100%; padding: 16px; font-size: 15.5px; justify-content: center; display: flex; margin-top: auto;
+}
+
+@media (max-width: 760px) {
+  .rig-grid { grid-template-columns: 1fr; }
+}
+
+/* 运镜控件在浅色页面容器里：用页面配色 */
+.rig .key {
+  appearance: none; border: 1px solid var(--line); background: var(--card); color: var(--ink);
+  -webkit-backdrop-filter: none; backdrop-filter: none; font-size: 13.5px; letter-spacing: .02em;
+  padding: 9px 16px; border-radius: 980px; cursor: pointer;
+  transition: background .18s, color .18s, border-color .18s, transform .18s;
+}
+.rig .key:hover:not(:disabled) { background: var(--track); transform: translateY(-1px); }
+.rig .key.active {
+  background: var(--accent); color: #fff; border-color: transparent; font-weight: 600;
+}
+.rig .key.ghost { padding: 8px 14px; font-size: 13px; color: var(--ink2); }
+.rig .key.ghost.add { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+.rig .key.primary {
+  border: 0; background: var(--accent); color: #fff; font-weight: 600;
+  box-shadow: 0 10px 28px -10px rgba(0,113,227,0.55);
+}
+.rig .key.primary:hover:not(:disabled) { filter: brightness(1.06); transform: translateY(-1px); }
+.rig .key:disabled { opacity: .45; cursor: not-allowed; transform: none; box-shadow: none; }
+
+.rig .chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--card); border: 1px solid var(--line); color: var(--ink);
+  border-radius: 980px; padding: 6px 10px 6px 6px; font-size: 13px;
+}
+.rig .chip .ord {
+  width: 18px; height: 18px; border-radius: 999px; background: var(--accent); color: #fff;
+  display: grid; place-items: center; font-size: 11px; font-weight: 600;
+}
+.rig .chip button {
+  border: 0; background: none; color: var(--ink3); cursor: pointer; font-size: 15px; line-height: 1; padding: 0 2px;
+}
+.rig .chip button:hover { color: #ff453a; }
 
 /* 处理中 */
 .processing {
@@ -564,11 +735,69 @@ button { font-family: inherit; }
   .backend-row input { flex-basis: 100%; order: 3; }
 }
 
+/* ---------- 可折叠运镜 dock：默认收起只留把手，不挡画面 ---------- */
+.controls-dock {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+}
+
+.dock-handle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 auto;
+  padding: 7px 18px 8px;
+  border: 1px solid var(--stroke);
+  border-bottom: 0;
+  border-radius: 16px 16px 0 0;
+  background: var(--dock-bg);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  backdrop-filter: blur(22px) saturate(150%);
+  color: var(--txt);
+  font-family: inherit;
+  font-size: 12.5px;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.dock-handle:hover { background: rgba(10, 13, 20, 0.72); }
+.dock-handle .grip {
+  width: 26px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--txt-3);
+}
+.dock-handle .handle-text { white-space: nowrap; }
+.dock-handle .chev {
+  font-size: 16px;
+  line-height: 1;
+  transition: transform 0.25s;
+  color: var(--txt-2);
+}
+.dock-handle .chev.up { transform: rotate(180deg); }
+
+.dock-body {
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transition: max-height 0.32s ease, opacity 0.25s ease;
+}
+.controls-dock.open .dock-body {
+  max-height: 320px;
+  opacity: 1;
+}
+
+/* 收起时把手居中浮在底部；展开时贴左对齐看起来更稳 */
+.controls-dock.open .dock-handle { border-radius: 16px 16px 0 0; }
+
 /* 控制面板悬浮在画面之上时，做成真·玻璃 */
 .deck, .seq-row {
   -webkit-backdrop-filter: blur(22px) saturate(150%);
   backdrop-filter: blur(22px) saturate(150%);
-  background: rgba(10, 13, 20, 0.45);
+  background: var(--dock-bg);
 }
 
 /* ---------- 豆包修图面板 ---------- */
@@ -707,3 +936,195 @@ button { font-family: inherit; }
 }
 
 .bubble.ai .cap a.key.ghost { text-decoration: none; }
+
+/* ============================================================
+   主题切换器
+   ============================================================ */
+.theme-switch { position: relative; }
+.theme-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+}
+.theme-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-pill);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  color: var(--txt);
+  font-family: inherit;
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: background 0.18s;
+}
+.theme-btn:hover { background: var(--glass-strong); }
+.theme-btn .theme-dot {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--blue), var(--violet));
+}
+.theme-btn .chev { font-size: 14px; line-height: 1; color: var(--txt-2); transition: transform 0.2s; }
+.theme-btn .chev.up { transform: rotate(180deg); }
+
+.theme-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 100;
+  min-width: 180px;
+  padding: 6px;
+  border-radius: var(--r-md);
+  background: var(--bg);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  backdrop-filter: blur(28px) saturate(160%);
+  border: 1px solid var(--stroke);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+.theme-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--txt);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.theme-item:hover { background: var(--glass); }
+.theme-item.on { background: var(--glass); font-weight: 600; }
+.theme-item .swatch {
+  width: 20px; height: 20px; border-radius: 6px;
+  border: 1px solid var(--stroke);
+  flex-shrink: 0;
+}
+.theme-item .kind {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--txt-3);
+  letter-spacing: 0.1em;
+}
+.sw-midnight { background: linear-gradient(135deg, #0a84ff, #bf5af2); }
+.sw-obsidian { background: linear-gradient(135deg, #2a2d34, #6e7b91); }
+.sw-sakura-night { background: linear-gradient(135deg, #ff7eb3, #c98bff); }
+.sw-daylight { background: linear-gradient(135deg, #6db8ff, #b78bff); }
+.sw-paper { background: linear-gradient(135deg, #e8d5b0, #c08a3e); }
+
+/* ============================================================
+   移动端体验优化
+   ============================================================ */
+@media (max-width: 640px) {
+  .stage { padding-left: 14px; padding-right: 14px; }
+  .lede { font-size: 14px; }
+
+  /* 主题切换器在手机上挪到标题行右侧、缩小 */
+  .slate { position: relative; }
+  .theme-switch { align-self: flex-start; margin-top: 2px; }
+  .theme-menu { right: auto; left: 0; }
+
+  /* 运镜面板：按钮横向滚动，不再换行堆高 */
+  .controls-dock.open .dock-body { max-height: 50vh; overflow-y: auto; }
+  .deck, .seq-row {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding: 10px 12px;
+  }
+  .deck::-webkit-scrollbar, .seq-row::-webkit-scrollbar { display: none; }
+  .deck .key, .seq-row .key {
+    flex-shrink: 0;
+    padding: 8px 13px;
+    font-size: 12.5px;
+  }
+  .deck .label, .seq-row .label { flex-shrink: 0; }
+  .deck .right { flex-shrink: 0; }
+
+  /* 把手在手机上更大更好点 */
+  .dock-handle { padding: 9px 22px 10px; font-size: 13px; }
+  .dock-handle .grip { width: 32px; height: 5px; }
+
+  /* AI 修图面板手机上更紧凑 */
+  .ai-panel { padding: 14px 14px 12px; }
+  .chip-row { overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+  .chip-row::-webkit-scrollbar { display: none; }
+  .chip-row .key { flex-shrink: 0; }
+
+  /* 后端连接行：状态和按钮换行排布更顺 */
+  .backend-row .key { flex-shrink: 0; }
+}
+
+/* 超窄屏（小手机）再收一档 */
+@media (max-width: 400px) {
+  .slate h1 { font-size: 30px; }
+  .theme-btn { padding: 6px 11px; font-size: 11.5px; }
+}
+
+/* ---------- 云端/本地 分段切换 ---------- */
+.source-toggle {
+  display: inline-flex;
+  padding: 3px;
+  gap: 3px;
+  border-radius: var(--r-pill);
+  background: var(--glass);
+  border: 1px solid var(--stroke);
+}
+.source-toggle button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--txt-2);
+  font-family: inherit;
+  font-size: 12.5px;
+  letter-spacing: 0.08em;
+  padding: 6px 16px;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s;
+}
+.source-toggle button:hover { color: var(--txt); }
+.source-toggle button.on {
+  background: linear-gradient(135deg, var(--blue), var(--violet));
+  color: #fff;
+  font-weight: 600;
+}
+
+/* ============================================================
+   运镜栏动效（与 page.tsx 的 motion token 同一套）
+   ============================================================ */
+
+/* 导出按钮在录制时自己变成进度条：进度留在你按下去的地方 */
+.rig .key.prog { position: relative; overflow: hidden; }
+.rig .key.prog .prog-fill {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 100%;
+  transform-origin: left; transform: scaleX(0);
+  background: rgba(255, 255, 255, 0.26);
+  transition: transform .3s linear;
+  pointer-events: none;
+}
+.rig .key.prog .prog-label { position: relative; z-index: 1; }
+
+/* 片段本身：删除键有明确的即时反馈 */
+.rig .chip button { transition: color .12s cubic-bezier(.16,1,.3,1), transform .12s cubic-bezier(.16,1,.3,1); }
+.rig .chip button:hover:not(:disabled) { transform: scale(1.18); }
+
+@media (prefers-reduced-motion: reduce) {
+  .rig .key.prog .prog-fill { transition: none; }
+  .rig .chip button:hover:not(:disabled) { transform: none; }
+}
+
+
+/* The companion (鲸鱼娘) pointing at something on the page: lib/companion-actions.ts sets this for ~3s. */
+[data-assist-highlight] { outline: 2px solid #5f8fb4 !important; outline-offset: 4px; animation: assistPoint 1.3s cubic-bezier(.4,0,.2,1) 2; }
+@keyframes assistPoint { 0% { box-shadow: 0 0 0 0 #5f8fb466; } 100% { box-shadow: 0 0 0 12px #5f8fb400; } }
+@media (prefers-reduced-motion: reduce) { [data-assist-highlight] { animation: none; } }

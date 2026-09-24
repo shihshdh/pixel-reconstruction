@@ -1,0 +1,113 @@
+/* 鲸鱼娘 companion. Paper, warm light and charcoal like the rest of the workspace; every surface
+   uses the theme tokens from InteriorStyles, so light and dark follow the site automatically. */
+
+.root{position:fixed;z-index:950;display:flex;flex-direction:column;align-items:flex-end;gap:10px;pointer-events:none;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink)}
+.root>*{pointer-events:auto}
+.root *{box-sizing:border-box}
+.root button{font:inherit;color:inherit;cursor:pointer}
+.root button:focus-visible,.root textarea:focus-visible,.root a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+
+/* ---------- figure ---------- */
+.figure{position:relative;touch-action:none;cursor:grab;animation:rise 640ms cubic-bezier(.16,1,.3,1) both}
+.figure:active{cursor:grabbing}
+.figure canvas{filter:drop-shadow(0 10px 18px #2a2c1f1f)}
+/* 走路：一颠一摆，脚底为轴 */
+.figure[data-walking] canvas{transform-origin:50% 100%;animation:waddle 520ms ease-in-out infinite}
+@keyframes waddle{0%,100%{transform:translateY(0) rotate(-2.5deg)}25%{transform:translateY(-5px) rotate(0)}50%{transform:translateY(0) rotate(2.5deg)}75%{transform:translateY(-5px) rotate(0)}}
+.hit{position:absolute;left:14%;right:14%;top:8%;bottom:0;border:0;background:none;border-radius:40% 40% 24% 24%;-webkit-tap-highlight-color:transparent}
+.placeholder{position:absolute;left:50%;bottom:10px;translate:-50% 0;display:grid;place-items:center;min-width:64px;height:30px;padding:0 14px;border:1px solid var(--line);border-radius:99px;background:var(--card);color:var(--ink3);font-size:12px;box-shadow:0 6px 18px -10px #26311f55;pointer-events:none}
+.placeholder:empty{display:none}
+.collapse{position:absolute;top:6%;right:6%;width:26px;height:26px;display:grid;place-items:center;border:1px solid var(--line);border-radius:50%;background:var(--card);color:var(--ink2);opacity:0;scale:.9;transition:opacity 220ms,scale 220ms cubic-bezier(.16,1,.3,1)}
+.collapse svg{width:12px;height:12px;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;fill:none}
+.figure:hover .collapse,.figure:focus-within .collapse{opacity:1;scale:1}
+@media(hover:none){.collapse{opacity:.9;scale:1}}
+.alertDot{position:absolute;top:12%;left:18%;width:10px;height:10px;border-radius:50%;background:#c46a4a;box-shadow:0 0 0 3px var(--card);animation:ping 1.8s ease-out infinite}
+
+/* ---------- collapsed chip ---------- */
+.chip{display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 16px 0 12px;border:1px solid var(--line);border-radius:99px;background:linear-gradient(150deg,var(--card),var(--bg2));color:var(--ink);font-size:13px!important;letter-spacing:.04em;box-shadow:inset 0 1px 0 #ffffff6b,0 10px 26px -14px #26311f66;animation:rise 380ms cubic-bezier(.16,1,.3,1) both}
+.chipDot{width:8px;height:8px;border-radius:50%;background:#5f8fb4;box-shadow:0 0 0 3px #5f8fb422}
+.chipDot[data-alert]{background:#c46a4a;box-shadow:0 0 0 3px #c46a4a26;animation:ping 1.8s ease-out infinite}
+
+/* ---------- speech bubble ---------- */
+.bubble{position:relative;max-width:min(270px,78vw);padding:12px 14px;border:1px solid var(--line);border-radius:16px 16px 5px 16px;background:var(--card);color:var(--ink);font-size:13px;line-height:1.6;box-shadow:0 14px 34px -18px #26311f73;transform-origin:100% 100%;animation:pop 380ms cubic-bezier(.16,1,.3,1) both}
+.bubble p{margin:0}
+/* Long replies scroll inside the bubble (swipe to read); the page underneath stays put. */
+.bubbleText{max-height:min(38svh,240px);overflow-y:auto;overscroll-behavior:contain;white-space:pre-wrap;word-break:break-word;scrollbar-width:thin;-webkit-mask-image:linear-gradient(#000 calc(100% - 10px),#0000);mask-image:linear-gradient(#000 calc(100% - 10px),#0000);padding-bottom:6px}
+.bubble>div{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.bubble>div button{height:28px;padding:0 12px;border:1px solid var(--line2);border-radius:99px;background:var(--bg);font-size:12px!important}
+.bubble>div button:first-child{border-color:transparent;background:var(--ink);color:var(--bg)!important}
+
+/* ---------- chat panel ---------- */
+.panel{overscroll-behavior:contain;display:flex;flex-direction:column;width:min(348px,calc(100vw - 24px));height:min(520px,calc(100svh - 150px));border:1px solid var(--line);border-radius:20px;background:color-mix(in srgb,var(--card) 94%,transparent);-webkit-backdrop-filter:blur(14px) saturate(130%);backdrop-filter:blur(14px) saturate(130%);box-shadow:inset 0 1px 0 #ffffff5c,0 28px 60px -28px #26311f80;overflow:hidden;transform-origin:100% 100%;animation:pop 380ms cubic-bezier(.16,1,.3,1) both}
+.panelHead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 14px 12px 18px;border-bottom:1px solid var(--line)}
+.panelHead strong{display:block;font-size:15px;font-weight:600;letter-spacing:.02em}
+.panelHead span{display:block;margin-top:2px;font-size:10.5px;letter-spacing:.06em;color:var(--ink3)}
+.headActions{display:flex;align-items:center;gap:6px}
+.headActions button{height:28px;min-width:28px;padding:0 10px;display:grid;place-items:center;border:1px solid var(--line);border-radius:99px;background:transparent;font-size:12px!important;color:var(--ink2)}
+.headActions button:disabled{opacity:.4;cursor:default}
+.headActions svg{width:12px;height:12px;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;fill:none}
+.log{flex:1;overflow-y:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:8px;padding:16px 14px;scrollbar-width:thin}
+.log p{margin:0;max-width:86%;padding:9px 13px;font-size:13.5px;line-height:1.62;white-space:pre-wrap;word-break:break-word;animation:enter 320ms cubic-bezier(.16,1,.3,1) both}
+.her{align-self:flex-start;border-radius:14px 14px 14px 5px;background:var(--track);color:var(--ink)}
+.me{align-self:flex-end;border-radius:14px 14px 5px 14px;background:var(--ink);color:var(--bg)}
+.system{align-self:flex-start;border:1px dashed var(--line2);border-radius:12px;color:var(--ink2);font-size:12.5px!important}
+.empty{align-self:center!important;max-width:88%!important;text-align:center;color:var(--ink3);font-size:12.5px!important;background:none}
+.typing{align-self:flex-start;display:inline-flex;align-items:center;padding:11px 14px!important;border-radius:14px 14px 14px 5px;background:var(--track);color:var(--ink2)}
+.suggest{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 12px}
+.suggest button{padding:6px 11px;border:1px solid var(--line);border-radius:99px;background:var(--bg);font-size:12px!important;color:var(--ink2);text-align:left}
+.form{display:flex;align-items:flex-end;gap:8px;padding:10px 12px;border-top:1px solid var(--line)}
+.form textarea{flex:1;min-height:38px;max-height:120px;padding:9px 12px;border:1px solid var(--line);border-radius:14px;background:var(--bg);color:var(--ink);font:inherit;font-size:13.5px;line-height:1.45;resize:none;field-sizing:content}
+.form textarea{min-width:0}
+/* One line under the chat: the notice that she reads the page, and a folded tray for pictures. */
+.vision{flex-shrink:0;border-top:1px solid var(--line);background:color-mix(in srgb,var(--track) 35%,transparent);max-height:210px;overflow:auto}
+.vision details>summary{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 14px;list-style:none;cursor:pointer;-webkit-user-select:none;user-select:none}
+.vision details>summary::-webkit-details-marker{display:none}
+.vision details>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.notice{display:flex;align-items:center;gap:6px;min-width:0;font-size:10.5px;letter-spacing:.02em;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.notice::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:#5f8fb4;box-shadow:0 0 0 2px #5f8fb422}
+.tray{display:inline-flex;align-items:center;gap:4px;flex:none;font-size:11px;color:var(--ink2)}
+.tray svg{width:10px;height:10px;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;fill:none;transition:rotate 220ms cubic-bezier(.16,1,.3,1)}
+.vision details[open] .tray svg{rotate:180deg}
+.vision details>:not(summary){margin-left:14px;margin-right:14px}
+.vision details>:last-child{margin-bottom:10px}
+.vision p{font-size:10px;line-height:1.5;color:var(--ink3);margin:0 14px 6px}
+.visionActions{display:flex;flex-wrap:wrap;gap:6px}.vision button{border:1px solid var(--line);border-radius:99px;background:var(--card);padding:5px 10px;font-size:11px!important;transition:background .2s}.vision button:disabled{opacity:.4;cursor:default}
+.screenPreview{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}.screenPreview span{display:flex;align-items:center;gap:8px}.screenPreview img{max-width:110px;height:58px;object-fit:contain;border-radius:8px;border:1px solid var(--line)}
+@media(prefers-reduced-motion:reduce){.tray svg{transition:none}}
+
+/* Search sources under her reply, and the confirm card for risky clicks. */
+.sources{display:flex;flex-wrap:wrap;gap:4px 8px;margin-top:6px;font-size:11px}
+.sources a{color:var(--ink2);text-decoration:underline;text-decoration-color:var(--line2);text-underline-offset:2px}
+.confirm{align-self:stretch;display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid #c46a4a55;border-radius:12px;background:color-mix(in srgb,#c46a4a 7%,var(--card));font-size:12.5px;line-height:1.55;animation:enter 320ms cubic-bezier(.16,1,.3,1) both}
+.confirm div{display:flex;gap:6px}
+.confirm button{height:28px;padding:0 12px;border:1px solid var(--line2);border-radius:99px;background:var(--bg);font-size:12px!important}
+.confirm[data-tone="look"]{border-color:#5f8fb455;background:color-mix(in srgb,#5f8fb4 8%,var(--card))}
+.confirm div{flex-wrap:wrap}
+.vision .linkish{border:0;background:none;padding:0 0 0 6px;font-size:10px!important;color:var(--ink2);text-decoration:underline;text-underline-offset:2px}
+.confirm button:first-child{border-color:transparent;background:var(--ink);color:var(--bg)!important}
+.log{min-height:65px}.panelHead,.form,.credit{flex-shrink:0}.suggest{max-height:66px;overflow:auto}
+.form textarea::placeholder{color:var(--ink3)}
+.form button{height:38px;padding:0 16px;border:0;border-radius:99px;background:var(--ink);color:var(--bg)!important;font-size:13px!important;font-weight:500}
+.form button:disabled{opacity:.35;cursor:default}
+.credit{padding:8px 16px 12px;font-size:10px;line-height:1.6;letter-spacing:.02em;color:var(--ink3)}
+.credit a{color:inherit;text-decoration:underline;text-decoration-color:var(--line2);text-underline-offset:2px}
+
+[data-compact] .panel{height:min(470px,calc(100svh - 120px))}
+
+@keyframes rise{from{opacity:0;transform:translateY(14px)}}
+@keyframes pop{from{opacity:0;transform:translateY(8px) scale(.97)}}
+@keyframes enter{from{opacity:0;transform:translateY(6px)}}
+@keyframes ping{0%{box-shadow:0 0 0 0 #c46a4a55}70%,100%{box-shadow:0 0 0 9px #c46a4a00}}
+
+@media(prefers-reduced-motion:reduce){
+  .figure,.chip,.bubble,.panel,.log p{animation:fade 160ms linear both}
+  .alertDot,.chipDot[data-alert]{animation:none}
+  .collapse{transition:opacity 160ms}
+  .figure[data-walking] canvas{animation:none}
+}
+@keyframes fade{from{opacity:0}}
+
+/* ---------- a photo dragged over her ---------- */
+.root[data-dropping] .figure,.root[data-dropping] .chip,.root[data-dropping] .panel{outline:2px dashed var(--accent);outline-offset:6px;border-radius:24px}
+.root[data-dropping] .figure canvas{filter:drop-shadow(0 0 18px color-mix(in srgb,var(--accent) 45%,transparent))}
+.bubble[data-drop]{border-color:var(--accent)}

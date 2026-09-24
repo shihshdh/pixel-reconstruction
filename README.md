@@ -1,168 +1,114 @@
+# Pixel Reconstruction
 
+把一张照片重建成可以在浏览器里浏览的 3D 高斯泼溅（Gaussian Splatting）场景。
 
-照片 → Apple SHARP 高斯泼溅 → 3D 场景 + 云端渲染的运镜视频。
+在线地址：<https://pixel-reconstruction.netlify.app>
 
-整条链路
+重建使用 Apple 的 [SHARP](https://github.com/apple/ml-sharp) 模型，在云端 GPU 上完成单图推理；查看、运镜和视频导出都在浏览器本地进行。
 
-浏览器                Modal 云端 (A10G GPU)
-┌──────────┐  POST /generate   ┌──────────────────────┐
-│ Next.js  │ ────────────────► │ sharp predict → .ply │
-│ 前端     │  轮询 /status     │ sharp render  → .mp4 │
-│          │ ◄──────────────── │ 存进云端硬盘(Volume) │
-│ 3D查看器 │  GET /file/...    └──────────────────────┘
-└──────────┘ ◄──── .ply / .mp4 直接拉回来
+## 功能
 
----
+- **重建**：上传一张照片（JPG / PNG / WebP / HEIC，20MB 以内），云端生成高斯泼溅场景，一般在一分钟左右完成。首次唤醒 GPU 会更慢。
+- **查看**：鼠标拖动转向、滚轮推拉。电脑上可用 W/A/S/D 前后左右移动，空格上升，Shift 下降。
+- **运镜与导出**：内置 14 种镜头轨迹，可以串成一条序列预览，再用 WebCodecs 在本地编码成 MP4。
+- **修图后重建**：用自然语言调用豆包 Seedream 修图、扩图，满意后用新图重新生成场景。
+- **作品库**：原图和场景文件保存在浏览器 IndexedDB 中，离线也能打开。
+- **助手**：页面右下角的 Live2D 形象，通过 DeepSeek 回答使用问题。用户同意后，它可以读取当前页面或截图。
 
-## 本地硬件
-
-本地开发可以完全不花钱：见 `backend/本地GPU指南.md`。下面的五步是云端（Modal）路线，两条路前端通用。
-
----
-
-## 第 1 步 · 装基础工具
-**Node.js**（跑前端）和 **Python**（用来操作 Modal）。
-
-1. Node.js：去 https://nodejs.org 下载 **LTS 版**，一路下一步安装。
-2. Python：去 https://www.python.org/downloads/ 下载 3.11 或 3.12。
-   安装第一屏**务必勾选 "Add python.exe to PATH"**，不然后面命令找不到。
-
-装完后，打开一个**新的** PowerShell 窗口（旧窗口读不到新 PATH），验证：
-
-```powershell
-node -v        # 出现 v20.x 或 v22.x
-python --version   # 出现 Python 3.11.x / 3.12.x
-```
-
-✅ 两条命令都能打印版本号，第 1 步完成。
-
----
-
-## 第 2 步 · 注册并登录 Modal
-
-Modal 是 serverless GPU 平台：有请求才开机计费，没人用就是 0 成本，
-注册自带每月免费额度（目前每月 30 美元，够你生成几百上千张）。
-
-> 国内访问 modal.com 需要先开代理（Clash 打开系统代理）。
-
-```powershell
-pip install modal
-modal setup
-```
-
-`modal setup` 会弹浏览器让你登录/注册（用 GitHub 账号最快），
-授权后回到终端，看到 `Token verified` 之类的成功提示即可。
-
-**如果报错 `modal : 无法将"modal"项识别为 cmdlet…`**：
-这是 Python 的 Scripts 目录没在 PATH 里。临时解法（每开一个新终端要重跑）：
-
-```powershell
-$env:Path += ";$env:APPDATA\Python\Python312\Scripts"
-```
-
-一劳永逸的解法：
-
-```powershell
-[Environment]::SetEnvironmentVariable(
-  "Path",
-  $env:Path + ";$env:APPDATA\Python\Python312\Scripts",
-  "User")
-```
-
-（路径里的 `Python312` 按你实际装的版本改；执行完**重开终端**。）
-
-✅ `modal --help` 能打印帮助信息，第 2 步完成。
-
----
-
-## 第 3 步 · 部署 GPU 后端
-
-在项目根目录（能看到 `backend` 和 `app` 两个文件夹的那层）执行：
-
-```powershell
-modal deploy backend/sharp_inference.py
-```
-
-第一次部署会**构建镜像**：装 CUDA 环境、克隆 Apple 的 ml-sharp、
-预下载 1.4GB 模型权重。终端会一直滚日志，10~20 分钟属于正常，去喝杯水。
-（以后再 deploy 都是秒级，镜像有缓存。）
-
-结束时终端会打印类似这样的一行：
+## 架构
 
 ```
-└── 🔨 Created web function api =>
-    https://xxxxx--sharp-web-api.modal.run
+浏览器（Next.js 静态站点，托管在 Netlify）
+  │
+  ├─ /scene-file/*  ──  Netlify Edge Function，同源转发场景文件
+  │
+  └─ HTTPS  ──►  Beam CPU 网关（FastAPI）
+                    │  任务授权、签名下载、修图、助手对话
+                    ▼
+                 Beam GPU 队列（RTX 4090，按需启动）
+                    │  SHARP 推理 → PLY → 浏览器用 .splat
+                    ▼
+                 持久卷：任务状态、生成结果、模型权重缓存
 ```
 
-**把这个 URL 复制下来**，下一步要用。
+- 只有“生成”和“重新生成”会唤醒 GPU。浏览、轮询状态、下载和修图都在 CPU 网关上处理。
+- GPU 和 CPU 服务都配置为最少 0 个实例、不保温，没有请求时自动缩容。
+- 每个任务有独立的随机 Token，服务端只保存哈希。文件通过 24 小时有效的签名链接下载。
 
-✅ 看到 `modal.run` 结尾的 URL，第 3 步完成。
-（也可以登录 modal.com 控制台，在 Apps 里看到 `sharp-web`。)
+接口和部署细节见 [backend/beam/README.md](backend/beam/README.md)。
 
----
+## 目录
 
-## 第 4 步 · 本地跑前端
-
-1. 把 `.env.local.example` 复制一份，改名为 `.env.local`，
-   填入刚才的 URL（结尾不要带 `/`）：
-
-   ```
-   NEXT_PUBLIC_MODAL_API=https://xxxxx--sharp-web-api.modal.run
-   ```
-
-2. 装依赖。国内直连 npm 很慢，先切镜像：
-
-   ```powershell
-   npm config set registry https://registry.npmmirror.com
-   npm install
-   ```
-
-3. 启动：
-
-   ```powershell
-   npm run dev
-   ```
-
-浏览器打开 http://localhost:3000 ，把一张照片拖进"片门"。
-
-**关于第一次生成**：刚部署完的第一张图最慢——GPU 冷启动 + 渲染内核
-若需现场编译，可能要 2~3 分钟，页面上有提示。之后容器保温 5 分钟，
-连续生成大约 20~40 秒一张（推理本身不到 1 秒，时间主要花在
-渲染运镜视频和传输上）。
-
-✅ 能看到 3D 场景转起来、运镜视频能播放，第 4 步完成。核心功能已经全通了。
-
----
-
-## 第 5 步 · 上线到公网
-
-前端是纯静态调用，部署到 Vercel 免费档就够。最快的方式：
-
-```powershell
-npm i -g vercel
-vercel
+```
+app/                     页面入口（Next.js App Router，静态导出）
+components/              查看器、运镜、显影动画、助手等组件
+lib/                     后端通信、下载与续传、作品库存储
+backend/beam/            Beam 后端：CPU 网关、GPU worker、授权与签名、测试
+backend/local_server.py  本地 GPU 后端（可选），说明见 backend/本地GPU指南.md
+netlify/edge-functions/  场景文件转发
+public/                  首页示例场景、演示视频、品牌素材、Live2D 模型
+scripts/                 发布检查、部署辅助与浏览器验证脚本
+docs/                    开发与验收记录
 ```
 
-跟着提示登录（GitHub 账号）、一路回车接受默认值。部署完成后：
+## 本地运行
 
-1. 去 vercel.com 打开这个项目 → **Settings → Environment Variables**，
-   添加 `NEXT_PUBLIC_MODAL_API` = 你的 Modal URL。
-2. 重新部署一次让环境变量生效：`vercel --prod`。
+需要 Node.js 20 或更高版本。
 
-注意：`*.vercel.app` 域名在国内裸连不稳定，自己用挂代理没问题；
-想让朋友直接打开，可以在 Vercel 绑一个自己的域名。
+```sh
+npm install
+cp .env.local.example .env.local   # 填入 NEXT_PUBLIC_BEAM_API
+npm run dev
+```
 
----
+然后打开 <http://localhost:3000>。
 
-## 常见报错
+`NEXT_PUBLIC_BEAM_API` 是 CPU 网关的公开地址，会被打包进前端代码，所以这里只能填地址，不能填任何密钥。Beam Token、DeepSeek 和豆包的 Key 都放在 Beam Secrets 里，只在服务端使用。
 
-| 现象 | 原因与解法 |
-| --- | --- |
-| `modal` 命令不存在 | Python Scripts 不在 PATH，见第 2 步 |
-| `modal deploy` 卡很久 | 第一次构建镜像就是要 10~20 分钟，看日志在滚就别动它 |
-| 页面提示"还没配置后端地址" | `.env.local` 没建或没填，改完要重启 `npm run dev` |
-| 第一张图等了 3 分钟 | 冷启动 + 内核编译，仅首次；不放心可去 Modal 控制台看实时日志 |
-| `npm install` 龟速/失败 | 先执行第 4 步里的切镜像命令 |
-| 状态返回 error | 把页面上的报错全文发给 Claude，里面带着 GPU 端日志尾巴 |
-| .ply 加载很慢 | 文件可能上百兆，正常；查看器是边下边渲染的 |
+如果有自己的 NVIDIA 显卡，也可以不用云端：按 `backend/本地GPU指南.md` 启动本地后端，然后在本地页面把后端切换到 `http://localhost:8000`。
 
+## 部署
+
+**前端**
+
+```sh
+npm run build                     # 输出到 out/
+node scripts/check-release.cjs    # 检查发布包里有没有密钥或私有目录
+netlify deploy --dir=out --prod
+```
+
+发布时要连同 `netlify/edge-functions/` 一起部署，只上传 `out/` 的静态文件是不够的。更换 CPU 网关地址时，要同时修改 `.env.local` 和 `netlify/edge-functions/scene-file.ts` 里写死的网关地址。
+
+**后端**
+
+在 Linux 或 WSL 环境中安装 `beam-client` 并登录，然后在 `backend/beam/` 目录下执行：
+
+```sh
+beam deploy beam_app.py:gpu
+beam deploy beam_app.py:api
+```
+
+需要配置哪些 Secrets、如何限制额度，见 [backend/beam/README.md](backend/beam/README.md)。
+
+**测试**
+
+```sh
+npm run build                                                        # 类型检查与构建
+python -m unittest discover -s backend/beam -p "test_*.py"           # 后端离线测试
+```
+
+## 已知限制
+
+- 单张照片只包含一个视角的信息，被遮挡的部分无法可靠还原。转动角度太大时画面会穿帮，这不是 360° 重建。
+- 作品库保存在浏览器本地，清理站点数据或使用隐私模式后会丢失。需要长期保留的作品请下载原始 PLY。
+- 应用默认每天最多 30 次生成、30 次修图，这只是应用层的保护，不是账户的费用上限。费用以 Beam 和豆包的实际账单为准，可参考[开发记录](docs/开发记录.md)中的成本估算。
+- 场景文件通常有几十 MB，网络慢时首次加载需要较长时间。
+
+## 第三方组件与许可
+
+- [SHARP](https://github.com/apple/ml-sharp)：Apple 的单图 3D 重建模型，代码和权重按其原始许可使用，本仓库不包含模型权重。
+- [GaussianSplats3D](https://github.com/mkkellogg/GaussianSplats3D)：浏览器端高斯泼溅渲染。
+- 助手形象：《DeepSeek 鲸鱼娘》Live2D 模型，作者 B 站 [@氵六青](https://space.bilibili.com/11272072)，按 CC BY-NC-SA 4.0 原样使用，不得用于商业用途，详见 `public/companion/whale/` 下的许可文件。
+- Live2D Cubism Core（`public/companion/live2dcubismcore.min.js`）：Live2D Inc. 的专有软件，按其再分发条款随应用提供。
+
+除上述第三方内容外，本仓库暂未指定开源许可证。

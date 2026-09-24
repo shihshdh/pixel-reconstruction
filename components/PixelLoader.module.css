@@ -1,0 +1,20 @@
+/* 2×2 cells, 5:2 square-to-gap like the logo's pixel column (a step is 140% of a square). One cycle is four quarter steps:
+   every square rests, then travels to the next cell clockwise with an in-out move. */
+.loader{--pl:12px;position:relative;display:inline-block;flex:none;width:var(--pl);height:var(--pl);vertical-align:middle}
+.loader>i{position:absolute;left:0;top:0;display:block;width:calc(var(--pl) * .4166);height:calc(var(--pl) * .4166);border-radius:22%;background:currentColor;animation:orbit 1.6s cubic-bezier(.65,0,.2,1) infinite}
+/* Head first, then the tail counter-clockwise behind it; the dimmest square is the one it chases. */
+.loader>i:nth-child(1){opacity:1}
+.loader>i:nth-child(2){opacity:.18;transform:translate(140%,0);animation-delay:-.4s}
+.loader>i:nth-child(3){opacity:.36;transform:translate(140%,140%);animation-delay:-.8s}
+.loader>i:nth-child(4){opacity:.64;transform:translate(0,140%);animation-delay:-1.2s}
+/* The timing function applies per segment, so each move eases in and out and each hold stays still. */
+@keyframes orbit{
+  0%,7%{transform:translate(0,0)}
+  25%,32%{transform:translate(140%,0)}
+  50%,57%{transform:translate(140%,140%)}
+  75%,82%{transform:translate(0,140%)}
+  100%{transform:translate(0,0)}
+}
+@keyframes walk{0%,100%{opacity:.22}25%{opacity:1}60%{opacity:.36}}
+/* Reduced motion: the squares stay put and the brightness walks around instead. */
+@media(prefers-reduced-motion:reduce){.loader>i{animation:walk 1.6s ease-in-out infinite}.loader>i:nth-child(1){animation-delay:0s}}

@@ -1,0 +1,21 @@
+{
+  "sourceSplats": 1179648,
+  "compressionLevel": 1,
+  "seed": 9131,
+  "variants": [
+    {
+      "name": "landing.ksplat",
+      "sampledSplats": 826039,
+      "bytes": 19849272,
+      "fraction": 0.7,
+      "scale": 1.12
+    },
+    {
+      "name": "landing-lo.ksplat",
+      "sampledSplats": 472688,
+      "bytes": 11362000,
+      "fraction": 0.4,
+      "scale": 1.3
+    }
+  ]
+}

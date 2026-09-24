@@ -1,0 +1,37 @@
+MIT License
+
+Copyright (c) 2026 Alps-Link
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------------
+
+上述 MIT 许可仅覆盖本仓库作者自己编写的部分：代码（`桌宠合集/*/*.py`、
+`桌宠合集/*/run.bat`）、`tools/` 脚本、`角色设定/` 人设档案与文档。
+
+不包含、也不得由本许可推导出任何权利的部分：
+
+- Live2D 角色模型与贴图（`live2d_viewer/`、`LIVE2D/`）：游戏内解包素材，
+  未随仓库分发；
+- 内置音乐（`music_starter/`）：来源与授权未确认，未随仓库分发；
+- 语音模型与向量模型（`models/`）：sherpa-onnx（Apache-2.0）与 BAAI bge
+  的官方发布物，各自遵循其原始许可；
+- `桌宠合集/_pylibs/`：为方便一处管理而随仓库分发的第三方库，各自遵循其
+  原始许可（sherpa-onnx：Apache-2.0；pypinyin：MIT），许可原文随包保留在
+  各自的 `dist-info` 目录中。
