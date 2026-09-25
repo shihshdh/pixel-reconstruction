@@ -14,7 +14,8 @@ export function announceMoment(moment: CompanionMoment) {
 export type UploadAnswer = "started" | "busy" | "unavailable";
 export type UploadRequest = { file: File; answer: (result: UploadAnswer) => void };
 export const UPLOAD_REQUEST_EVENT = "companion:upload";
-export const PHOTO_LIMIT = 20 * 1024 * 1024;
+// Larger photos are compressed to fit 20MB in the browser before upload (lib/photo-prep).
+export const PHOTO_LIMIT = 50 * 1024 * 1024;
 
 /** The same formats and size the create page accepts. */
 export function isDevelopablePhoto(file: File) {

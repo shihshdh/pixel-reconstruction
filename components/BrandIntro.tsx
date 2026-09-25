@@ -1,11 +1,13 @@
 "use client";
 
-// Opening title. Four pixels gather out of a drifting pixel field, the volume draws
-// itself, the name arrives beside it, and the lockup flies into the landing header
-// while the field rushes past like parallax layers and the scene opens underneath.
+// Opening title on a white page. Four liquid-glass pixels fly in and settle, the volume draws
+// itself, the name arrives beside it, and the lockup flies into the landing header while the
+// scene opens underneath.
 //
 // Everything that moves is an HTML transform/opacity animation, so it keeps running
-// on the compositor while the landing scene downloads and parses on the main thread.
+// on the compositor while the landing scene downloads and parses on the main thread. The glass
+// pixels are drawn by WebGL in a worker (lib/intro-glass.ts) on the same clock; without it the flat
+// HTML pixels stay.
 // The timeline is plain CSS and starts at first paint (the markup is prerendered and
 // a boot script in <head> arms it); script only adds skip, pointer parallax and the
 // measured landing flight. It plays on every full page load; in-site navigation never replays it.
@@ -13,6 +15,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import BrandMark from "./BrandMark";
 import { INTRO_TEMPO, INTRO_TIME } from "@/lib/intro";
+import { startGlass, type GlassGeometry, type GlassHandle, type GlassTimeline } from "@/lib/intro-glass";
 import landing from "./LandingExperience.module.css";
 import s from "./BrandIntro.module.css";
 
@@ -24,13 +27,13 @@ const EASE_TRAVEL = "cubic-bezier(.65,0,.2,1)";
 // ---------- mark geometry (the BrandMark 64-unit grid) ----------
 const pct = (v: number) => `${+(v / 64 * 100).toFixed(4)}%`;
 
-/** The logo's four pixels, each arriving from a different corner of the field. */
+/** The logo's four pixels, each arriving from a different corner of the screen. */
 const PIXELS = [
-  { x: 4, y: 12, o: .36, d: 500, from: "translate(-170px,-96px) rotate(-120deg) scale(1.9)" },
-  { x: 17, y: 5, o: .64, d: 680, from: "translate(64px,-150px) rotate(96deg) scale(1.6)" },
-  { x: 4, y: 27, o: .64, d: 860, from: "translate(-232px,22px) rotate(-72deg) scale(2.1)" },
-  { x: 4, y: 42, o: 1, d: 1040, from: "translate(-92px,142px) rotate(140deg) scale(1.7)" },
-];
+  { x: 4, y: 12, o: .36, d: 500, tx: -170, ty: -96, r: -120, s: 1.9 },
+  { x: 17, y: 5, o: .64, d: 680, tx: 64, ty: -150, r: 96, s: 1.6 },
+  { x: 4, y: 27, o: .64, d: 860, tx: -232, ty: 22, r: -72, s: 2.1 },
+  { x: 4, y: 42, o: 1, d: 1040, tx: -92, ty: 142, r: 140, s: 1.7 },
+].map(pixel => ({ ...pixel, from: `translate(${pixel.tx}px,${pixel.ty}px) rotate(${pixel.r}deg) scale(${pixel.s})` }));
 
 type Point = [number, number];
 const TOP: Point = [37, 12], BOTTOM: Point = [37, 59], CENTER: Point = [37, 36];
@@ -109,42 +112,14 @@ PIXELS.forEach((pixel, i) => { DRAW_CSS += `@keyframes pr-intro-px${i}{from{tran
 DRAW_CSS += "@keyframes pr-intro-fade{from{opacity:0}}";
 const pixelAnimation = (i: number) =>
   `pr-intro-px${i} ${T(1500)}ms cubic-bezier(.22,1,.36,1) ${T(PIXELS[i].d)}ms both, pr-intro-fade ${T(700)}ms linear ${T(PIXELS[i].d)}ms both`;
-
-// ---------- pixel field: three depths, deterministic so server and client agree ----------
-function random(seed: number) {
-  return () => {
-    seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-const DEPTHS = [
-  { name: "far", count: 30, size: [3, 5], alpha: [.12, .28], seed: 11 },
-  { name: "mid", count: 16, size: [6, 9], alpha: [.1, .22], seed: 29 },
-  { name: "near", count: 8, size: [13, 19], alpha: [.05, .11], seed: 47 },
-] as const;
-const FIELD = DEPTHS.map(depth => {
-  const next = random(depth.seed);
-  const squares: { style: CSSProperties; accent: boolean }[] = [];
-  while (squares.length < depth.count) {
-    const x = 3 + next() * 94, y = 4 + next() * 92;
-    // Keep the centre clear for the lockup.
-    if (((x - 50) / 36) ** 2 + ((y - 50) / 21) ** 2 < 1 || Math.abs(y - 50) < 8) continue;
-    const size = Math.round(depth.size[0] + next() * (depth.size[1] - depth.size[0]));
-    const alpha = depth.alpha[0] + next() * (depth.alpha[1] - depth.alpha[0]);
-    // Outer pixels surface first, as if the field were gathering inward.
-    const reach = Math.min(1, Math.hypot((x - 50) / 50, (y - 50) / 50));
-    const delay = Math.round(80 + (1 - reach) * 620 + next() * 260);
-    squares.push({
-      accent: next() < .24,
-      style: { left: `${+x.toFixed(2)}%`, top: `${+y.toFixed(2)}%`, width: size, height: size, opacity: +alpha.toFixed(3), animationDelay: `${T(delay)}ms` },
-    });
-  }
-  return { name: depth.name, squares };
-});
-/** How far each depth rushes past the camera when the title opens into the scene. */
-const RUSH = [1.14, 1.42, 2.1];
+/** The same motion for the WebGL glass pixels. Zoom and slide times are the literal ones in
+ *  BrandIntro.module.css (.zoom, .slide): keep them in step. */
+const GLASS_TIMELINE: GlassTimeline = {
+  pixels: PIXELS.map(pixel => ({ x: pixel.x, y: pixel.y, o: pixel.o, delay: T(pixel.d), duration: T(1500), fade: T(700), tx: pixel.tx, ty: pixel.ty, rot: pixel.r, scale: pixel.s })),
+  zoom: { duration: 7020, from: .9 },
+  slide: { delay: 6278, duration: 1553 },
+};
+const easeZoom = bezier(.16, 1, .3, 1);
 
 const letters = (text: string, offset: number) => text.split("").map((character, index) =>
   <span key={index} className={s.letter} style={{ animationDelay: `${T(4800 + (offset + index) * 48)}ms` }}>{character}</span>);
@@ -154,12 +129,16 @@ export default function BrandIntro() {
   const [running, setRunning] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
+  const glassRef = useRef<HTMLCanvasElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const slideRef = useRef<HTMLDivElement>(null);
+  const markRef = useRef<HTMLSpanElement>(null);
+  const probeRef = useRef<HTMLSpanElement>(null);
   const glowRef = useRef<HTMLDivElement>(null);
   const flightRef = useRef<HTMLDivElement>(null);
   const lockupRef = useRef<HTMLDivElement>(null);
   const targetRef = useRef<HTMLDivElement>(null);
   const skipRef = useRef<HTMLSpanElement>(null);
-  const layerRefs = useRef<(HTMLDivElement | null)[]>([]);
   const skipRequest = useRef<(reason: string) => void>(() => {});
   // ?introdebug shows a small status line, so the title can be diagnosed from a phone screenshot.
   const [debug, setDebug] = useState("");
@@ -188,7 +167,6 @@ export default function BrandIntro() {
     setRunning(true);
 
     const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const layers = layerRefs.current.filter(Boolean) as HTMLDivElement[];
     let phase: "play" | "leaving" | "done" = "play";
     let frame = 0;
     let timer = 0;
@@ -196,24 +174,40 @@ export default function BrandIntro() {
     const debugTimer = /[?&]introdebug\b/.test(location.search) ? window.setInterval(() => setDebug(
       `开屏调试 · 减少动态效果:${reduced ? "开" : "关"} · 阶段:${phase} · ${Math.round(elapsed())}ms${skippedBy ? " · 跳过:" + skippedBy : ""} · ${window.innerWidth}×${window.innerHeight}`), 200) : 0;
     const settle = (duration: number, easing = EASE): KeyframeAnimationOptions => ({ duration, easing, fill: "forwards" });
-    const close = () => { phase = "done"; setLive(false); };
+    // Liquid-glass pixels (WebGL, off the main thread where possible). The flat HTML pixels hide
+    // only once the glass has drawn, and come back for the flight into the header.
+    const measure = (): GlassGeometry | null => {
+      const stage = stageRef.current, slide = slideRef.current, mark = markRef.current, probe = probeRef.current;
+      if (!stage || !slide || !mark || !probe || !mark.offsetWidth) return null;
+      const st = stage.getBoundingClientRect(), sl = slide.getBoundingClientRect(), mk = mark.getBoundingClientRect();
+      const k = mk.width / mark.offsetWidth;   // current stage scale x zoom
+      if (!k) return null;
+      const zoom = GLASS_TIMELINE.zoom.from + (1 - GLASS_TIMELINE.zoom.from) * easeZoom(Math.min(1, elapsed() / GLASS_TIMELINE.zoom.duration));
+      return { cx: st.left, cy: st.top, scale: k / zoom, lx: (mk.left - sl.left) / k, ly: (mk.top - sl.top) / k, box: mark.offsetWidth, slideX: -probe.offsetWidth / 2 };
+    };
+    let glass: GlassHandle | null = null;
+    const canvas = glassRef.current;
+    const flat = () => root.removeAttribute("data-glass");
+    if (!reduced && canvas) glass = startGlass(canvas, startedAt, GLASS_TIMELINE, measure, () => { if (phase === "play") root.setAttribute("data-glass", ""); }, flat);
+    const close = () => { phase = "done"; glass?.stop(); glass = null; setLive(false); };
 
     // Cross-fade out (reduced motion, or skipped before the lockup has formed).
     const dissolve = () => {
       phase = "leaving";
+      glass?.leave(); flat();
       html.removeAttribute("data-intro");
       root.style.pointerEvents = "none";
-      if (!reduced) layers.forEach((layer, i) => layer.animate({ transform: `scale(${RUSH[i]})`, opacity: 0 }, settle(640 + i * 60)));
       root.animate({ opacity: 0 }, settle(reduced ? 420 : 520, EASE_SOFT)).finished.then(close, close);
     };
 
-    // The lockup flies into the landing header while the field rushes past and the scene opens.
+    // The lockup flies into the landing header while the page gives way to the scene.
     const land = () => {
       const lockup = lockupRef.current, target = targetRef.current, flight = flightRef.current;
       if (!lockup || !target || !flight) return dissolve();
       const from = lockup.getBoundingClientRect(), to = target.getBoundingClientRect();
       if (!from.width || !to.width) return dissolve();
       phase = "leaving";
+      glass?.leave(); flat();
       html.setAttribute("data-intro", "land");
       root.style.pointerEvents = "none";
       const k = to.width / from.width;
@@ -221,8 +215,14 @@ export default function BrandIntro() {
       backdropRef.current?.animate({ opacity: 0 }, { ...settle(1600, EASE_SOFT), delay: 160 });
       glowRef.current?.animate({ opacity: 0 }, settle(800, EASE_SOFT));
       skipRef.current?.animate({ opacity: 0 }, settle(500, EASE_SOFT));
-      // Nearer layers rush past faster: the parallax that carries the eye into the scene.
-      layers.forEach((layer, i) => layer.animate({ transform: `scale(${RUSH[i]})`, opacity: 0 }, settle(1800 + i * 100, EASE_TRAVEL)));
+      // The white page gives way to the scene, so the blue/ink lockup takes on the header's colour
+      // on the way there (the real header mark is drawn in the landing's text colour).
+      const header = Array.from(document.querySelectorAll<HTMLElement>("." + landing.brand)).find(el => !root.contains(el));
+      const color = header && getComputedStyle(header).color;
+      if (color) {
+        lockup.animate({ color: [getComputedStyle(lockup).color, color] }, settle(INTRO_TIME.flight, EASE_SOFT));
+        markRef.current?.animate({ color: [getComputedStyle(markRef.current).color, color] }, settle(INTRO_TIME.flight, EASE_SOFT));
+      }
       flying.finished.then(() => {
         // The real header mark appears underneath, exactly where the lockup landed; fade the copy off it.
         html.removeAttribute("data-intro");
@@ -256,7 +256,7 @@ export default function BrandIntro() {
       event.stopPropagation();
       skip("按键");
     };
-    // Pointer parallax: nearer layers drift further against the cursor.
+    // The pointer steers the light on the glass.
     const point = { x: 0, y: 0 };
     const move = (event: PointerEvent) => {
       if (reduced || phase !== "play" || event.pointerType !== "mouse") return;
@@ -265,8 +265,7 @@ export default function BrandIntro() {
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
-        root.style.setProperty("--px", point.x.toFixed(3));
-        root.style.setProperty("--py", point.y.toFixed(3));
+        glass?.pointer(point.x, point.y);
       });
     };
     window.addEventListener("keydown", key, true);
@@ -274,6 +273,7 @@ export default function BrandIntro() {
     return () => {
       window.clearTimeout(timer);
       window.clearInterval(debugTimer);
+      glass?.stop();
       if (frame) cancelAnimationFrame(frame);
       window.removeEventListener("keydown", key, true);
       window.removeEventListener("pointermove", move);
@@ -288,21 +288,18 @@ export default function BrandIntro() {
     onClick={() => skipRequest.current("点击")} onWheel={event => { if (Math.abs(event.deltaY) + Math.abs(event.deltaX) > 24) skipRequest.current("滚轮"); }}>
     <style dangerouslySetInnerHTML={{ __html: DRAW_CSS }} />
     <div ref={backdropRef} className={s.backdrop} />
-    <div className={s.field}>
-      {FIELD.map((layer, index) => <div key={layer.name} ref={el => { layerRefs.current[index] = el; }} className={`${s.layer} ${s[layer.name]}`}>
-        {layer.squares.map((square, i) => <i key={i} className={square.accent ? s.accent : undefined} style={square.style} />)}
-      </div>)}
-    </div>
     <div ref={glowRef} className={s.glow} />
 
     <div ref={flightRef} className={s.flight}>
-      <div className={s.stage}>
+      <div ref={stageRef} className={s.stage}>
         <div className={s.zoom}>
-        <div className={s.slide}>
+        <div ref={slideRef} className={s.slide}>
+          <span ref={probeRef} className={s.probe} />
           {/* Same class as the landing header lockup, so the flight ends on an exact copy. */}
           <div ref={lockupRef} className={`${landing.brand} ${s.lockup}`}>
-            <span className={s.markBox}>
+            <span ref={markRef} className={s.markBox}>
               <BrandMark size={40} className={s.real} />
+              <span className={s.glint}><i /></span>
               <span className={s.parts}>
                 {PIXELS.map((pixel, i) => <i key={i} className={s.px} style={{ left: pct(pixel.x), top: pct(pixel.y), opacity: pixel.o, animation: pixelAnimation(i) }} />)}
                 {EDGES.map(edge => <span key={edge.key} className={s.edge} style={edge.style}><i style={{ animation: edge.animation }} /></span>)}
@@ -322,6 +319,7 @@ export default function BrandIntro() {
       </div>
     </div>
 
+    <canvas ref={glassRef} className={s.glass} />
     {debug && <p className={s.debug}>{debug}</p>}
     {/* A hidden copy of the landing header: the flight's destination and the skip pill's place. */}
     <div className={`${landing.header} ${s.chrome}`}>

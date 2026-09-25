@@ -6,6 +6,7 @@ import { useState, useEffect, useRef, useCallback, type CSSProperties, type Elem
 import dynamic from "next/dynamic";
 import DevelopPainting from "@/components/DevelopPainting";
 import CompanionPageImage from "@/components/CompanionPageImage";
+import { preparePhoto, readLocalPhoto } from "@/lib/photo-prep";
 import { announceMoment, isDevelopablePhoto, UPLOAD_REQUEST_EVENT, type UploadRequest } from "@/lib/companion-moments";
 import { useScenePoster } from "@/components/ScenePoster";
 import { cacheGalleryItem, deleteGalleryItem, galleryId, isSameGalleryScene, getGalleryAsset, getGalleryScene, listGallery, setGalleryFavorite, subscribeGallery, type GalleryItem } from "@/lib/gallery-storage";
@@ -296,6 +297,14 @@ const GLOBAL_CSS = `
 .status-orb{width:7px;height:7px;background:var(--accent);border-radius:50%;box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 10%,transparent);}
 .creation-error{margin-top:24px;padding:20px;border-radius:18px;border:1px solid #bd623433;background:#bd623408;color:#a34d2e;font-size:14px;text-align:center;}
 .creation-error button{padding:10px 20px;border:0;background:var(--accent);color:white;border-radius:99px;}
+.read-bar{position:relative;height:4px;max-width:560px;margin:72px auto 8px;border-radius:99px;background:var(--line);overflow:hidden;}
+.read-bar i{position:absolute;inset:0;background:var(--accent);transform-origin:left;transition:transform .3s ease;}
+.read-bar i.waiting{animation:read-wait 1.6s ease-in-out infinite;}
+@keyframes read-wait{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.read-bar i,.read-bar i.waiting{transition:none;animation:none;}}
+.read-note{display:grid;justify-items:center;gap:12px;margin:14px auto 0;max-width:560px;text-align:center;}
+.read-note p{margin:0;font-size:13px;line-height:1.75;color:var(--ink2);}
+.read-note button{padding:8px 20px;border:1px solid var(--line);background:transparent;color:var(--ink2);border-radius:99px;font:inherit;font-size:13px;cursor:pointer;}
 @keyframes painting-light{to{transform:translateX(100%);}}
 @keyframes page-appear{from{opacity:0;transform:translate3d(0,15px,0) scale(.995);}to{opacity:1;transform:none;}}
 @keyframes page-open{from{opacity:0;transform:translate3d(15px,0,0);}to{opacity:1;transform:none;}}
@@ -593,7 +602,7 @@ function DropZone({ onFile }) {
       </div>
 
       <div className="dz-swap" style={{ color: "var(--ink3)", fontSize: 15 }}>
-        <span className="on-idle">或轻点选择 · 支持 jpg / png / webp / heic · 单张 ≤ 20MB</span>
+        <span className="on-idle">或轻点选择 · 支持 jpg / png / webp / heic · 超过 20MB 自动压缩</span>
         <span className="on-drag">松开鼠标，上传并开始重建</span>
       </div>
 
@@ -719,6 +728,8 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
   const [errMsg, setErrMsg] = useState("");
   const [stage, setStage] = useState("");
   const [renderVideo, setRenderVideo] = useState(false);
+  const [readStalled, setReadStalled] = useState(false);
+  const [readRatio, setReadRatio] = useState(0);
   const generation = useRef(0);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clockRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -757,20 +768,38 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
     };
     pollRef.current = setTimeout(poll, 1500);
   }
-  async function handleFile(file: File) {
+  const readAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => readAbort.current?.abort(), []);
+  async function handleFile(picked: File) {
     if (busyRef.current) return;
     if (!backend) { fail("云端服务暂不可用，请稍后重试。"); return; }
-    if (!isDevelopablePhoto(file)) { fail("请选择 20MB 以内的 jpg、png、webp 或 heic 图片。"); return; }
+    if (!isDevelopablePhoto(picked)) { fail("请选择 50MB 以内的 jpg、png、webp 或 heic 图片。"); return; }
     const token = ++generation.current, taskBase = backend;
     stopTimers(); pendingRef.current = null; busyRef.current = true;
-    setErrMsg(""); setElapsed(0); setPickedFile(file); setStage("照片上传中"); setPhase("uploading");
-    announceMoment({ kind: "upload", file });
+    setErrMsg(""); setElapsed(0); setPickedFile(null); setReadRatio(0); setStage("正在读取照片"); setPhase("reading");
     const started = Date.now();
     clockRef.current = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    const mb = (n: number) => (n / 1048576).toFixed(1);
     try {
+      // 先把照片完整读进内存：iCloud 占位文件要等 Windows 从云端取回，单独显示这一段
+      const controller = new AbortController();
+      readAbort.current = controller;
+      const blob = await readLocalPhoto(picked, ({ read, total, stalled }) => {
+        if (token !== generation.current) return;
+        setStage(stalled
+          ? `正在等待系统取回原图 · ${mb(read)} / ${mb(total)} MB`
+          : `正在读取照片 · ${mb(read)} / ${mb(total)} MB`);
+        setReadStalled(stalled); setReadRatio(total ? read / total : 0);
+      }, controller.signal);
+      readAbort.current = null; setReadStalled(false);
+      if (token !== generation.current) return;
+      if (blob.size > 20 * 1024 * 1024) setStage(`照片 ${mb(blob.size)} MB，正在压缩到 20MB 以内`);
+      const { file } = await preparePhoto(blob, picked.name);
+      if (token !== generation.current) return;
+      setPickedFile(file); setStage("照片上传中"); setPhase("uploading");
+      announceMoment({ kind: "upload", file });
       const { call_id } = await submitPhoto(file, renderVideo, false, taskBase, ({ sent, total, bytesPerSecond }) => {
         if (token !== generation.current) return;
-        const mb = (n: number) => (n / 1048576).toFixed(1);
         const speed = bytesPerSecond >= 1048576 ? `${mb(bytesPerSecond)} MB/s` : `${Math.round(bytesPerSecond / 1024)} KB/s`;
         setStage(total && sent < total ? `照片上传中 · ${mb(sent)} / ${mb(total)} MB · ${speed}` : "照片已上传 · 等待服务确认");
       });
@@ -778,9 +807,15 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
       stopTimers(); setPhase("processing"); setStage("已接收 · 等待 GPU 唤醒");
       const task = { id: call_id, base: taskBase, started };
       pendingRef.current = task; beginPolling(task, token);
-    } catch (e) { if (token === generation.current) fail(e instanceof Error ? e.message : "上传失败，请重试。"); }
+    } catch (e) {
+      readAbort.current = null; setReadStalled(false);
+      if (token !== generation.current) return;
+      if (e instanceof DOMException && e.name === "AbortError") { stopTimers(); busyRef.current = false; setPhase("idle"); return; }
+      fail(e instanceof Error ? e.message : "上传失败，请重试。");
+    }
   }
-  const busy = phase === "uploading" || phase === "processing";
+  const cancelReading = () => { generation.current++; readAbort.current?.abort(); readAbort.current = null; stopTimers(); busyRef.current = false; setReadStalled(false); setPhase("idle"); };
+  const busy = phase === "reading" || phase === "uploading" || phase === "processing";
   useEffect(() => { onBusy?.(busy); }, [busy, onBusy]);
   // A photo dropped on the companion arrives here and takes the same path as the drop zone.
   const handleFileRef = useRef(handleFile);
@@ -799,9 +834,14 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
       <p className="compute-note" style={{ textAlign: "center" }}>也可以在 3D 工作室里直接导出视频。</p>
     </>}
     {busy && <section className="develop-stage" aria-busy="true">
-      <DevelopPainting file={pickedFile} />
+      {phase === "reading"
+        ? <div className="read-bar" role="progressbar" aria-label="读取照片" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(readRatio * 100)}><i style={{ transform: `scaleX(${readRatio})` }} className={readStalled ? "waiting" : ""} /></div>
+        : <DevelopPainting file={pickedFile} />}
       <div className="develop-caption" role="status" aria-live="polite"><span className="status-orb" /><span key={stage.split(" · ")[0]} className="img-pop">{stage}</span><span className="develop-time">{String(Math.floor(elapsed / 60)).padStart(2, "0")}:{String(elapsed % 60).padStart(2, "0")}</span></div>
-      <p className="compute-note" style={{ textAlign: "center" }}>首次唤醒可能需要几分钟。画面展示显影过程，任务状态以云端返回为准。</p>
+      {phase === "reading" ? <div className="read-note">
+        {readStalled && <p>照片可能存放在 iCloud，Windows 正在从云端下载原图，国内网络下可能较慢。可以在资源管理器里右键照片选择“始终保留在此设备上”，下载完成后再选择会快很多。</p>}
+        <button type="button" onClick={cancelReading}>取消</button>
+      </div> : <p className="compute-note" style={{ textAlign: "center" }}>首次唤醒可能需要几分钟。画面展示显影过程，任务状态以云端返回为准。</p>}
     </section>}
     {phase === "done" && <div style={{ textAlign: "center", padding: 40 }}><OkMark /><p>显影完成，已保存到作品库。</p></div>}
     {phase === "error" && <div className="creation-error" role="alert"><p>{errMsg}</p><button onClick={() => {
@@ -1288,7 +1328,7 @@ function HomePage({ setPage, active = true, ready = true }) {
       <Reveal variant="focus" className="workflow-intro"><h2>从输入到成片。</h2><p>先建立空间，再决定怎样观看。</p><WorkflowPreview stage={workflowStage} onStageChange={setWorkflowStage} playing={workflowPlaying} onPlayingChange={setWorkflowPlaying} active={active} /></Reveal>
       <Reveal as="ol" stagger variant="unfold" className="workflow-list">
         {[
-          ["上传照片", "选择主体清晰、具有前后层次的图片。支持 JPG、PNG、WebP、HEIC，单张不超过 20MB。"],
+          ["上传照片", "选择主体清晰、具有前后层次的图片。支持 JPG、PNG、WebP、HEIC；20MB 以内原图上传，更大的照片会在本地压缩到 20MB 以内。"],
           ["调整场景与视角", "云端完成重建后，在工作室查看场景。适合原视角附近的小幅环绕与推拉，遮挡区域不等同于真实背面。"],
           ["编排运镜，导出视频", "将镜头排列为序列，调整时长后导出。原始三维文件与照片也可保存在这台设备的作品库。"],
         ].map(([title, description], index) => <li key={title}><button className="workflow-step" aria-pressed={workflowStage === index} onPointerEnter={() => selectWorkflow(index)} onFocus={() => selectWorkflow(index)} onClick={() => selectWorkflow(index)}><span>{String(index + 1).padStart(2, "0")}</span><span><strong>{title}</strong><span>{description}</span></span><i aria-hidden="true">↗</i></button></li>)}
