@@ -50,18 +50,24 @@ export function useFlipList(
   dep: unknown,
   { stagger = 0, frameRef }: { stagger?: number; frameRef?: { current: HTMLElement | null } } = {}
 ) {
-  const prev = useRef<Map<string, DOMRect>>(new Map());
+  const prev = useRef<Map<string, { x: number; y: number }>>(new Map());
   const prevHeight = useRef(0);
 
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
 
-    const next = new Map<string, DOMRect>();
+    // 相对容器、换算回未缩放的本地坐标：两次变化之间页面滚动过、或祖先被平移缩放过，
+    // 记下的旧位置依然有效（用视口坐标会让整列从错误的位置飞回来）
+    const box = el.getBoundingClientRect();
+    const scale = el.offsetWidth ? box.width / el.offsetWidth || 1 : 1;
+    const next = new Map<string, { x: number; y: number }>();
     const kids = Array.from(el.children) as HTMLElement[];
     kids.forEach((c) => {
       const k = c.dataset.flip;
-      if (k) next.set(k, c.getBoundingClientRect());
+      if (!k) return;
+      const r = c.getBoundingClientRect();
+      next.set(k, { x: (r.left - box.left) / scale, y: (r.top - box.top) / scale });
     });
     const frame = frameRef?.current;
     const height = frame?.offsetHeight ?? 0;
@@ -82,8 +88,8 @@ export function useFlipList(
       if (!now) return;
 
       if (was) {
-        const dx = was.left - now.left;
-        const dy = was.top - now.top;
+        const dx = was.x - now.x;
+        const dy = was.y - now.y;
         if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
           // 让位：老位置 → 新位置
           c.animate(

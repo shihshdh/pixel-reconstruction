@@ -689,7 +689,8 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
     setPicked([]);
   }
   function commitRemove(k: number) {
-    setSeq((s) => s.filter((x) => x.k !== k));
+    // 动画结束和兜底计时都会来一次：已经移除就保持原数组，免得 FLIP 再跑一轮
+    setSeq((s) => s.some((x) => x.k === k) ? s.filter((x) => x.k !== k) : s);
     setLeaving((set) => { if (!set.has(k)) return set; const next = new Set(set); next.delete(k); return next; });
   }
   /** 先缩成圆点再消失（CSS chipToDot），结束后才移出列表，后面的片段随即依次补位 */
