@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 // 动效地基：FLIP 让序列增删时后面的片段平滑让位
 import { prefersReduced, useFlipList } from "@/lib/motion";
 import { downloadJobFile } from "@/lib/api";
@@ -225,7 +225,12 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
   const uid = useRef(0);
   const seqIds = useMemo<Preset[]>(() => seq.map((x) => x.p), [seq]);
   const seqRef = useRef<HTMLDivElement | null>(null);
-  useFlipList(seqRef, seq);
+  const seqFieldRef = useRef<HTMLDivElement | null>(null);
+  useFlipList(seqRef, seq, { stagger: 45, frameRef: seqFieldRef });
+  // 多选标签：按勾选先后排列，「加入序列」按这个顺序追加
+  const [picked, setPicked] = useState<Preset[]>([]);
+  // 正在缩成圆点、等动画结束再真正移除的片段
+  const [leaving, setLeaving] = useState<ReadonlySet<number>>(new Set());
   const [seqPlaying, setSeqPlaying] = useState(false);
   const [err, setErr] = useState("");
   const [attempt, setAttempt] = useState(0);
@@ -665,14 +670,41 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
     }
   }
 
-  // ---- 序列编排 ----
-  function addToSeq() {
-    if (preset === "free") return;
-    setSeq((s) => [...s, { p: preset, k: ++uid.current }]);
+  // ---- 多选标签：勾上即预览这一种；取消正在预览的那个，就回到上一个勾选的 ----
+  function togglePick(p: Preset) {
+    if (picked.includes(p)) {
+      const rest = picked.filter((x) => x !== p);
+      setPicked(rest);
+      if (preset === p) selectPreset(rest[rest.length - 1] ?? "free");
+    } else {
+      setPicked([...picked, p]);
+      selectPreset(p);
+    }
   }
-  function removeFromSeq(i: number) {
-    setSeq((s) => s.filter((_, idx) => idx !== i));
+
+  // ---- 序列编排 ----
+  function addPicked() {
+    if (!picked.length) return;
+    setSeq((s) => [...s, ...picked.map((p) => ({ p, k: ++uid.current }))]);
+    setPicked([]);
+  }
+  function commitRemove(k: number) {
+    setSeq((s) => s.filter((x) => x.k !== k));
+    setLeaving((set) => { if (!set.has(k)) return set; const next = new Set(set); next.delete(k); return next; });
+  }
+  /** 先缩成圆点再消失（CSS chipToDot），结束后才移出列表，后面的片段随即依次补位 */
+  function removeFromSeq(k: number) {
     setSeqPlaying(false);
+    if (prefersReduced()) return commitRemove(k);
+    setLeaving((set) => new Set(set).add(k));
+    window.setTimeout(() => commitRemove(k), 700); // 动画事件没来（元素被隐藏等）时兜底
+  }
+  function seqFieldKey(e: ReactKeyboardEvent<HTMLDivElement>) {
+    if (e.target !== e.currentTarget || recording || (e.key !== "Backspace" && e.key !== "Delete")) return;
+    const last = [...seq].reverse().find((x) => !leaving.has(x.k));
+    if (!last) return;
+    e.preventDefault();
+    removeFromSeq(last.k);
   }
   function toggleSeqPreview() {
     const viewer = viewerRef.current;
@@ -692,8 +724,9 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
     };
   }
 
+  // 没编排序列时，导出勾选的这几种（按勾选顺序）；都没勾就导出正在预览的那一种
   const exportSeq: Preset[] =
-    seq.length > 0 ? seqIds : preset !== "free" ? [preset] : [];
+    seq.length > 0 ? seqIds : picked.length > 0 ? picked : preset !== "free" ? [preset] : [];
   const exportTotal = exportSeq.length
     ? Math.round(buildTimeline(exportSeq, true).total)
     : 0;
@@ -863,7 +896,7 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
       <div className="rig">
         {/* 运镜选择 */}
         <div className="rig-card">
-          <div className="rig-card-title">运镜 <span>选一种，预览即所见</span>
+          <div className="rig-card-title">运镜 <span>可多选，勾上即预览</span>
             <label className="perf-choice" title={perfInfo ? `当前渲染倍率 ${perfInfo.ratio.toFixed(2)}×` : undefined}>画质
               <select value={perfChoice} onChange={(e) => choosePerf(e.target.value as PerfChoice)} disabled={recording}>
                 <option value="auto">自动{perfInfo && perfChoice === "auto" ? `（${{ high: "高", mid: "均衡", low: "流畅" }[perfInfo.tier as "high"] || ""}）` : ""}</option>
@@ -884,13 +917,24 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
             {PRESETS.map((p) => (
               <button
                 key={p.id}
-                className={`key ${preset === p.id ? "active" : ""}`}
-                onClick={() => selectPreset(p.id)}
+                className="tag"
+                aria-pressed={picked.includes(p.id)}
+                data-live={preset === p.id && !seqPlaying ? "" : undefined}
+                onClick={() => togglePick(p.id)}
                 disabled={!ready || recording}
               >
+                <span className="tag-check" aria-hidden="true"><span><svg viewBox="0 0 14 14"><path d="M3 7.4 5.9 10 11 4.3" /></svg></span></span>
                 {p.name}
               </button>
             ))}
+          </div>
+          <div className="pick-actions">
+            <button className="key pick-add" onClick={addPicked} disabled={!ready || recording || picked.length === 0}
+              title="按勾选顺序追加到运镜序列末尾">
+              加入序列 <PickCount n={picked.length} />
+            </button>
+            {picked.length > 0 && <button className="key ghost" onClick={() => { setPicked([]); if (preset !== "free") selectPreset("free"); }} disabled={recording}>清除勾选</button>}
+            <span className="seq-hint">{picked.length > 0 ? `已勾选：${picked.map(nameOf).join(" → ")}` : "勾选一种或多种运镜"}</span>
           </div>
         </div>
 
@@ -898,24 +942,20 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
         <div className="rig-grid">
           <div className="rig-card">
             <div className="rig-card-title">运镜序列 <span>把多段运镜串成一条时间轴</span></div>
-            <div className="seq-area" ref={seqRef}>
-              {seq.length === 0 && <span className="seq-empty">还没有片段</span>}
-              {seq.map((it, i) => (
-                <span className="chip" key={it.k} data-flip={`c${it.k}`}>
-                  <span className="ord">{i + 1}</span>
-                  {nameOf(it.p)}
-                  <button onClick={() => removeFromSeq(i)} disabled={recording} aria-label="移除">×</button>
-                </span>
-              ))}
-              <button
-                data-flip="__add"
-                className="key ghost add"
-                onClick={addToSeq}
-                disabled={!ready || recording || preset === "free"}
-                title="把当前选中的运镜追加到序列末尾"
-              >
-                ＋ 加入当前
-              </button>
+            {/* 像输入框一样的片段栏：聚焦后按退格删最后一段 */}
+            <div className="seq-field" ref={seqFieldRef} tabIndex={seq.length ? 0 : -1} role="group"
+              aria-label="运镜序列，按退格删除最后一段" onKeyDown={seqFieldKey}>
+              <div className="seq-area" ref={seqRef}>
+                {seq.length === 0 && <span className="seq-empty" data-flip="__empty">还没有片段，在上方勾选运镜后点「加入序列」</span>}
+                {seq.map((it, i) => (
+                  <span className="chip" key={it.k} data-flip={`c${it.k}`} data-leaving={leaving.has(it.k) ? "" : undefined}
+                    onAnimationEnd={(e) => { if (e.animationName === "chipToDot") commitRemove(it.k); }}>
+                    <span className="ord">{i + 1}</span>
+                    <span className="chip-label">{nameOf(it.p)}</span>
+                    <button onClick={() => removeFromSeq(it.k)} disabled={recording || leaving.has(it.k)} aria-label={`移除 ${nameOf(it.p)}`}>×</button>
+                  </span>
+                ))}
+              </div>
             </div>
             <div className="seq-actions">
               {seq.length > 0 ? (
@@ -927,7 +967,7 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
                     清空
                   </button>
                 </>
-              ) : <span className="seq-hint">选一个运镜，点「加入当前」开始编排</span>}
+              ) : <span className="seq-hint">勾选运镜，点「加入序列」开始编排</span>}
               {exportSeq.length > 0 && <span className="total">总长 ≈ {exportTotal}s</span>}
             </div>
           </div>
@@ -964,3 +1004,13 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
   );
 }
 
+
+/** 「加入序列」上的数量：数字按增减方向滚入，角标轻跳一下（key 变化即重播 CSS 动画） */
+function PickCount({ n }: { n: number }) {
+  const last = useRef(n);
+  const dir = n < last.current ? "down" : "up";
+  useEffect(() => { last.current = n; }, [n]);
+  return <span className="pick-count" key={n} data-dir={dir} data-zero={n === 0 ? "" : undefined} aria-label={`已勾选 ${n} 种`}>
+    <b>{n}</b>
+  </span>;
+}

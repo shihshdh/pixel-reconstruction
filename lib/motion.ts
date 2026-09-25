@@ -41,12 +41,17 @@ export function prefersReduced(): boolean {
  * FLIP 列表：容器内子元素位置变化时平滑滑移，新增的元素缩放淡入。
  * 用法：给容器 ref，给每个子元素 data-flip="唯一key"。
  * 只动 transform，不碰布局属性。
+ * stagger：让位/新增的元素按先后依次错开（毫秒）。
+ * frameRef：外框高度随内容变化时一起过渡（收缩等补位基本走完再收，增长立即跟上）。
+ * 外框只有一个元素，过渡它的 height 代价很小，是这里对“只动 transform”的唯一例外。
  */
 export function useFlipList(
   containerRef: { current: HTMLElement | null },
-  dep: unknown
+  dep: unknown,
+  { stagger = 0, frameRef }: { stagger?: number; frameRef?: { current: HTMLElement | null } } = {}
 ) {
   const prev = useRef<Map<string, DOMRect>>(new Map());
+  const prevHeight = useRef(0);
 
   useLayoutEffect(() => {
     const el = containerRef.current;
@@ -58,12 +63,17 @@ export function useFlipList(
       const k = c.dataset.flip;
       if (k) next.set(k, c.getBoundingClientRect());
     });
+    const frame = frameRef?.current;
+    const height = frame?.offsetHeight ?? 0;
+    const wasHeight = prevHeight.current;
+    prevHeight.current = height;
 
     if (prefersReduced() || typeof el.animate !== "function") {
       prev.current = next;
       return;
     }
 
+    let order = 0;
     kids.forEach((c) => {
       const k = c.dataset.flip;
       if (!k) return;
@@ -78,7 +88,7 @@ export function useFlipList(
           // 让位：老位置 → 新位置
           c.animate(
             [{ transform: `translate(${dx}px,${dy}px)` }, { transform: "none" }],
-            { duration: D.state + 40, easing: EASE }
+            { duration: D.state + 40, easing: EASE, delay: order++ * stagger, fill: "backwards" }
           );
         }
       } else if (prev.current.size > 0) {
@@ -88,13 +98,21 @@ export function useFlipList(
             { transform: "scale(.82)", opacity: 0 },
             { transform: "none", opacity: 1 },
           ],
-          { duration: D.state + 40, easing: EASE }
+          { duration: D.state + 40, easing: EASE, delay: order++ * stagger, fill: "backwards" }
         );
       }
     });
 
+    if (frame && wasHeight && Math.abs(wasHeight - height) > 0.5) {
+      const shrinking = height < wasHeight;
+      frame.animate(
+        [{ height: `${wasHeight}px` }, { height: `${height}px` }],
+        { duration: D.layout, easing: EASE, delay: shrinking ? Math.min(order * stagger, 200) + 80 : 0, fill: "backwards" }
+      );
+    }
+
     prev.current = next;
-  }, [containerRef, dep]);
+  }, [containerRef, dep, stagger, frameRef]);
 }
 
 // ------------------------------------------------------------

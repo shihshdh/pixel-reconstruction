@@ -356,10 +356,15 @@ button { font-family: inherit; }
 
 .rig-grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 16px; align-items: stretch; }
 
-.seq-area {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 50px;
-  padding: 12px; border-radius: 12px; background: var(--bg2); border: 1px solid var(--line);
+/* 片段栏做成输入框：外框负责边框、聚焦和高度过渡，内层负责排布（FLIP 量的是内层子元素） */
+.seq-field {
+  box-sizing: border-box; min-height: 52px; overflow: hidden;
+  border-radius: 12px; background: var(--bg2); border: 1px solid var(--line);
+  transition: border-color .18s, box-shadow .18s;
 }
+.seq-field:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.seq-area { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px; }
+.seq-empty { padding: 5px 4px; }
 .seq-empty, .seq-hint { font-size: 13px; color: var(--ink3); }
 .seq-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
 .seq-actions .total { margin-left: auto; font-size: 13px; color: var(--ink3); font-variant-numeric: tabular-nums; }
@@ -389,7 +394,6 @@ button { font-family: inherit; }
   background: var(--accent); color: #fff; border-color: transparent; font-weight: 600;
 }
 .rig .key.ghost { padding: 8px 14px; font-size: 13px; color: var(--ink2); }
-.rig .key.ghost.add { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
 .rig .key.primary {
   border: 0; background: var(--accent); color: #fff; font-weight: 600;
   box-shadow: 0 10px 28px -10px rgba(0,113,227,0.55);
@@ -410,6 +414,69 @@ button { font-family: inherit; }
   border: 0; background: none; color: var(--ink3); cursor: pointer; font-size: 15px; line-height: 1; padding: 0 2px;
 }
 .rig .chip button:hover { color: #ff453a; }
+
+/* ---------- 多选筛选标签 ---------- */
+.rig .tag {
+  appearance: none; position: relative; isolation: isolate; display: inline-flex; align-items: center;
+  border: 1px solid var(--line); background: var(--card); color: var(--ink);
+  font: inherit; font-size: 13.5px; letter-spacing: .02em; padding: 9px 16px; border-radius: 980px; cursor: pointer;
+  transition: color .22s cubic-bezier(.4,0,.2,1), border-color .22s cubic-bezier(.4,0,.2,1), background-color .18s;
+}
+/* 底色：从左向右铺满整个标签（clip-path 保住两端圆角，不会被压扁） */
+.rig .tag::before {
+  content: ""; position: absolute; inset: -1px; z-index: -1; border-radius: inherit; background: var(--accent);
+  clip-path: inset(0 100% 0 0 round 980px);
+  transition: clip-path .38s cubic-bezier(.16,1,.3,1);
+}
+.rig .tag:hover:not(:disabled) { background-color: var(--track); }
+.rig .tag[aria-pressed="true"] { color: #fff; border-color: transparent; font-weight: 600; }
+.rig .tag[aria-pressed="true"]::before { clip-path: inset(0 0 0 0 round 980px); }
+/* 对勾槽：宽度从 0 长出来。这里刻意过渡布局（grid 轨道），相邻标签才会逐帧同步让位 */
+.rig .tag-check {
+  display: grid; grid-template-columns: 0fr; margin-right: 0;
+  transition: grid-template-columns .38s cubic-bezier(.16,1,.3,1), margin-right .38s cubic-bezier(.16,1,.3,1);
+}
+.rig .tag-check > span { min-width: 0; overflow: hidden; display: flex; }
+.rig .tag-check svg {
+  width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+  stroke-dasharray: 14; stroke-dashoffset: 14; transition: stroke-dashoffset .2s cubic-bezier(.4,0,.2,1);
+}
+.rig .tag[aria-pressed="true"] .tag-check { grid-template-columns: 1fr; margin-right: 6px; }
+.rig .tag[aria-pressed="true"] .tag-check svg { stroke-dashoffset: 0; transition-delay: .12s; transition-duration: .26s; }
+/* 正在预览的那一种：外圈一道淡色环 */
+.rig .tag[data-live] { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.rig .tag:disabled { opacity: .45; cursor: not-allowed; }
+.rig .tag:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.pick-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
+.pick-actions .seq-hint { min-width: 0; }
+.rig .key.pick-add { display: inline-flex; align-items: center; gap: 8px; padding-right: 8px; font-weight: 600; }
+.rig .key.pick-add:not(:disabled) { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+/* 数量角标：数字按增减方向滚入，角标轻跳 */
+.pick-count {
+  display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 6px; box-sizing: border-box;
+  border-radius: 999px; background: var(--accent); color: #fff; overflow: hidden;
+  font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1;
+  animation: countPop .42s cubic-bezier(.16,1,.3,1);
+}
+.pick-count[data-zero] { background: var(--track); color: var(--ink3); }
+.pick-count b { font-weight: inherit; animation: countUp .32s cubic-bezier(.16,1,.3,1); }
+.pick-count[data-dir="down"] b { animation-name: countDown; }
+@keyframes countPop { 0% { transform: scale(1); } 35% { transform: scale(1.22); } 100% { transform: scale(1); } }
+@keyframes countUp { from { transform: translateY(90%); opacity: 0; } }
+@keyframes countDown { from { transform: translateY(-90%); opacity: 0; } }
+
+/* ---------- 片段删除：缩成圆点后消失 ---------- */
+.rig .chip { position: relative; }
+.rig .chip[data-leaving] { pointer-events: none; animation: chipToDot .44s cubic-bezier(.4,0,.2,1) forwards; }
+.rig .chip[data-leaving] > * { animation: chipFade .16s linear forwards; }
+@keyframes chipToDot {
+  0% { clip-path: inset(0 0 0 0 round 999px); }
+  55% { clip-path: inset(calc(50% - 4px) calc(50% - 4px) round 999px); background: var(--accent); transform: none; opacity: 1; }
+  100% { clip-path: inset(calc(50% - 4px) calc(50% - 4px) round 999px); background: var(--accent); transform: scale(0); opacity: 0; }
+}
+@keyframes chipFade { to { opacity: 0; } }
 
 /* 处理中 */
 .processing {
@@ -1124,6 +1191,9 @@ button { font-family: inherit; }
 @media (prefers-reduced-motion: reduce) {
   .rig .key.prog .prog-fill { transition: none; }
   .rig .chip button:hover:not(:disabled) { transform: none; }
+  /* 去掉位移和撑开，保留颜色变化 */
+  .rig .tag::before, .rig .tag-check, .rig .tag-check svg { transition: none; transition-delay: 0s; }
+  .pick-count, .pick-count b { animation: none; }
 }
 
 
