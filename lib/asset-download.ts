@@ -55,10 +55,157 @@ function contentLength(value: string | null): number | undefined {
   return length;
 }
 
+// ---------- parallel ranged download ----------
+// A single long-haul connection to the file server (US) swings between ~0.5 and ~2 MB/s from
+// China; several ranged connections hold near the top of that range (measured in Edge: one
+// connection 14–52 s, four connections 13–17 s for the same 26 MB). Cross-origin, Beam does not
+// expose Content-Range or ETag, so the plan relies only on what a browser can always read: the
+// status, Content-Type and Content-Length. Any surprise falls back to the sequential path below.
+// Only for direct cross-origin downloads (the Windows client talks to Beam directly). Through the
+// site's same-origin relay the relay hop is the limit (~2.2 MB/s either way), and there the
+// sequential path can resume from a validated offset, which cross-origin it cannot.
+function parallelWorthwhile(url: string) {
+  if (typeof location === 'undefined' || typeof ReadableStream === 'undefined' || !/^https:/i.test(url)) return false;
+  try { return new URL(url).origin !== location.origin; } catch { return false; }
+}
+const PARALLEL_WORKERS = 4;
+const CHUNK = 2 * 1048576;
+const CHUNK_ATTEMPTS = 3;
+class NoParallel extends Error {}
+
+async function readBody(response: Response, signal: AbortSignal, limit: number, onBytes: (count: number) => void): Promise<ArrayBuffer[]> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const whole = await withSignal(response.arrayBuffer(), signal);
+    onBytes(whole.byteLength);
+    return [whole];
+  }
+  const parts: ArrayBuffer[] = [];
+  let count = 0;
+  try {
+    while (count < limit) {
+      const next = await withSignal(reader.read(), signal);
+      if (next.done) break;
+      const value = next.value.byteLength > limit - count ? next.value.subarray(0, limit - count) : next.value;
+      parts.push(new Uint8Array(value).buffer);
+      count += value.byteLength;
+      onBytes(value.byteLength);
+    }
+  } finally { void reader.cancel().catch(() => {}); }
+  return parts;
+}
+
+async function parallelDownload(startUrl: string, packed: boolean, options: Options, signal: AbortSignal, update: (progress: DownloadProgress) => void): Promise<{ blob: Blob; type: string; url: string }> {
+  let url = startUrl, renewing: Promise<string> | null = null;
+  const renew = (stale: string) => {
+    if (url !== stale) return Promise.resolve(url);
+    if (!options.refreshUrl) return Promise.reject(new NoParallel());
+    renewing ||= options.refreshUrl().then(fresh => {
+      if (!fresh) throw new Error('作品访问凭证已失效，请从作品库重新打开。');
+      url = fresh; return fresh;
+    }).finally(() => { renewing = null; });
+    return renewing;
+  };
+  const accept = packed ? { Accept: SCENE_TRANSFER_MIME + ', application/octet-stream' } : {};
+  let received = 0, lastUpdate = 0, total = 0, type = '';
+  const report = (force = false) => {
+    const now = performance.now();
+    if (!force && now - lastUpdate < 120) return;
+    lastUpdate = now;
+    update({ received, total, retry: 0, lossless: type === SCENE_TRANSFER_MIME });
+  };
+
+  // One request with an idle deadline; 403 renews the signed link once, 5xx and drops retry.
+  const request = async (range: string | undefined, handle: (response: Response, request: AbortSignal, alive: () => void) => Promise<void>) => {
+    for (let attempt = 0; ; attempt++) {
+      if (signal.aborted) throw abortReason(signal);
+      const idle = new AbortController();
+      const scoped = createAbortSignal([signal, idle.signal]);
+      let timer = setTimeout(() => idle.abort(new DOMException('下载没有进展', 'TimeoutError')), IDLE_TIMEOUT_MS);
+      const bump = () => { clearTimeout(timer); timer = setTimeout(() => idle.abort(new DOMException('下载没有进展', 'TimeoutError')), IDLE_TIMEOUT_MS); };
+      const used = url;
+      try {
+        const response = await withSignal(fetch(used, { signal: scoped.signal, headers: { ...accept, ...(range ? { Range: range } : {}) } }), scoped.signal);
+        if (response.status === 403 && attempt < CHUNK_ATTEMPTS - 1) { void response.body?.cancel().catch(() => {}); await withSignal(renew(used), signal); continue; }
+        if ([502, 503, 504].includes(response.status)) { void response.body?.cancel().catch(() => {}); throw new TypeError('temporary'); }
+        bump();
+        await handle(response, scoped.signal, bump);
+        return;
+      } catch (error) {
+        if (signal.aborted) throw abortReason(signal);
+        if (error instanceof NoParallel || attempt >= CHUNK_ATTEMPTS - 1) throw error;
+        await retryDelay(700 * (attempt + 1), signal);
+      } finally { clearTimeout(timer); scoped.dispose(); }
+    }
+  };
+
+  // The head request: a plain GET tells the total size and type; it keeps only the first chunk.
+  const chunks: ArrayBuffer[][] = [];
+  await request(undefined, async (response, scoped, alive) => {
+    if (response.status !== 200) throw new NoParallel();
+    type = (response.headers.get('content-type') || 'application/octet-stream').split(';')[0].trim().toLowerCase();
+    if (/text\/html|application\/json/.test(type)) throw new NoParallel();
+    const length = Number(response.headers.get('content-length'));
+    if (!Number.isSafeInteger(length) || length <= 0) throw new NoParallel();
+    total = length;
+    received = 0;
+    // Small files are not worth splitting: read them whole on this connection.
+    const keep = total <= CHUNK * 2 ? total : CHUNK;
+    chunks[0] = await readBody(response, scoped, keep, count => { received += count; alive(); report(); });
+    const got = chunks[0].reduce((sum, part) => sum + part.byteLength, 0);
+    if (got !== keep) throw new NoParallel();
+  });
+  report(true);
+  if (total > CHUNK * 2) {
+    const count = Math.ceil(total / CHUNK);
+    let next = 1;
+    const worker = async () => {
+      while (next < count) {
+        const index = next++;
+        const start = index * CHUNK, end = Math.min(total, start + CHUNK);
+        let partial = 0;
+        await request(`bytes=${start}-${end - 1}`, async (response, scoped, alive) => {
+          received -= partial; partial = 0;
+          if (response.status !== 206) throw new NoParallel();
+          const incoming = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+          if (incoming !== type) throw new NoParallel();
+          const parts = await readBody(response, scoped, end - start, bytes => { partial += bytes; received += bytes; alive(); report(); });
+          if (partial !== end - start) throw new TypeError('short chunk');
+          chunks[index] = parts;
+        }).catch(error => { received -= partial; throw error; });
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(PARALLEL_WORKERS, count - 1) }, worker));
+  }
+  const blob = new Blob(chunks.flat(), { type });
+  if (blob.size !== total) throw new NoParallel();
+  received = total; report(true);
+  return { blob, type, url };
+}
+
 async function transferAsset(url: string, options: Options, entry: Transfer, update: (progress: DownloadProgress) => void): Promise<Blob> {
   const logical = createAbortSignal([entry.controller.signal], TRANSFER_TIMEOUT_MS);
   let currentUrl = url;
   let packed = typeof DecompressionStream !== 'undefined' && /^https?:/i.test(url) && /\.splat(?:\?|$)/i.test(url);
+  if (parallelWorthwhile(url)) {
+    try {
+      const fast = await parallelDownload(url, packed, options, logical.signal, update);
+      currentUrl = fast.url;
+      if (fast.type !== SCENE_TRANSFER_MIME) { logical.dispose(); return fast.blob; }
+      update({ received: fast.blob.size, total: fast.blob.size, retry: 0, lossless: true, phase: 'unpack' });
+      const scene = await withSignal(unpackSceneTransfer(fast.blob, logical.signal), logical.signal).catch(() => fast.blob);
+      if (scene !== fast.blob) { logical.dispose(); return scene; }
+      packed = false;   // Corrupt packed data: fetch the exact original file below instead.
+    } catch (error) {
+      if (logical.signal.aborted) {
+        logical.dispose();
+        if (entry.controller.signal.aborted) throw abortReason(entry.controller.signal);
+        throw new Error('场景下载已持续 10 分钟，请检查网络后重试。');
+      }
+      // Anything unexpected (range ignored, representation changed, repeated drops): the
+      // sequential path below starts over with its own retries and resume logic.
+    }
+  }
   let parts: ArrayBuffer[] = [], received = 0, total: number | undefined;
   let type = '', etag: string | null = null, canResume = false;
   const reset = () => { parts = []; received = 0; total = undefined; type = ''; etag = null; canResume = false; };
