@@ -11,6 +11,15 @@
 客户端启动时传入自己的进程号（--parent-pid）：客户端退出（包括被强制结束）时引擎随之退出，
 不会留下占着显存的孤儿进程。
 """
+# Windows 的 WMI 服务偶尔会卡死（系统级问题，与本程序无关）。Python 3.12 的 platform 模块查询
+# 系统信息时先走 WMI，torch 导入时会调用它，于是整个引擎卡在“正在载入模型”。
+# 跳过 WMI，platform 会退回注册表/ver 命令，结果相同。必须在导入任何其他模块之前执行。
+import platform
+if hasattr(platform, "_wmi_query"):
+    def _skip_wmi(*args, **kwargs):
+        raise OSError("跳过 WMI 查询")
+    platform._wmi_query = _skip_wmi
+
 import argparse
 import os
 import queue

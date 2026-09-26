@@ -19,10 +19,10 @@ const CSS = `
 .lq-thumb::before{content:"";position:absolute;inset:1px 12% auto;height:48%;border-radius:50%;
   background:radial-gradient(ellipse 60% 100% at 50% 0%,rgba(255,255,255,.95),rgba(255,255,255,0) 72%);opacity:.9;}
 .lq-thumb::after{content:"";position:absolute;inset:0;border-radius:inherit;
-  background:radial-gradient(60% 120% at var(--hx,50%) 100%,rgba(0,113,227,.16),transparent 70%);}
+  background:radial-gradient(60% 120% at var(--hx,50%) 100%,color-mix(in srgb,var(--accent) 18%,transparent),transparent 70%);}
 [data-theme="dark"] .lq{box-shadow:inset 0 1px 2px rgba(0,0,0,.35);}
-[data-theme="dark"] .lq-thumb{background:linear-gradient(165deg,rgba(255,255,255,.26),rgba(255,255,255,.08) 50%,rgba(77,163,255,.2));
-  box-shadow:inset 0 1px 1px rgba(255,255,255,.35),inset 0 -1px 2px rgba(77,163,255,.2),0 6px 18px rgba(0,0,0,.4);}
+[data-theme="dark"] .lq-thumb{background:linear-gradient(165deg,rgba(255,255,255,.26),rgba(255,255,255,.08) 50%,rgba(208,180,124,.2));
+  box-shadow:inset 0 1px 1px rgba(255,255,255,.35),inset 0 -1px 2px rgba(208,180,124,.2),0 6px 18px rgba(0,0,0,.4);}
 [data-theme="dark"] .lq-thumb::before{background:radial-gradient(ellipse 60% 100% at 50% 0%,rgba(255,255,255,.32),rgba(255,255,255,0) 72%);}
 .lq>button{position:relative;border:0;background:none;margin:0;padding:6px 13px;border-radius:999px;color:var(--ink2);
   font:inherit;font-size:12px;line-height:1.2;white-space:nowrap;cursor:inherit;transition:color .28s,opacity .2s;}

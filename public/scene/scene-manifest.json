@@ -1,21 +1,46 @@
 {
-  "sourceSplats": 1179648,
-  "compressionLevel": 1,
-  "seed": 9131,
-  "variants": [
-    {
-      "name": "landing.ksplat",
-      "sampledSplats": 826039,
-      "bytes": 19849272,
-      "fraction": 0.7,
-      "scale": 1.12
+  "scenes": {
+    "kelingking": {
+      "sourceSplats": 1179648,
+      "compressionLevel": 1,
+      "seed": 9131,
+      "variants": [
+        {
+          "name": "kelingking.ksplat",
+          "sampledSplats": 826039,
+          "bytes": 19864584,
+          "fraction": 0.7,
+          "scale": 1.12
+        },
+        {
+          "name": "kelingking-lo.ksplat",
+          "sampledSplats": 472688,
+          "bytes": 11369940,
+          "fraction": 0.4,
+          "scale": 1.3
+        }
+      ]
     },
-    {
-      "name": "landing-lo.ksplat",
-      "sampledSplats": 472688,
-      "bytes": 11362000,
-      "fraction": 0.4,
-      "scale": 1.3
+    "hongkong": {
+      "sourceSplats": 1179648,
+      "compressionLevel": 1,
+      "seed": 9131,
+      "variants": [
+        {
+          "name": "hongkong.ksplat",
+          "sampledSplats": 826039,
+          "bytes": 19946780,
+          "fraction": 0.7,
+          "scale": 1.12
+        },
+        {
+          "name": "hongkong-lo.ksplat",
+          "sampledSplats": 472688,
+          "bytes": 11457408,
+          "fraction": 0.4,
+          "scale": 1.3
+        }
+      ]
     }
-  ]
+  }
 }

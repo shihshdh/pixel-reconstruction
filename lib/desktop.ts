@@ -1,5 +1,6 @@
 // Windows 客户端（desktop/）里的本地作品文件夹。网页版里这些函数什么都不做。
-// 客户端只向站点开放五个命令：往“作品”文件夹写文件、打开这个文件夹、启动与安装本机显卡引擎、切换全屏（见 desktop/src-tauri/src/main.rs）。
+// 客户端只向站点开放五个命令：往“作品”文件夹写文件、打开这个文件夹、启动与安装本机显卡引擎、切换全屏（见 desktop/src-tauri/src/main.rs），
+// 外加无边框窗口的拖动、最小化、最大化和关闭（Tauri 自带的窗口权限）。
 
 type Internals = { invoke: (cmd: string, args?: unknown, options?: { headers?: Record<string, string> }) => Promise<unknown> };
 type DesktopWindow = Window & { __PIXEL_DESKTOP__?: { version: string }; __TAURI_INTERNALS__?: Internals };
@@ -76,4 +77,20 @@ export async function engineInstall(action: "start" | "status" | "cancel"): Prom
   // 进度文件由 PowerShell 写入，可能带 BOM
   try { status = result.status ? JSON.parse(result.status.replace(/^﻿/, "")) : null; } catch {}
   return { running: result.running, status };
+}
+
+/** 无边框窗口的标题栏操作：拖动、最小化、最大化/还原、关闭。网页版里什么都不做。 */
+export async function windowAction(action: "start_dragging" | "minimize" | "toggle_maximize" | "close" | "is_maximized"): Promise<unknown> {
+  const desktop = api();
+  if (!desktop) return undefined;
+  return desktop.invoke(`plugin:window|${action}`, { label: "main" });
+}
+
+/** 按下的是标题栏的空白处（不是按钮、链接、输入框）时开始拖动窗口；双击最大化/还原。 */
+export function titleBarMouseDown(event: { button: number; detail: number; target: EventTarget | null; preventDefault(): void }) {
+  if (!api() || event.button !== 0) return;
+  const target = event.target as Element | null;
+  if (target?.closest('button, a, input, select, textarea, [role="button"], [role="radio"], [role="tab"], label')) return;
+  event.preventDefault();
+  void windowAction(event.detail === 2 ? "toggle_maximize" : "start_dragging");
 }

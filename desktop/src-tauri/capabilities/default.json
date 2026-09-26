@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "打包在客户端里的网站：只能把作品写进本地作品文件夹、打开该文件夹、启动与安装本机显卡引擎、切换全屏。",
+  "description": "打包在客户端里的网站：只能把作品写进本地作品文件夹、打开该文件夹、启动与安装本机显卡引擎、切换全屏，以及无边框窗口的拖动、最小化、最大化和关闭。",
   "windows": ["main"],
-  "permissions": ["core:default", "allow-save-work-file", "allow-open-works-folder", "allow-local-engine-start", "allow-local-engine-install", "allow-set-fullscreen"]
+  "permissions": ["core:default", "allow-save-work-file", "allow-open-works-folder", "allow-local-engine-start", "allow-local-engine-install", "core:window:allow-start-dragging", "core:window:allow-minimize", "core:window:allow-toggle-maximize", "core:window:allow-close", "core:window:allow-is-maximized", "core:window:allow-internal-toggle-maximize", "allow-set-fullscreen"]
 }

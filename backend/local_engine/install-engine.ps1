@@ -191,6 +191,11 @@ try {
     Remove-Item -Force $pipZip
   }
 
+  # Windows 的 WMI 服务偶尔会卡死，Python 3.12 查询系统信息时会一直等它（pip、torch 都会调用）。
+  # 用 sitecustomize 让这个环境里的所有 Python 进程跳过 WMI，退回注册表方式，结果相同。
+  [IO.File]::WriteAllText((Join-Path $pythonDir 'Lib\site-packages\sitecustomize.py'),
+    "import platform`nif hasattr(platform, '_wmi_query'):`n    def _skip_wmi(*a, **k):`n        raise OSError('skip WMI')`n    platform._wmi_query = _skip_wmi`n")
+
   # ---- 3/4. PyTorch（CUDA 版） ----
   $torchFile = "torch-$TorchVersion+$flavor-cp312-cp312-win_amd64.whl"
   $visionFile = "torchvision-$VisionVersion+$flavor-cp312-cp312-win_amd64.whl"

@@ -1,12 +1,9 @@
 "use client";
-// 界面背景：液态玻璃（画质“极致”档，独立显卡）。参考 macOS Tahoe 的液态玻璃壁纸：
-// 一整片从左下卷向右上的弯曲玻璃浪面，边缘是一条极细的高光线；透过玻璃看到的是柔焦的天空、
-// 颜色不停变化的流光与沙丘状色块。
-//
-// 每个像素沿视线与玻璃曲面求交（屏幕空间光线追踪）：由厚度场求表面法线，按斯涅尔定律折射，
-// 三个颜色通道折射率略不同（色散）；玻璃内部的褶皱像柱面透镜，把视线弯向上方的天空，
-// 形成蓝色玻璃里浅色的流纹；菲涅尔反射映出天空，Beer–Lambert 吸收让厚处更深。
-// 玻璃浪面随时间起伏、流纹沿浪势流动，指针移动时玻璃与后景有视差。
+// 界面背景：液态玻璃（画质“极致”档，独立显卡）。参考 iOS 26 的液态玻璃壁纸：
+// 两片互相错开的磨砂玻璃圆片（浅色：雾蓝与薄荷；深色：香槟金与烟熏茶色，黑金配色），
+// 一片几乎透明的大玻璃横扫画面，只看得见它细亮的边——“丝带”；弧线内侧的圆片被它折射错位，带一点色散。
+// 窗外的光透过百叶窗落下斜向光带，在玻璃里更明显；玻璃有细颗粒、斜面边缘、落在身后的柔影。
+// 颜色整体克制，正文区域再向页面底色收一些。圆片、光带缓慢移动，指针移动时有视差。
 //
 // 画质：按屏幕实际像素比渲染，每像素 4 次旋转网格超采样抗锯齿。
 // 性能与体验：帧率跟随屏幕刷新率（最高 120fps）；持续掉帧依次关超采样、降到 30fps、降分辨率，仍不够就停在静帧。
@@ -26,121 +23,88 @@ uniform float SS;    // samples per pixel: 4 = rotated-grid supersampling, 1 = o
 uniform float T;     // seconds
 uniform vec2 P;      // smoothed pointer, -1..1
 uniform vec3 BG;     // page background colour
-uniform float DARK;  // 1 in dark theme
+uniform float DARK;  // 1 in dark theme (black & gold)
 
-const float IOR = 1.5;
 float A;             // aspect ratio; scene coordinates: x in [0, A], y in [0, 1] (up)
+float PX;            // one pixel in scene units
 
-// 颜色随时间不停轮转的光谱（余弦调色板）
-vec3 spectrum(float t){ return .5 + .5*cos(6.2832*(t + vec3(0., .33, .67))); }
+float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 
-// ---- 后景：柔焦的天空、流动的光带与沙丘状色块（透过玻璃会被折射） ----
-vec3 backdrop(vec2 p){
-  // 视差：后景移动得比玻璃少，形成纵深
-  p += P * vec2(.006, -.004);
-  float t = T;
-  vec3 skyTop = mix(vec3(.40,.62,.93), vec3(.07,.05,.40), DARK);
-  vec3 skyLow = mix(vec3(.95,.965,.985), vec3(.43,.33,.84), DARK);
-  vec3 c = mix(skyLow, skyTop, smoothstep(.38, 1.05, p.y));
-  // 流光：天空里两条颜色不停变化的光带，缓慢流动
-  float w1 = p.y - .74 - .05*sin(p.x*1.6 + t*.11) - .025*sin(p.x*4.1 - t*.07);
-  float w2 = p.y - .9 - .04*sin(p.x*2.3 - t*.09 + 1.3);
-  vec3 h1 = spectrum(t*.03 + p.x*.07), h2 = spectrum(t*.03 + .4 - p.x*.05);
-  c += ((h1 - .35) * exp(-w1*w1*38.) * .32 + (h2 - .35) * exp(-w2*w2*60.) * .22) * mix(.35, 1.2, DARK);
-  // 左侧远处的青蓝色小丘
-  float hill = p.y - (.4 + .13*exp(-pow((p.x - .22 - .03*sin(t*.07)) * 3.2, 2.)));
-  c = mix(c, mix(vec3(.05,.66,.86), vec3(.14,.22,.72), DARK), smoothstep(.07, -.07, hill) * .92);
-  // 右侧大块钴蓝，内部一团天蓝色辉光
-  vec2 q = p - vec2(A*.64 + .04*sin(t*.05), .2 + .02*sin(t*.06 + 1.));
-  float mass = length(q * vec2(.78, 1.2)) - .46;
-  c = mix(c, mix(vec3(.0,.27,.86), vec3(.02,.09,.62), DARK), smoothstep(.28, -.22, mass));
-  vec2 g = q - vec2(.02, .13);
-  c += mix(vec3(.26,.48,.62), vec3(.14,.2,.5), DARK) * exp(-dot(g, g) * 8.) * .7;
-  // 前景两块浅色柔影（左下、右下）
-  float s1 = length((p - vec2(A*.2, -.2)) * vec2(.85, 1.35)) - .42;
-  c = mix(c, mix(vec3(.80,.87,.94), vec3(.44,.49,.82), DARK), smoothstep(.13, -.13, s1));
-  float s2 = length((p - vec2(A*1.03, -.08)) * vec2(1.1, .78)) - .46;
-  c = mix(c, mix(vec3(.84,.9,.95), vec3(.5,.55,.84), DARK), smoothstep(.1, -.1, s2) * .95);
+// 窗外的光透过百叶窗落下的斜向光带，缓慢移动
+float blinds(vec2 p){
+  float u = dot(p, normalize(vec2(1., -.58))) * 4.2 + T*.03;
+  float bars = smoothstep(.05, .95, .5 + .5*sin(u*6.2832));
+  return bars * (.55 + .45*sin(u*1.3 + 1.3)) * smoothstep(-.1, .6, p.y + p.x*.25);
+}
+
+vec3 background(vec2 p){
+  vec3 a = mix(vec3(.955,.952,.94), vec3(.035,.032,.028), DARK);
+  vec3 b = mix(vec3(.87,.90,.94), vec3(.085,.07,.05), DARK);
+  vec3 c = mix(a, b, smoothstep(-.2, 1.2, (p.x / A)*.8 + (1. - p.y)*.5));
+  c *= 1. - .035*blinds(p)*(1. - DARK*.4);
+  // 深色：右下方一团很淡的暖光，黑底不至于死黑
+  c += DARK * vec3(.09,.065,.03) * exp(-dot(p - vec2(A*.62, .35), p - vec2(A*.62, .35)) * 3.);
   return c;
 }
 
-// ---- 玻璃浪面：一道从左下卷向右上的弯曲玻璃 ----
-// 浪峰线 y = crest(x)；浪面在线的下方。厚度场 h(p) 决定表面法线，从而决定折射偏移。
-float crest(float x){
-  float u = x / A;
-  return .52 + .56*sin((u - .52) * 2.7) + .035*sin(x*2.1 + T*.21) + .018*sin(x*5.3 - T*.33);
+// 一片磨砂玻璃圆片：着色、边缘斜面、细颗粒、落在后面的柔影
+vec3 disc(vec3 under, vec2 p, vec2 c, float r, vec3 tint, float frost){
+  float d = length(p - c);
+  // 投影：落向右下方，只在圆片外
+  float sd = length(p - c - vec2(.025, -.035)) - r;
+  under *= 1. - .16 * exp(-max(sd, 0.) * 18.) * step(r, d);
+  if (d > r + PX) return under;
+  float edge = r - d;
+  vec3 g = mix(under, tint, frost);                         // 磨砂：后面的颜色被打散、染色
+  g *= .92 + .12 * blinds(p);                                // 光带在玻璃里更明显
+  // 纵深：玻璃朝右下方逐渐变深，左上方迎光更亮（参考壁纸的体积感）
+  float t = clamp(dot(p - c, normalize(vec2(.55, -.84))) / r * .5 + .5, 0., 1.);
+  g *= mix(1.08, .8, t);
+  g += (hash(floor(p / PX)) - .5) * .03;                     // 玻璃表面的细颗粒
+  g = mix(g, g * .82, smoothstep(.03, .0, edge) * .6);       // 斜面：边缘一圈更厚更深
+  g += smoothstep(1.6*PX, 0., abs(edge - 1.2*PX)) * mix(.55, .45, DARK) * (.55 + .45*dot(normalize(p - c), normalize(vec2(-.6, .8))));
+  float aa = smoothstep(-PX, PX, edge);                      // 抗锯齿的圆边
+  return mix(under, g, aa);
 }
-float thickness(vec2 p){
-  p -= P * vec2(.018, -.012);                       // 玻璃视差更大：离得更近
-  float y = crest(p.x);
-  float slope = (crest(p.x + .01) - crest(p.x - .01)) / .02;
-  float d = (y - p.y) / sqrt(1. + slope*slope);     // 到浪峰线的距离，浪面内为正
-  if (d < 0.) return d;                              // 负值：浪面之外
-  // 浪峰处一道卷起的厚唇，往里渐薄；右上方有顺浪势流动的细纹
-  float h = smoothstep(0., .1, d) * (1. - .35*smoothstep(.12, .7, d)) + .25*exp(-d*28.);
-  float along = p.x;
-  h += .07 * sin(d*42. - T*.55 + along*1.8) * smoothstep(.02, .09, d) * smoothstep(.55, .1, d) * smoothstep(A*.3, A*.9, along);
-  h += .012 * sin(d*110. + T*.4 - along*3.) * smoothstep(.01, .05, d) * smoothstep(.3, .05, d);
-  return h;
+
+// 背景 + 两片圆片（不含最前面那片透明大玻璃）
+vec3 layers(vec2 p){
+  vec3 c = background(p);
+  vec2 q = p + P * vec2(-.01, .006);                         // 圆片随指针轻微视差
+  vec3 tintA = mix(vec3(.42,.52,.76), vec3(.72,.58,.34), DARK);   // 浅色：雾蓝；深色：香槟金
+  vec3 tintB = mix(vec3(.64,.80,.76), vec3(.16,.135,.10), DARK);  // 浅色：薄荷；深色：烟熏茶色玻璃
+  c = disc(c, q, vec2(A*.80 + .015*sin(T*.06), .88 + .012*sin(T*.05)), .5, tintA, .72);
+  c = disc(c, q, vec2(A*.16 + .012*sin(T*.05 + 1.), .1 + .015*sin(T*.07)), .62, tintB, mix(.62, .7, DARK));
+  return c;
 }
 
 vec3 shade(vec2 frag){
-  vec2 p = vec2(frag.x / R.y, frag.y / R.y);
-  float h = thickness(p);
-  vec3 bg = backdrop(p);
-  float px = 1. / R.y;
-  // 浪面外：后景 + 浪峰上方一圈淡淡的光晕
-  if (h < 0.) {
-    float d = -h;
-    return bg + mix(vec3(.9,.95,1.), vec3(.55,.62,1.), DARK) * exp(-d * 90.) * .12;
-  }
-  // 表面法线：厚度场的梯度
-  float e = 1.5 * px;
-  float hx = thickness(p + vec2(e, 0.)) - thickness(p - vec2(e, 0.));
-  float hy = thickness(p + vec2(0., e)) - thickness(p - vec2(0., e));
-  vec3 n = normalize(vec3(-hx / (2.*e) * .045, -hy / (2.*e) * .045, 1.));
-  // 斯涅尔折射：视线垂直入射，按法线弯折；三个颜色通道折射率略不同（色散）
-  vec3 v = vec3(0., 0., -1.);
-  float depth = .22 + .18*h;
-  // 玻璃内部的褶皱像柱面透镜：把视线向上弯，采到上方浅色的天空，于是蓝色玻璃里出现一道道浅色流纹。
-  // 浪峰下方的厚唇同理，折射进来的是天空而不是发光。
-  float yc = crest(p.x - P.x*.018);
-  float dd = yc - (p.y + P.y*.012);
-  float fold = pow(.5 + .5*sin(dd*34. - T*.5 + p.x*1.7), 4.) * smoothstep(.03, .1, dd) * smoothstep(.6, .12, dd) * smoothstep(A*.25, A*.85, p.x);
-  float fold2 = pow(.5 + .5*sin(dd*21. + T*.32 - p.x*2.4 + 1.), 6.) * smoothstep(.1, .25, dd) * smoothstep(.8, .3, dd) * .7;
-  float lip = smoothstep(.07, .0, dd);
-  vec2 lift = vec2(-.04, 1.) * (fold * .42 + fold2 * .3 + lip * .34);
-  vec3 rr = refract(v, n, 1./(IOR - .012)), rg = refract(v, n, 1./IOR), rb = refract(v, n, 1./(IOR + .014));
-  // 磨砂感：每个通道再取两处轻微偏开的样本（浅景深）
-  vec2 j = vec2(.004, .003);
+  vec2 p = frag / R.y;
+  // 最前面：一片很薄的透明大玻璃，只看得见它的边——一道扫过画面的细亮弧线（“丝带”）。
+  // 弧线内侧的东西被它折射，整体错开一点，这就是参考壁纸里圆片被“切断错位”的效果。
+  vec2 cc = vec2(A*1.18 + .03*sin(T*.04), -.52) + P * vec2(-.018, .01);
+  float rr = 1.42 + .02*sin(T*.05);
+  float d = length(p - cc) - rr;
   vec3 col;
-  col.r = (backdrop(p + rr.xy*depth + lift*1.03 + j).r + backdrop(p + rr.xy*depth + lift*1.03 - j).r) * .5;
-  col.g = (backdrop(p + rg.xy*depth + lift + j.yx).g + backdrop(p + rg.xy*depth + lift - j.yx).g) * .5;
-  col.b = (backdrop(p + rb.xy*depth + lift*.97 - j).b + backdrop(p + rb.xy*depth + lift*.97 + j).b) * .5;
-  // 玻璃本身的淡蓝色吸收（Beer–Lambert）
-  col *= exp(-vec3(.75, .38, .06) * h * (1. - .6*max(fold, lip)) * mix(.85, .7, DARK));
-  // 菲涅尔反射：映出天空与柔光（光从左上方来）
-  float cosT = max(0., n.z);
-  float fr = .04 + .96 * pow(1. - cosT, 5.);
-  vec3 L = normalize(vec3(-.55, .65, .52));
-  vec3 refl = backdrop(vec2(p.x - n.x*.3, .82 + .15*(1. - cosT))) * (.8 + .35*max(0., dot(reflect(v, n), L)));
-  col = mix(col, refl, clamp(fr * .9, 0., .38));
-  // 高光：表面朝向光源处的镜面反射
-  vec3 hv = normalize(L - v);
-  col += pow(max(0., dot(n, hv)), 120.) * mix(.3, .28, DARK);
-  // 浪峰边缘：一条极细极亮的高光线，内侧再有一条更淡的次级线
-  float y = crest(p.x - P.x*.018);
-  float slope = (crest(p.x + .01) - crest(p.x - .01)) / .02;
-  float d = (y - (p.y + P.y*.012)) / sqrt(1. + slope*slope);
-  float edge = exp(-pow(d / (1.1*px), 2.)) * .95 + exp(-pow((d - .006) / (1.6*px), 2.)) * .22;
-  // 边线亮度沿浪峰流动变化，颜色带一点青色
-  edge *= .75 + .25*sin(p.x*3. - T*.5);
-  col += mix(vec3(.85,.97,1.), vec3(.7,.8,1.), DARK) * edge;
+  if (d < 0.) {
+    vec2 n = normalize(p - cc);
+    float lens = exp(d * 9.);                                // 越靠近边缘弯折越强
+    vec2 off = -n * (.022 + .05*lens);
+    // 三个通道偏移略不同：边缘带一点色散
+    col = vec3(layers(p + off*1.04).r, layers(p + off).g, layers(p + off*.96).b);
+    col = col * mix(1.03, 1.08, DARK) + mix(.015, .01, DARK);
+  } else {
+    col = layers(p);
+  }
+  // 弧线本身：一条极细的高光，深色主题里是金色
+  vec3 lineCol = mix(vec3(.96,.98,1.), vec3(.93,.80,.52), DARK);
+  col += lineCol * (exp(-pow(d / (1.1*PX), 2.)) * .75 + exp(-abs(d) * 90.) * .06);
   return col;
 }
 
 void main(){
   A = R.x / R.y;
+  PX = 1. / R.y;
   vec3 c = vec3(0.);
   for (int i = 0; i < 4; i++){
     if (float(i) >= SS) break;
@@ -148,9 +112,9 @@ void main(){
     c += shade(gl_FragCoord.xy + o);
   }
   c /= SS;
-  // 正文区域向页面底色收一些，保证可读；四周保持壁纸的饱和度
+  // 正文区域再向页面底色收一些，颜色整体克制
   vec2 uv = gl_FragCoord.xy / R;
-  float calm = smoothstep(.36, .12, abs(uv.x - .5)) * mix(.3, .3, DARK);
+  float calm = smoothstep(.34, .1, abs(uv.x - .5)) * .3;
   c = mix(c, BG, calm);
   c += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898,78.233))) * 43758.5453) - .5) / 255.; // 抖动去色带
   gl_FragColor = vec4(c, 1.);

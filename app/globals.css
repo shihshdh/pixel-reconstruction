@@ -26,10 +26,10 @@
   --r-md: 18px;
   --r-pill: 999px;
 
-  /* 圆润字体栈：装了 MiSans/鸿蒙字体的机器自动更圆，
-     否则退到幼圆 → 雅黑，全程不依赖外网字体 */
-  --font-round: "MiSans", "MiSans VF", "HarmonyOS Sans SC", "Yuanti SC",
-    "YouYuan", "幼圆", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+  /* 字体栈参照 Apple 官网：苹果设备用 SF Pro / 苹方；Windows 上退到最接近的
+     Segoe UI Variable + 微软雅黑 UI。苹果字体不能随站点分发，全程不依赖外网字体 */
+  --font-round: "SF Pro SC", "SF Pro Display", "SF Pro Text", "PingFang SC", "Helvetica Neue",
+    -apple-system, BlinkMacSystemFont, "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
 
   /* 极光四色 + 暗/亮模式标记，主题覆盖这些即可整体换肤 */
   --aurora-1: rgba(10, 132, 255, 0.32);
@@ -1201,3 +1201,11 @@ button { font-family: inherit; }
 [data-assist-highlight] { outline: 2px solid #5f8fb4 !important; outline-offset: 4px; animation: assistPoint 1.3s cubic-bezier(.4,0,.2,1) 2; }
 @keyframes assistPoint { 0% { box-shadow: 0 0 0 0 #5f8fb466; } 100% { box-shadow: 0 0 0 12px #5f8fb400; } }
 @media (prefers-reduced-motion: reduce) { [data-assist-highlight] { animation: none; } }
+
+/* 滚动条：细、透明轨道、悬停才明显（Apple 风格的叠加滚动条），不在窗口右侧留一条实心黑边 */
+html{scrollbar-width:thin;scrollbar-color:color-mix(in srgb,currentColor 28%,transparent) transparent;}
+::-webkit-scrollbar{width:8px;height:8px;background:transparent;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{border-radius:8px;border:2px solid transparent;background-clip:padding-box;background-color:rgba(128,128,128,.32);}
+::-webkit-scrollbar-thumb:hover{background-color:rgba(128,128,128,.55);}
+::-webkit-scrollbar-corner{background:transparent;}

@@ -63,14 +63,16 @@ def _scalar_batch(data, row_in, indexes):
     output = bytearray(len(data) // row_in.size * row_out.size)
     for index, row in enumerate(row_in.iter_unpack(data)):
         values = [row[field] for field in indexes]
-        if not all(math.isfinite(value) for value in values):
+        # 不透明度只决定可见性：NaN 当作完全透明（点数与布局不变，等同于去掉这个点），
+        # ±∞ 由下面的截断处理。位置、尺度、颜色、旋转非有限时仍整份拒绝。
+        if not all(math.isfinite(value) for i, value in enumerate(values) if i != 9):
             raise ValueError("Non-finite Gaussian attribute")
         x, y, z, sx, sy, sz, r, g, b, opacity, qw, qx, qy, qz = values
         norm = math.sqrt(qw * qw + qx * qx + qy * qy + qz * qz)
         quaternion = (qw / norm, qx / norm, qy / norm, qz / norm) if norm else (1, 0, 0, 0)
         rotation = [min(255, max(0, int(value * 128 + 128 + .5))) for value in quaternion]
         color = [min(255, max(0, math.floor((.5 + sh_c0 * value) * 255))) for value in (r, g, b)]
-        alpha = math.floor(255 / (1 + math.exp(-max(-80, min(80, opacity)))))
+        alpha = 0 if math.isnan(opacity) else math.floor(255 / (1 + math.exp(-max(-80, min(80, opacity)))))
         row_out.pack_into(output, index * row_out.size, x, y, z,
                           math.exp(sx), math.exp(sy), math.exp(sz), *color, alpha, *rotation)
     return output
@@ -99,8 +101,11 @@ def _numpy_batch(np, data, dtype, indexes):
     """
     records = np.frombuffer(data, dtype=dtype)
     values = [records[str(index)].astype(np.float64) for index in indexes]
-    if not all(np.isfinite(value).all() for value in values):
+    # 与标量实现一致：不透明度 NaN 视为完全透明，其余属性非有限时整份拒绝
+    if not all(np.isfinite(value).all() for i, value in enumerate(values) if i != 9):
         raise ValueError("Non-finite Gaussian attribute")
+    transparent = np.isnan(values[9])
+    values[9] = np.where(transparent, 0., values[9])
     count = len(records)
     output = np.empty(count, dtype=np.dtype([
         ("position", "<f4", (3,)), ("scale", "<f4", (3,)),
@@ -131,7 +136,7 @@ def _numpy_batch(np, data, dtype, indexes):
             output["rgba"][:, axis] = np.clip(np.floor(color), 0, 255).astype(np.uint8)
         exponent = -np.clip(values[9], -80, 80)
         opacity_exp = np.fromiter(map(math.exp, exponent), dtype=np.float64, count=count)
-        output["rgba"][:, 3] = np.floor(255 / (1 + opacity_exp)).astype(np.uint8)
+        output["rgba"][:, 3] = np.where(transparent, 0, np.floor(255 / (1 + opacity_exp))).astype(np.uint8)
     return output.tobytes()
 
 

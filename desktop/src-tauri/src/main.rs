@@ -416,6 +416,10 @@ fn main() {
                 .min_inner_size(960.0, 640.0)
                 .center()
                 .background_color(tauri::window::Color(246, 244, 239, 255))
+                // 无边框：不要系统标题栏（深色模式下是一条黑边），导航栏兼作标题栏，
+                // 拖动、双击最大化、窗口按钮都在页面里；保留系统阴影和 Windows 11 圆角
+                .decorations(false)
+                .shadow(true)
                 // 让网页自己处理拖进来的照片（否则窗口层面会先截走文件拖放）
                 .disable_drag_drop_handler()
                 // 硬件加速：双显卡时用独显，驱动在黑名单里也不退回软件渲染，

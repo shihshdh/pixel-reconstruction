@@ -26,7 +26,7 @@
 
 重建使用 Apple 的 [SHARP](https://github.com/apple/ml-sharp) 模型，在云端 GPU 上完成单图推理，一次大约一分钟。查看、运镜和视频导出都在浏览器本地完成，不需要安装任何软件。
 
-也可以使用 Windows 客户端（Windows 10/11，64 位）：[从网站下载](https://pixel-reconstruction.netlify.app/download/PixelReconstruction-Setup.exe) · [GitHub Releases](https://github.com/shihshdh/pixel-reconstruction/releases/latest)。客户端把页面和素材打包在本地，启动快，照片和作品会另存到本机。有 NVIDIA 显卡的电脑会在后台自动装好本机引擎（国内镜像直连），之后照片直接用自己的显卡重建，约 7 秒一张、不上传；独显默认「极致」画质，界面背景是实时渲染的液态玻璃。说明见 [desktop/README.md](desktop/README.md)。
+也可以使用 Windows 客户端（Windows 10/11，64 位）：[从网站下载](https://pixel-reconstruction.netlify.app/download/PixelReconstruction-Setup.exe) · [GitHub Releases](https://github.com/shihshdh/pixel-reconstruction/releases/latest)。客户端把页面和素材打包在本地，启动快，照片和作品会另存到本机。有 NVIDIA 显卡的电脑会在后台自动装好本机引擎（国内镜像直连），之后照片直接用自己的显卡重建，约 7 秒一张、不上传；独显默认「极致」画质，界面背景是实时渲染的液态玻璃；窗口无边框，深色主题为黑金配色。说明见 [desktop/README.md](desktop/README.md)。
 
 ## 效果
 
@@ -41,8 +41,11 @@
   </tr>
 </table>
 
+<p align="center"><img src="docs/images/showcase.jpg" alt="展示页：由一张照片重建的精灵坠崖 3D 场景与液态玻璃标题" width="100%"></p>
+<p align="center"><sub>展示页轮流播放两个由单张照片重建的 3D 场景（印尼佩尼达岛的精灵坠崖、香港中环），可以拖动探索；标题是折射背后场景的液态玻璃文字。</sub></p>
+
 <p align="center"><img src="docs/images/raytrace.jpg" alt="极致画质下的液态玻璃界面（浅色主题）" width="100%"></p>
-<p align="center"><sub>「极致」画质（Windows 客户端 · 独立显卡）：参考 macOS Tahoe 液态玻璃壁纸，界面背景是一整片缓慢起伏的玻璃浪面——逐像素求交、斯涅尔折射与色散、菲涅尔反射，透过玻璃看到柔焦的天空、颜色不停变化的流光与沙丘状色块，边缘是一条极细的高光线。画质可在导航栏的液态玻璃滑块上拖动切换。</sub></p>
+<p align="center"><sub>「极致」画质（Windows 客户端 · 独立显卡）：参考 iOS 26 液态玻璃壁纸，界面背景是互相错开的磨砂玻璃圆片与一道扫过画面的玻璃“丝带”——丝带边缘折射身后的圆片，窗外的光在玻璃上落下斜向光带；深色主题为黑金配色。画质可在导航栏的液态玻璃滑块上拖动切换。</sub></p>
 
 <p align="center"><img src="docs/images/companion.jpg" alt="助手的几种状态" width="720"></p>
 <p align="center"><sub>页面右下角的助手会随时间更换道具与动作，也可以回答使用问题。</sub></p>

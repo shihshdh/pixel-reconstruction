@@ -134,8 +134,19 @@ class NumpyTests(Fixture):
         with patch.object(preview, "_numpy_batch", side_effect=AssertionError("Integer quaternion must use exact scalar arithmetic")):
             self.same_bytes([record], properties)
 
+    def test_nonfinite_opacity_is_transparent_not_fatal(self):
+        # SHARP 偶尔输出极少数 NaN 不透明度（实测 118 万点里 3 个），不应让整份预览失败
+        write_ply(self.source, [BASE, {**BASE, "opacity": float("nan")}])
+        preview.convert_ply_to_splat(self.source, self.fast)
+        preview.convert_ply_to_splat(self.source, self.slow, fast=False)
+        self.assertEqual(self.fast.read_bytes(), self.slow.read_bytes())
+        self.assertEqual(self.fast.read_bytes()[32 + 27], 0)  # 第二个点的 alpha
+        for value in (float("inf"), float("-inf")):
+            write_ply(self.source, [{**BASE, "opacity": value}])
+            self.same_bytes([{**BASE, "opacity": value}])
+
     def test_nonfinite_and_truncated_fast_input_is_atomic(self):
-        for field in preview.FIELDS:
+        for field in (f for f in preview.FIELDS if f != "opacity"):
             for value in (float("nan"), float("inf"), float("-inf")):
                 write_ply(self.source, [{**BASE, field: value}])
                 self.fast.write_bytes(b"previous valid file")

@@ -1,4 +1,5 @@
-// Usage: node scripts/prepare-landing.cjs artifacts/landing.ply
+// Usage: node scripts/prepare-landing.cjs artifacts/<scene>.ply <scene>
+// Writes public/scene/<scene>.ksplat and <scene>-lo.ksplat, and records the scene in scene-manifest.json.
 // Deterministic SHARP → KSplat conversion using the project's pinned viewer library.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -6,17 +7,22 @@ const GS = require('@mkkellogg/gaussian-splats-3d');
 const THREE = require('three');
 
 const source = process.argv[2] || 'artifacts/landing.ply';
+const scene = process.argv[3] || 'landing';
 const raw = fs.readFileSync(source);
 const parsed = GS.PlyParser.parseToUncompressedSplatArray(
   raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength), 0,
 );
 const output = path.resolve(__dirname, '../public/scene');
 fs.mkdirSync(output, { recursive: true });
-const manifest = { sourceSplats: parsed.splatCount, compressionLevel: 1, seed: 9131, variants: [] };
+const manifestPath = path.join(output, 'scene-manifest.json');
+let manifest = {};
+try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch {}
+if (!manifest.scenes) manifest = { scenes: {} };
+const entry = manifest.scenes[scene] = { sourceSplats: parsed.splatCount, compressionLevel: 1, seed: 9131, variants: [] };
 
 // Retain more of the original Gaussian footprint instead of blurring over missing
 // samples with enlarged splats. The mobile variant still caps GPU memory/downloads.
-for (const [name, fraction, scale] of [['landing.ksplat', .7, 1.12], ['landing-lo.ksplat', .4, 1.30]]) {
+for (const [name, fraction, scale] of [[scene + '.ksplat', .7, 1.12], [scene + '-lo.ksplat', .4, 1.30]]) {
   let seed = 9131;
   // Periodic sampling aliases against SHARP's pixel grid and creates stripes.
   // Seeded uniform sampling preserves coverage without a visible grid pattern.
@@ -33,7 +39,7 @@ for (const [name, fraction, scale] of [['landing.ksplat', .7, 1.12], ['landing-l
   );
   fs.writeFileSync(path.join(output, name), Buffer.from(buffer.bufferData));
   const variant = { name, sampledSplats: splats.length, bytes: buffer.bufferData.byteLength, fraction, scale };
-  manifest.variants.push(variant);
+  entry.variants.push(variant);
   console.log(JSON.stringify(variant));
 }
-fs.writeFileSync(path.join(output, 'scene-manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');

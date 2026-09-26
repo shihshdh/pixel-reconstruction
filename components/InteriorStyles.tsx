@@ -4,12 +4,12 @@
 export default function InteriorStyles() {
   return <style>{`
   :root{--bg:#f7f9fc;--bg2:#eef3f9;--card:#ffffff;--track:#e7edf5;--ink:#202428;--ink2:#586069;--ink3:#656d77;--line:#d2d8df;--line2:#bcc4ce;--accent:#0071e3;--glass:rgba(250,252,255,.7);--glass-brd:rgba(255,255,255,.88);--nav-brd:#3f516514;--shadow:0 24px 64px -32px #1b222959;}
-  [data-theme="dark"]{--bg:#0a111d;--bg2:#0f1828;--card:#142034;--track:#1b2a41;--ink:#e2e7ec;--ink2:#a1a9b2;--ink3:#8e9aa7;--line:#98a5b423;--line2:#a0b1c434;--accent:#4da3ff;--glass:rgba(16,26,42,.74);--glass-brd:#d9e5f224;--nav-brd:#c1d2e514;--shadow:0 24px 64px -32px #000a;}
-  .ruhua-root{--surface-tint:#f9fcff4f;--surface-rim:#fcfdffcc;--surface-shadow:#27384c10;--blue:var(--accent);--violet:#6b7f95;--pink:#7c92ab;background:radial-gradient(ellipse at 75% 0%,#8ba1ba15,transparent 50%),var(--bg);font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;}
-  [data-theme="dark"].ruhua-root{--surface-tint:#b7c6d70b;--surface-rim:#d8e3ef27;--surface-shadow:#0003;}
+  [data-theme="dark"]{--bg:#0b0b0c;--bg2:#121211;--card:#171613;--track:#211f1a;--ink:#f3eee4;--ink2:#bdb4a3;--ink3:#958c7a;--line:#d4af6a21;--line2:#d4af6a38;--accent:#d4af6a;--glass:rgba(23,21,17,.74);--glass-brd:#f3e2bd26;--nav-brd:#d4af6a1c;--shadow:0 24px 64px -32px #000c;}
+  .ruhua-root{--surface-tint:#f9fcff4f;--surface-rim:#fcfdffcc;--surface-shadow:#27384c10;--blue:var(--accent);--violet:#6b7f95;--pink:#7c92ab;background:radial-gradient(ellipse at 75% 0%,#8ba1ba15,transparent 50%),var(--bg);font-family:"SF Pro SC","SF Pro Display","SF Pro Text","PingFang SC","Helvetica Neue",-apple-system,BlinkMacSystemFont,"Segoe UI Variable Display","Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;}
+  [data-theme="dark"].ruhua-root{--surface-tint:#d5ccb90b;--surface-rim:#ede7da27;--surface-shadow:#0003;}
   .ruhua-root ::selection{background:#899fb855;}
   .ruhua-root{overflow-x:clip;}
-  .landing-fallback{position:fixed;inset:0;z-index:10000;overflow:hidden;background:#141619;color:#f1f5fa;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;}
+  .landing-fallback{position:fixed;inset:0;z-index:10000;overflow:hidden;background:#141619;color:#f1f5fa;font-family:"SF Pro SC","SF Pro Display","SF Pro Text","PingFang SC","Helvetica Neue",-apple-system,BlinkMacSystemFont,"Segoe UI Variable Display","Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;}
   .landing-fallback>img,.landing-fallback-shade{position:absolute;inset:0;width:100%;height:100%;}
   .landing-fallback>img{object-fit:cover;object-position:50% 42%;}
   .landing-fallback-shade{background:linear-gradient(180deg,#090e0b3d,transparent 130px,transparent calc(100% - 110px),#090e0b47);}
@@ -40,11 +40,11 @@ export default function InteriorStyles() {
   @keyframes showcase-title-in{0%,36%{opacity:0;transform:translate3d(0,24px,0);}100%{opacity:1;transform:none;}}
   @keyframes showcase-image-in{0%,48%{opacity:0;transform:translate3d(0,40px,0) scale(.97);}100%{opacity:1;transform:none;}}
   @media(prefers-reduced-motion:reduce){.showcase-transition{display:none;}[data-showcase-motion] [data-external-transition="true"],[data-showcase-motion] .showcase-workspace,[data-showcase-motion] .overview-intro,[data-showcase-motion] .home-page>section:nth-child(2){transform:none!important;animation:interior-fade 100ms linear both!important;}[data-showcase-motion="enter"] [data-external-transition="true"]{animation:showcase-reduced-out 100ms linear both!important;}@keyframes showcase-reduced-out{to{opacity:0;}}}
-  .ruhua-root main h1,.ruhua-root .home-title,.home-page h2{font-family:"STSong","Songti SC","Noto Serif SC",serif;font-weight:400!important;letter-spacing:.025em!important;line-height:1.32!important;}
+  .ruhua-root main h1,.ruhua-root .home-title,.home-page h2{font-family:inherit;font-weight:600!important;letter-spacing:-.015em!important;line-height:1.1!important;}
   .ruhua-root main{padding-top:70px!important;}
   .ruhua-root main.home-page{padding-top:0!important;}
   .home-hero::before{background:radial-gradient(ellipse at 60% 10%,#a2b4c828,transparent 68%);}
-  .eyebrow{font-family:SFMono-Regular,Consolas,monospace;font-size:10px!important;letter-spacing:.17em!important;color:var(--ink3);}
+  .eyebrow{font-family:inherit;font-weight:600;font-size:12px!important;letter-spacing:.02em!important;color:var(--ink3);}
   .nav-bar{height:66px;padding:0 4.3vw!important;background:var(--glass)!important;box-shadow:inset 0 -1px 0 var(--nav-brd)!important;backdrop-filter:blur(12px) saturate(115%)!important;-webkit-backdrop-filter:blur(12px) saturate(115%)!important;}
   .nav-logo{gap:9px;margin-right:38px;font-family:SFMono-Regular,Consolas,monospace;font-weight:500!important;font-size:12px;letter-spacing:-.045em;}
   .nav-logo svg{color:var(--ink);}
@@ -60,7 +60,7 @@ export default function InteriorStyles() {
   .nav-tab[aria-current="page"]::after{display:none;}
   .nav-drop{position:absolute;left:0;top:15px;width:100px;height:35px;border-radius:99px;transform-origin:left;pointer-events:none;transition:transform 420ms cubic-bezier(.16,1,.3,1);background:linear-gradient(160deg,#ffffffa8,#ffffff12 45%,#7791ae33 77%,#ffffff87);box-shadow:inset 1px 1px 1px #ffffffe0,inset -1px -1px 1px #7a93af6b,inset 0 0 8px #9cb4d024,0 3px 8px #273f5b13;border:1px solid #7791ae27;backdrop-filter:blur(2px) saturate(150%);-webkit-backdrop-filter:blur(2px) saturate(150%);}
   .nav-drop::after{content:"";position:absolute;inset:2px 7px 45%;border-radius:99px;background:radial-gradient(ellipse at var(--pointer-x,20%) 0%,#fff9,transparent 72%);}
-  [data-theme="dark"] .nav-drop{background:linear-gradient(160deg,#d6e1ee26,#d6e1ee05 50%,#96acc61a);box-shadow:inset 1px 1px 1px #dae6f35c,inset -1px -1px 1px #7f9dc01e,0 3px 8px #0002;border-color:#b7cce323;}
+  [data-theme="dark"] .nav-drop{background:linear-gradient(160deg,#ece5d826,#ece5d805 50%,#c2b59a1a);box-shadow:inset 1px 1px 1px #f1eadc5c,inset -1px -1px 1px #bba9841e,0 3px 8px #0002;border-color:#e0d3ba23;}
   .nav-theme{position:relative;overflow:hidden;background:linear-gradient(140deg,#ffffff80,#ffffff08 55%,#a6b8cd2e)!important;box-shadow:inset 1px 1px 1px #ffffffe0,inset -1px -1px 1px #6888ad42!important;}
   .nav-theme::after{content:"";position:absolute;inset:1px;border-radius:inherit;pointer-events:none;background:radial-gradient(circle at var(--pointer-x,25%) var(--pointer-y,10%),#ffffffa1,transparent 65%);opacity:.5;transition:opacity 160ms,transform 160ms;}
   .nav-theme:active::after{opacity:1;transform:scale(1.4);}
@@ -94,7 +94,7 @@ export default function InteriorStyles() {
   .liquid-toggle:active .liquid-thumb::after,.liquid-toggle:active .dock-thumb::after{opacity:1;}
   .liquid-toggle[data-tone="light"] .seg-btn[aria-pressed="true"]{color:var(--ink)!important;text-shadow:0 1px 0 #ffffff66;}
   .liquid-toggle[data-tone="dark"] .seg-btn[aria-pressed="true"]{color:#1f262d!important;text-shadow:0 1px 0 #ffffff66;}
-  [data-theme="dark"] .liquid-toggle[data-tone="light"] .seg-btn[aria-pressed="true"]{color:#1f262d!important;}
+  [data-theme="dark"] .liquid-toggle[data-tone="light"] .seg-btn[aria-pressed="true"]{color:#2c2820!important;}
   .source-drop{background:linear-gradient(150deg,#f0f7febf,#f6fafe12 50%,#8499b214);border-color:var(--surface-rim);}
   .create-heading{margin:0 auto 32px;max-width:620px;}
   .create-heading h1{font-size:clamp(36px,5.2vw,60px);}
@@ -122,7 +122,7 @@ export default function InteriorStyles() {
   .develop-mat{padding:13px;background:linear-gradient(140deg,#a4b2c3,#626d79 25%,#a6b4c4 60%,#596675);border-radius:2px;box-shadow:inset 0 0 0 2px #dce8f520,0 20px 40px -25px #22272d99;}
   .develop-light{animation:none;display:none;}
   .develop-caption{font-size:12px;letter-spacing:.05em;}
-  .develop-painting figcaption{font-family:SFMono-Regular,Consolas,monospace;font-size:9px!important;letter-spacing:.12em!important;}
+  .develop-painting figcaption{font-family:inherit;font-size:11px!important;letter-spacing:.02em!important;}
   .status-orb{width:5px;height:5px;box-shadow:0 0 0 4px #74879d12;}
   .gallery-card{border-radius:14px;box-shadow:0 12px 26px -22px #272d3469;}
   .gallery-actions button:first-child{background:var(--ink);color:var(--bg);}
@@ -138,7 +138,7 @@ export default function InteriorStyles() {
   .loop-fill{background:linear-gradient(90deg,#4d637d,#9fb2c7);}
   .home-title{font-size:clamp(39px,6.8vw,72px)!important;}
   .home-hero{padding-top:72px!important;}
-  .home-hero>div:first-child{font-family:SFMono-Regular,Consolas,monospace;font-size:15px!important;letter-spacing:-.035em!important;font-weight:400!important;}
+  .home-hero>div:first-child{font-family:inherit;font-size:15px!important;letter-spacing:-.01em!important;font-weight:600!important;}
   .home-page .step-card{border-radius:15px!important;}
   .step-number{color:var(--accent);font-family:Consolas,monospace;}
   .motion-section{background:#191d21!important;}

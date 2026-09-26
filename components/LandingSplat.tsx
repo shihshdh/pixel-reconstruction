@@ -5,6 +5,8 @@ import { perfProfile } from "@/lib/perf";
 import { useEffect, useRef } from "react";
 import { INTRO_SCENE_START } from "@/lib/intro";
 
+import type { LandingScene } from "@/lib/landing-scenes";
+
 export type LandingSceneStatus = "loading" | "ready" | "fallback";
 /** download: bytes still arriving (percent is null when the server sends no size); process: downloaded, now parsing and building. */
 export type LandingLoadProgress = { phase: "download" | "process"; percent: number | null };
@@ -17,7 +19,8 @@ const PROCESS_MS = 45000; // after download: time allowed for parsing and the fi
 const LOADER_PROCESSING = 1;
 
 /** A real SHARP scene. The photograph remains visible if WebGL or its asset fails. */
-export default function LandingSplat({ depth, reducedMotion, onStatus, onInteraction, onProgress }: {
+export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onStatus, onInteraction, onProgress }: {
+  scene: LandingScene;
   depth: number;
   reducedMotion: boolean;
   onStatus: (status: LandingSceneStatus) => void;
@@ -55,7 +58,7 @@ export default function LandingSplat({ depth, reducedMotion, onStatus, onInterac
       reported = key;
       progressRef.current?.(progress);
     };
-    let fieldOfViewTangent = 941 / (2 * 1330.3168);
+    let fieldOfViewTangent = SCENE.height / (2 * SCENE.fy);
     const desired = { x: 0, y: 0 };
     const drag = { x: 0, y: 0 };
     let gesture: { id: number; x: number; y: number; baseX: number; baseY: number; touch: boolean; active: boolean } | null = null;
@@ -151,7 +154,7 @@ export default function LandingSplat({ depth, reducedMotion, onStatus, onInterac
         const low = desktopProfile ? desktopProfile.tier === "low" : window.innerWidth < 768 || (navigatorInfo.deviceMemory || 8) <= 4 || navigatorInfo.connection?.saveData;
         // Both .ksplat files are served with a one-year immutable cache (netlify.toml).
         // Bump v= whenever an asset changes, or returning visitors keep the old scene.
-        const path = (low ? "/scene/landing-lo.ksplat" : "/scene/landing.ksplat") + "?v=clarity-2";
+        const path = `/scene/${SCENE.id}${low ? "-lo" : ""}.ksplat?v=${SCENE.version}`;
         // Check availability before allocating a GPU context. Missing assets must not imply 3D.
         const asset = await fetch(path, { method: "HEAD", signal: abort.signal });
         if (!asset.ok) throw new Error("Scene unavailable");
@@ -169,7 +172,7 @@ export default function LandingSplat({ depth, reducedMotion, onStatus, onInterac
           renderer,
           cameraUp: [0, 1, 0],
           initialCameraPosition: [0, 0, 0],
-          initialCameraLookAt: [0, 0, -4.9],
+          initialCameraLookAt: [0, 0, -SCENE.focus],
           useBuiltInControls: false,
           sharedMemoryForWorkers: false,
           selfDrivenMode: true,
@@ -183,10 +186,10 @@ export default function LandingSplat({ depth, reducedMotion, onStatus, onInterac
           const w = mount.clientWidth, h = mount.clientHeight;
           renderer.setSize(w, h);
           viewer.camera.aspect = w / h;
-          // Original SHARP intrinsics: 1672×941, fy=1330.3168. Preserve more of
+          // Original SHARP intrinsics of the showcase photo. Preserve more of
           // the scene at rest, reserving a small border only as the camera moves.
-          fieldOfViewTangent = Math.min(941 / (2 * 1330.3168), 1672 / (2 * 1330.3168) / (w / h));
-          const excursion = Math.max(Math.abs(current.x) / .68, Math.abs(current.y) / .345);
+          fieldOfViewTangent = Math.min(SCENE.height / (2 * SCENE.fy), SCENE.width / (2 * SCENE.fy) / (w / h));
+          const excursion = Math.max(Math.abs(current.x) / (.68 * SCENE.reach), Math.abs(current.y) / (.345 * SCENE.reach));
           viewer.camera.fov = 2 * Math.atan(fieldOfViewTangent * (.95 - excursion * .045)) * 180 / Math.PI;
           viewer.camera.updateProjectionMatrix();
           viewer.forceRenderNextFrame?.();
@@ -224,17 +227,18 @@ export default function LandingSplat({ depth, reducedMotion, onStatus, onInterac
           if (document.hidden) return;
           const reduced = reducedRef.current;
           // Single-photo reconstruction has a finite view cone. Keep the camera inside it.
-          const x = Math.max(-.68, Math.min(.68, drag.x * .58 + (reduced ? 0 : -desired.x * .10)));
-          const y = Math.max(-.345, Math.min(.345, drag.y * .30 + (reduced ? 0 : desired.y * .045)));
-          const z = reduced ? 0 : depthRef.current * 0.50;
+          const r = SCENE.reach;
+          const x = Math.max(-.68 * r, Math.min(.68 * r, (drag.x * .58 + (reduced ? 0 : -desired.x * .10)) * r));
+          const y = Math.max(-.345 * r, Math.min(.345 * r, (drag.y * .30 + (reduced ? 0 : desired.y * .045)) * r));
+          const z = reduced ? 0 : depthRef.current * 0.50 * r;
           if (Math.abs(x - current.x) + Math.abs(y - current.y) + Math.abs(z - current.z) < .00005) return;
           current.x += (x - current.x) * 0.065;
           current.y += (y - current.y) * 0.065;
           current.z += (z - current.z) * 0.065;
           viewer.camera.position.set(current.x, -current.y, -current.z);
           viewer.camera.up.set(0, 1, 0);
-          viewer.camera.lookAt(0, 0, -4.9);
-          const excursion = Math.max(Math.abs(current.x) / .68, Math.abs(current.y) / .345);
+          viewer.camera.lookAt(0, 0, -SCENE.focus);
+          const excursion = Math.max(Math.abs(current.x) / (.68 * r), Math.abs(current.y) / (.345 * r));
           viewer.camera.fov = 2 * Math.atan(fieldOfViewTangent * (.95 - excursion * .045)) * 180 / Math.PI;
           viewer.camera.updateProjectionMatrix();
           viewer.forceRenderNextFrame?.();
@@ -264,6 +268,8 @@ export default function LandingSplat({ depth, reducedMotion, onStatus, onInterac
         renderer?.domElement.remove();
       });
     };
+  // 每个场景各自挂载一次（父组件用 key 区分），这里不随场景对象重建
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onStatus]);
 
   return <div ref={mountRef} tabIndex={0} role="img" aria-label="三维场景，可拖动或按左右方向键探索，Home 键复位"

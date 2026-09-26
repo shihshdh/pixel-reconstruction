@@ -21,7 +21,8 @@ import PixelLoader from "@/components/PixelLoader";
 import { MorphIcon } from "morphicons/react";
 import { ICON } from "@/lib/icons";
 import AuthorContact from "@/components/AuthorContact";
-import { DESKTOP_DOWNLOAD, isDesktopApp, openWorksFolder, setFullscreen } from "@/lib/desktop";
+import { DESKTOP_DOWNLOAD, isDesktopApp, openWorksFolder, setFullscreen, titleBarMouseDown } from "@/lib/desktop";
+import WindowControls from "@/components/WindowControls";
 import { engineAccepts, engineInstalling, pauseEngineInstall, resumeEngineInstall, watchLocalEngine, type EngineStatus } from "@/lib/local-engine";
 import LiquidSegmented, { LiquidIndicator } from "@/components/LiquidSegmented";
 import { detectTier, perfProfile, readPerfChoice, savePerfChoice, PERF_EVENT, PERF_LABELS, type PerfChoice } from "@/lib/perf";
@@ -35,7 +36,7 @@ import { prefersReduced, SPRING, installPressFeedback, useParallax } from "@/lib
 // Three.js 渲染器：禁 SSR
 function LandingFallback() {
   return <div className="landing-fallback" role="status" aria-label="正在准备三维展示">
-    <img src="/scene/landing.jpg" alt="夕阳照进临海的房间，窗外是停泊的船" fetchPriority="high" />
+    <img src="/scene/landing.jpg" alt="印尼佩尼达岛的 Kelingking 悬崖与海滩" fetchPriority="high" />
     <div className="landing-fallback-shade" aria-hidden="true" />
     <div className="landing-fallback-brand" data-brand-target=""><BrandMark size={40} /><span>Pixel<br />Reconstruction<small>SINGLE-IMAGE 3D</small></span></div>
     <p>正在准备三维展示<span aria-hidden="true">…</span><noscript> · 请启用 JavaScript 以浏览三维场景</noscript></p>
@@ -77,14 +78,14 @@ const GLOBAL_CSS = `
   --shadow:0 30px 80px -34px rgba(0,0,0,0.4);
 }
 [data-theme="dark"]{
-  --bg:#000000;--bg2:#0a0a0c;--card:#161618;--track:#1f1f22;
-  --ink:#f5f5f7;--ink2:#a1a1a6;--ink3:#6e6e73;
-  --line:rgba(255,255,255,0.10);--line2:rgba(255,255,255,0.16);--accent:#0a84ff;
-  --glass:rgba(22,22,24,0.66);--glass-brd:rgba(255,255,255,0.14);--nav-brd:rgba(255,255,255,0.08);
+  --bg:#000000;--bg2:#0c0b0a;--card:#181716;--track:#22211f;
+  --ink:#f7f6f5;--ink2:#a1a1a6;--ink3:#6e6e73;
+  --line:rgba(255,255,255,0.10);--line2:rgba(255,255,255,0.16);--accent:#be984b;
+  --glass:rgba(24,23,22,0.66);--glass-brd:rgba(255,255,255,0.14);--nav-brd:rgba(255,255,255,0.08);
   --shadow:0 30px 80px -30px rgba(0,0,0,0.8);
 }
 .ruhua-root{
-  font-family:-apple-system,BlinkMacSystemFont,"SF Pro SC","SF Pro Display","PingFang SC","Helvetica Neue","Microsoft YaHei",sans-serif;
+  font-family:"SF Pro SC","SF Pro Display","SF Pro Text","PingFang SC","Helvetica Neue",-apple-system,BlinkMacSystemFont,"Segoe UI Variable Display","Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;
   color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased;min-height:100vh;
 }
 .ruhua-root button{font-family:inherit;cursor:pointer;}
@@ -284,7 +285,7 @@ const GLOBAL_CSS = `
 
 /* Clear, thin glass; refraction is suggested by the rim and reflected light. */
 :root{--glass:rgba(255,255,255,.58);--glass-brd:rgba(255,255,255,.9);}
-[data-theme="dark"]{--glass:rgba(24,26,29,.58);--glass-brd:rgba(255,255,255,.2);}
+[data-theme="dark"]{--glass:rgba(29,27,24,.58);--glass-brd:rgba(255,255,255,.2);}
 .ruhua-root{background:radial-gradient(ellipse at 80% 14%,rgba(104,173,199,.035),transparent 46%),var(--bg);}
 .ruhua-root button,.ruhua-root a{touch-action:manipulation;}
 .ruhua-root button{transition:transform 140ms var(--e-out),opacity 160ms,background 220ms,color 220ms;}
@@ -351,7 +352,7 @@ const GLOBAL_CSS = `
 
 /* Layered clear glass: crisp edge caustics over a lightly transmitted surface. */
 .ruhua-root{--surface-tint:rgba(255,255,255,.44);--surface-rim:rgba(255,255,255,.86);--surface-shadow:rgba(39,65,81,.065);}
-[data-theme="dark"].ruhua-root{--surface-tint:rgba(43,47,51,.38);--surface-rim:rgba(255,255,255,.23);--surface-shadow:rgba(0,0,0,.26);}
+[data-theme="dark"].ruhua-root{--surface-tint:rgba(50,48,44,.38);--surface-rim:rgba(255,255,255,.23);--surface-shadow:rgba(0,0,0,.26);}
 .liquid-surface,.compute-panel{position:relative;isolation:isolate;background:linear-gradient(145deg,var(--surface-tint),color-mix(in srgb,var(--surface-tint) 35%,transparent));border:1px solid color-mix(in srgb,var(--line) 80%,transparent);box-shadow:inset 0 1px 1px var(--surface-rim),inset 0 -1px 1px #68879b14,0 8px 26px var(--surface-shadow);}
 .liquid-surface::before,.compute-panel::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:-1;background:radial-gradient(ellipse at var(--pointer-x,15%) var(--pointer-y,0%),#ffffff55,transparent 62%),linear-gradient(170deg,#ffffff14,transparent 50%,#90b8ce08);}
 .liquid-surface::after,.compute-panel::after{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;pointer-events:none;background:linear-gradient(145deg,var(--surface-rim),transparent 26%,#c8e4f322 55%,var(--surface-rim));-webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor;mask-composite:exclude;}
@@ -359,7 +360,7 @@ const GLOBAL_CSS = `
 .nav-bar{background:color-mix(in srgb,var(--glass) 78%,transparent)!important;backdrop-filter:blur(9px) saturate(165%)!important;-webkit-backdrop-filter:blur(9px) saturate(165%)!important;border-bottom-color:color-mix(in srgb,var(--line) 45%,transparent)!important;}
 .source-track{grid-template-columns:repeat(2,minmax(0,1fr));background:color-mix(in srgb,var(--track) 50%,transparent);}
 .source-drop{width:calc((100% - 10px)/2);background:linear-gradient(158deg,#ffffffb8,#ffffff18 48%,#d5eef32b 76%,#ffffff94);border-color:var(--surface-rim);box-shadow:inset 1px 1px 2px var(--surface-rim),inset -1px -1px 2px #abc2d73b,0 3px 10px #2e546212;backdrop-filter:blur(3px) saturate(180%);}
-[data-theme="dark"] .source-drop{background:linear-gradient(158deg,#ffffff28,#ffffff09 48%,#96dbff12 76%,#ffffff23);}
+[data-theme="dark"] .source-drop{background:linear-gradient(158deg,#ffffff28,#ffffff09 48%,#e3d3b212 76%,#ffffff23);}
 .liquid-thumb{background:linear-gradient(160deg,#a5e0fadb,#439fe2e3 40%,#0874c7ea 76%,#86d6f3dd);box-shadow:inset 1px 1px 1px #f0fcffdf,inset -1px -1px 3px #0e6ba480,0 4px 10px #167bbc24;}
 .seg-btn[aria-pressed="true"]{text-shadow:0 1px 2px #11568628;}
 .home-hero{position:relative;}
@@ -732,7 +733,7 @@ function Nav({ page, setPage, theme, toggleTheme, onShowcase, logoReady = true, 
     ["enhance", "修图"], ["gallery", "作品库"],
   ];
   return (
-    <nav className="nav-bar" onPointerMove={followGlassPointer} style={{
+    <nav className="nav-bar" onPointerMove={followGlassPointer} onMouseDown={titleBarMouseDown} style={{
       position: "sticky", top: 0, zIndex: 100, background: "var(--glass)",
       WebkitBackdropFilter: "saturate(145%) blur(9px)", backdropFilter: "saturate(145%) blur(9px)",
       borderBottom: "1px solid var(--nav-brd)", boxShadow: "inset 0 1px 0 var(--glass-brd)",
@@ -766,6 +767,7 @@ function Nav({ page, setPage, theme, toggleTheme, onShowcase, logoReady = true, 
         <button className="nav-cta" onClick={() => setPage("create")} style={{
           border: 0, background: "var(--accent)", color: "#fff", fontWeight: 500, borderRadius: 980,
         }}>开始创作</button>
+        <WindowControls />
       </div>
     </nav>
   );
@@ -998,7 +1000,7 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
     void handleFileRef.current(incoming.file);
   }, [incoming, onIncomingTaken]);
   return <main style={{ maxWidth: 1024, margin: "0 auto", padding: "64px 24px 64px" }}>
-    <header className="create-heading"><h1>从这张照片开始。</h1><p>{local ? "选择一张图片，你的显卡将为它重建三维场景。" : "上传一张图片，云端将为它重建三维场景。"}</p></header>
+    <header className="create-heading"><h1>从一张照片开始。</h1><p>{local ? "选择一张图片，你的显卡将为它重建三维场景。" : "上传一张图片，云端将为它重建三维场景。"}</p></header>
     {engine.phase !== "off" && <ComputeBar compute={compute} setCompute={setCompute} engine={engine} busy={busy} />}
     <SourceBar source={source} setSource={setSource} conn={conn} device={device} onReconnect={onReconnect} backend={backend} onApply={onApply} busy={busy} local={local} />
     {!busy && phase !== "done" && <>
@@ -1488,17 +1490,17 @@ function HomePage({ setPage, active = true, ready = true }) {
   return <main ref={homeRef} className="home-page">
     <section className="overview-intro">
       <div><h1 className={"home-title" + (ready ? " is-ready" : "")} data-parallax=".14">
-        <span className="hero-first-line">从一张照片，</span><br />
-        <span>{Array.from("重建可探索的空间。").map((char, i) => <span key={i} className="hero-letter" style={{ animationDelay: `${i * 30}ms` }}>{char}</span>)}</span>
+        <span className="hero-first-line">一张照片。</span><br />
+        <span>{Array.from("一整个空间。").map((char, i) => <span key={i} className="hero-letter" style={{ animationDelay: `${i * 30}ms` }}>{char}</span>)}</span>
       </h1></div>
-      <div className="overview-context" data-parallax=".07"><p>基于 Apple SHARP，将单张图片转换为高斯泼溅场景。在浏览器内调整视角、编排运镜并导出视频。</p>
+      <div className="overview-context" data-parallax=".07"><p>Apple SHARP 模型把一张照片重建为三维高斯场景。自由走动、编排运镜，再导出成片。</p>
         <div className="overview-actions"><button className="editorial-primary" onClick={() => setPage("create")}>上传照片 <span aria-hidden="true">↗</span></button><button className="editorial-link" onClick={scrollDemo}>查看运镜示例 <span aria-hidden="true">↓</span></button></div>
       </div>
     </section>
     <DemoPlayer innerRef={demoRef} active={active} />
     <p className="demo-caption">同一场景，四种相机运动。选择上方运镜，查看视角与空间关系的变化。</p>
     <section className="workflow-flow">
-      <Reveal variant="focus" className="workflow-intro"><h2>从输入到成片。</h2><p>先建立空间，再决定怎样观看。</p><WorkflowPreview stage={workflowStage} onStageChange={setWorkflowStage} playing={workflowPlaying} onPlayingChange={setWorkflowPlaying} active={active} /></Reveal>
+      <Reveal variant="focus" className="workflow-intro"><h2>从照片，到成片。</h2><p>先有空间，再决定怎么看。</p><WorkflowPreview stage={workflowStage} onStageChange={setWorkflowStage} playing={workflowPlaying} onPlayingChange={setWorkflowPlaying} active={active} /></Reveal>
       <Reveal as="ol" stagger variant="unfold" className="workflow-list">
         {[
           ["上传照片", "选择主体清晰、具有前后层次的图片。支持 JPG、PNG、WebP、HEIC；20MB 以内原图上传，更大的照片会在本地压缩到 20MB 以内。"],
@@ -1513,7 +1515,7 @@ function HomePage({ setPage, active = true, ready = true }) {
         <figure><img src="/rtx4090.png" alt="用于云端场景重建的 RTX 4090 显卡" loading="lazy" data-parallax=".05" /><figcaption>COMPUTE / BEAM SERVERLESS</figcaption></figure>
       </Reveal>
     </section>
-    <section className="overview-start"><div><h2 data-parallax=".06">开始重建你的照片。</h2><p>上传后自动连接云端，无需配置显卡或服务地址。</p></div><button className="editorial-primary" onClick={() => setPage("create")}>上传照片 <span aria-hidden="true">↗</span></button></section>
+    <section className="overview-start"><div><h2 data-parallax=".06">现在，轮到你的照片。</h2><p>有 NVIDIA 显卡就在本机重建，没有就交给云端。无需任何配置。</p></div><button className="editorial-primary" onClick={() => setPage("create")}>上传照片 <span aria-hidden="true">↗</span></button></section>
     <footer className="overview-footer"><BrandMark size={21} /><span>Pixel Reconstruction</span><span>单张图片 · 三维场景 · 自由运镜</span></footer>
   </main>;
 }
