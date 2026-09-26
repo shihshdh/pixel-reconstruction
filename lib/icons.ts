@@ -10,4 +10,6 @@ export const ICON = {
   // The author card's copy glyph, redrawn from its 20-unit original at 1.2×.
   copy: "M10.8 8.4h6a2.4 2.4 0 0 1 2.4 2.4v7.2a2.4 2.4 0 0 1-2.4 2.4h-6a2.4 2.4 0 0 1-2.4-2.4v-7.2a2.4 2.4 0 0 1 2.4-2.4Z M14.4 8.4V6a2.4 2.4 0 0 0-2.4-2.4H6A2.4 2.4 0 0 0 3.6 6v7.2A2.4 2.4 0 0 0 6 15.6h2.4",
   check: "M4.8 12.4l4.6 4.6 9.8-9.8",
+  expand: "M4.5 9V4.5H9 M15 4.5h4.5V9 M19.5 15v4.5H15 M9 19.5H4.5V15",
+  collapse: "M9 4.5V9H4.5 M19.5 9H15V4.5 M15 19.5V15h4.5 M4.5 15H9v4.5",
 } as const;

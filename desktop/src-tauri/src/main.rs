@@ -2,7 +2,9 @@
 // 只有生成、修图、下载作品这些 API 请求走网络。外部链接交给系统浏览器打开。
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
 
 use tauri::{ipc::InvokeBody, webview::NewWindowResponse, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_opener::OpenerExt;
@@ -127,6 +129,174 @@ fn open_works_folder(app: tauri::AppHandle, folder: Option<String>) -> Result<St
     Ok(dir.to_string_lossy().into_owned())
 }
 
+// ---- 本机显卡引擎：用自己电脑的 NVIDIA 显卡跑 SHARP，不占用云端 GPU ----
+//
+// 引擎是 backend/local_engine/engine.py（随安装包放在 engine/ 资源目录），用本机已经装好
+// SHARP 的 Python 环境运行，只监听 127.0.0.1。PyTorch + 模型有 5GB 以上，不打包进客户端；
+// 找不到这样的环境时页面继续使用云端。
+
+/// 固定端口：作品库按后端地址记录作品，端口不变，重启客户端后本机作品仍能打开。
+const ENGINE_PORT: u16 = 47821;
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+#[derive(Default)]
+struct EngineState {
+    child: Option<Child>,
+    python: Option<PathBuf>,
+}
+
+#[derive(serde::Serialize)]
+struct EngineInfo {
+    url: String,
+    python: String,
+}
+
+/// 可以运行引擎的 Python：同一环境里要有 SHARP、PyTorch、FastAPI、uvicorn 和 multipart。
+fn engine_python_in(env: &Path) -> Option<PathBuf> {
+    let python = env.join("python.exe");
+    let site = env.join("Lib").join("site-packages");
+    let ok = python.is_file()
+        && site.join("sharp").join("cli").join("predict.py").is_file()
+        && ["torch", "fastapi", "uvicorn", "multipart"].iter().all(|m| site.join(m).is_dir());
+    ok.then_some(python)
+}
+
+/// 按顺序查找：环境变量 PIXEL_ENGINE_PYTHON → 配置文件 engine-python.txt →
+/// conda 登记的所有环境（~/.conda/environments.txt）→ 常见安装位置下的 envs → ~/sharp-env。
+fn find_engine_python(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let mut envs: Vec<PathBuf> = Vec::new();
+    // 允许填 python.exe 本身，也允许填环境目录
+    let as_env = |value: &str| {
+        let path = PathBuf::from(value.trim());
+        if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe")) {
+            path.parent().map(Path::to_path_buf).unwrap_or(path)
+        } else {
+            path
+        }
+    };
+    if let Ok(value) = std::env::var("PIXEL_ENGINE_PYTHON") {
+        envs.push(as_env(&value));
+    }
+    if let Ok(dir) = app.path().app_config_dir() {
+        if let Ok(value) = std::fs::read_to_string(dir.join("engine-python.txt")) {
+            envs.push(as_env(&value));
+        }
+    }
+    let home = std::env::var("USERPROFILE").map(PathBuf::from).ok();
+    if let Some(home) = &home {
+        if let Ok(list) = std::fs::read_to_string(home.join(".conda").join("environments.txt")) {
+            // 名字里带 sharp 的环境排在前面
+            let mut listed: Vec<PathBuf> = list.lines().map(str::trim).filter(|l| !l.is_empty()).map(PathBuf::from).collect();
+            listed.sort_by_key(|p| !p.file_name().is_some_and(|n| n.to_string_lossy().to_lowercase().contains("sharp")));
+            envs.extend(listed);
+        }
+    }
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Some(home) = &home {
+        roots.extend(["anaconda3", "miniconda3", "miniforge3"].iter().map(|n| home.join(n)));
+    }
+    for base in [r"C:\ProgramData", r"D:\"] {
+        roots.extend(["anaconda", "anaconda3", "miniconda3", "miniforge3"].iter().map(|n| Path::new(base).join(n)));
+    }
+    for root in roots {
+        envs.push(root.join("envs").join("sharp"));
+        if let Ok(entries) = std::fs::read_dir(root.join("envs")) {
+            envs.extend(entries.flatten().map(|e| e.path()));
+        }
+        envs.push(root);
+    }
+    if let Some(home) = &home {
+        envs.push(home.join("sharp-env"));
+    }
+    envs.iter().find_map(|env| engine_python_in(env))
+}
+
+/// NVIDIA 驱动会在 System32 放 nvcuda.dll（CUDA 驱动接口），没有它就不可能跑 CUDA。
+fn has_nvidia_gpu() -> bool {
+    let system = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+    Path::new(&system).join("System32").join("nvcuda.dll").is_file()
+}
+
+/// 引擎脚本：安装后在资源目录 engine/；开发构建直接用仓库里的源码。
+fn engine_script(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let bundled = app.path().resource_dir().ok().map(|d| d.join("engine").join("engine.py"));
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join(r"..\..\backend\local_engine\engine.py");
+    bundled.into_iter().chain(std::iter::once(source)).find(|p| p.is_file())
+}
+
+fn log_tail(path: &Path) -> String {
+    let text = std::fs::read(path).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    lines[lines.len().saturating_sub(4)..].join("\n")
+}
+
+/// 启动（或确认已在运行）本机引擎，返回它的地址。可以重复调用。
+/// 引擎监视客户端的进程号：客户端退出（包括被强制结束）时引擎随之退出。
+#[tauri::command]
+fn local_engine_start(app: tauri::AppHandle, state: tauri::State<'_, Mutex<EngineState>>) -> Result<EngineInfo, String> {
+    let mut engine = state.lock().map_err(|_| "引擎状态不可用")?;
+    let data = app.path().app_local_data_dir().map_err(|e| e.to_string())?.join("engine");
+    let log = data.join("engine.log");
+    let url = format!("http://127.0.0.1:{ENGINE_PORT}");
+    if let Some(child) = engine.child.as_mut() {
+        if let Ok(None) = child.try_wait() {
+            let python = engine.python.as_ref().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+            return Ok(EngineInfo { url, python });
+        }
+        // 已经退出：把原因交给页面，下次调用再重新启动
+        engine.child = None;
+        let tail = log_tail(&log);
+        return Err(if tail.is_empty() { "本机引擎已退出".into() } else { format!("本机引擎已退出：{tail}") });
+    }
+    // 没有 NVIDIA 驱动（核显、AMD 或没有独显）就不启动，页面直接用云端
+    if !has_nvidia_gpu() {
+        return Err("NO_GPU：这台电脑没有可用的 NVIDIA 显卡".into());
+    }
+    let python = find_engine_python(&app).ok_or("没有找到装有 SHARP 的 Python 环境")?;
+    let script = engine_script(&app).ok_or("客户端缺少本机引擎文件，请重新安装")?;
+    std::fs::create_dir_all(&data).map_err(|e| e.to_string())?;
+    let output = std::fs::File::create(&log).map_err(|e| e.to_string())?;
+    let mut command = Command::new(&python);
+    command
+        .arg("-u")
+        .arg(&script)
+        .args(["--port", &ENGINE_PORT.to_string(), "--parent-pid", &std::process::id().to_string(), "--data"])
+        .arg(&data)
+        .env("PYTHONIOENCODING", "utf-8")
+        .stdin(Stdio::null())
+        .stdout(output.try_clone().map_err(|e| e.to_string())?)
+        .stderr(output);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let child = command.spawn().map_err(|e| format!("无法启动本机引擎：{e}"))?;
+    engine.child = Some(child);
+    engine.python = Some(python.clone());
+    Ok(EngineInfo { url, python: python.to_string_lossy().into_owned() })
+}
+
+/// 全屏无边框：盖住整块屏幕（含任务栏），没有标题栏和窗口边框。on 为空时切换。
+#[tauri::command]
+fn set_fullscreen(window: tauri::WebviewWindow, on: Option<bool>) -> Result<bool, String> {
+    let next = on.unwrap_or(!window.is_fullscreen().map_err(|e| e.to_string())?);
+    window.set_fullscreen(next).map_err(|e| e.to_string())?;
+    Ok(next)
+}
+
+fn stop_engine(app: &tauri::AppHandle) {
+    if let Some(state) = app.try_state::<Mutex<EngineState>>() {
+        if let Ok(mut engine) = state.lock() {
+            if let Some(mut child) = engine.child.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -138,7 +308,8 @@ fn main() {
         }))
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![save_work_file, open_works_folder])
+        .manage(Mutex::new(EngineState::default()))
+        .invoke_handler(tauri::generate_handler![save_work_file, open_works_folder, local_engine_start, set_fullscreen])
         .setup(|app| {
             let handle = app.handle().clone();
             let popup_handle = app.handle().clone();
@@ -180,6 +351,11 @@ fn main() {
                 .build()?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("failed to start Pixel Reconstruction");
+        .build(tauri::generate_context!())
+        .expect("failed to start Pixel Reconstruction")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                stop_engine(app);
+            }
+        });
 }

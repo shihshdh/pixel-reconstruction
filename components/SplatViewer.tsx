@@ -6,7 +6,7 @@ import { prefersReduced, useFlipList } from "@/lib/motion";
 import { downloadJobFile } from "@/lib/api";
 import { downloadAsset, type DownloadProgress } from "@/lib/asset-download";
 import { isDesktopApp, openWorksFolder, saveWorkFile, workFolder } from "@/lib/desktop";
-import { createFrameGovernor, perfProfile, readPerfChoice, savePerfChoice, type PerfChoice, type PerfProfile } from "@/lib/perf";
+import { createFrameGovernor, perfProfile, readPerfChoice, savePerfChoice, PERF_EVENT, PERF_LABELS, type PerfChoice, type PerfProfile, type PerfTier } from "@/lib/perf";
 
 /**
  * SplatViewer 2.0
@@ -245,6 +245,7 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
   onAssetLoadedRef.current = onAssetLoaded;
   const [recording, setRecording] = useState(false);
   const [recProgress, setRecProgress] = useState(0);
+  const [exportNote, setExportNote] = useState("");
   const [canRecord, setCanRecord] = useState(true);
   // 运镜面板折叠：默认收起，不挡画面；点把手展开
 
@@ -263,9 +264,16 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
     viewerRef.current?.forceRenderNextFrame?.();
     setPerfInfo(info => ({ tier: profileRef.current?.tier || info?.tier || "", ratio }));
   };
-  useEffect(() => { setPerfChoice(readPerfChoice()); }, []);
-  function choosePerf(choice: PerfChoice) {
-    setPerfChoice(choice); savePerfChoice(choice);
+  useEffect(() => {
+    setPerfChoice(readPerfChoice());
+    // 导航栏里改了画质：工作室立刻跟着换档
+    const onChange = () => applyPerf(readPerfChoice());
+    window.addEventListener(PERF_EVENT, onChange);
+    return () => window.removeEventListener(PERF_EVENT, onChange);
+  }, []);
+  function choosePerf(choice: PerfChoice) { savePerfChoice(choice); }
+  function applyPerf(choice: PerfChoice) {
+    setPerfChoice(choice);
     const profile = perfProfile(choice);
     profileRef.current = profile;
     governorRef.current?.set(profile.maxPixelRatio);
@@ -738,7 +746,7 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
     if (!viewer?.camera || recording || exportSeq.length === 0) return;
 
     const tl = buildTimeline(exportSeq, true);
-    const fps = 30;
+    const fps = (profileRef.current || perfProfile()).exportFps;
     const total = Math.round(tl.total * fps);
 
     const canvas: HTMLCanvasElement =
@@ -748,15 +756,34 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
     const profile = profileRef.current || perfProfile();
     const cssW = canvas.clientWidth || mountRef.current?.clientWidth || 960;
     const cssH = canvas.clientHeight || mountRef.current?.clientHeight || 600;
-    const w = Math.floor(profile.exportWidth / 2) * 2;
-    const h = Math.floor((profile.exportWidth * cssH / cssW) / 2) * 2;
     const liveRatio = governorRef.current?.ratio ?? profile.maxPixelRatio;
-    rendererRef.current?.setPixelRatio(profile.exportWidth / cssW);
+    // 先按目标分辨率试画几帧估算总耗时：超出本档的时间预算就降到后备宽度，
+    // 高画质不能以等很久为代价。编码在显卡上与绘制并行，按绘制耗时 ×1.3 估算。
+    let exportWidth = profile.exportWidth;
+    rendererRef.current?.setPixelRatio(exportWidth / cssW);
     rendererRef.current?.setSize(cssW, cssH);
+    {
+      const started = performance.now();
+      for (let i = 0; i < 4; i++) { viewer.update(); viewer.render(); }
+      rendererRef.current?.getContext().finish();
+      const perFrame = (performance.now() - started) / 4;
+      const estimate = perFrame * 1.3 * total / 1000;
+      if (estimate > profile.exportBudgetSeconds && profile.fallbackExportWidth < exportWidth) {
+        exportWidth = profile.fallbackExportWidth;
+        rendererRef.current?.setPixelRatio(exportWidth / cssW);
+        rendererRef.current?.setSize(cssW, cssH);
+        setExportNote(`按 ${profile.exportWidth} 宽预计需要约 ${Math.round(estimate)} 秒，已改为 ${exportWidth} 宽导出`);
+      } else setExportNote("");
+    }
+    const w = Math.floor(exportWidth / 2) * 2;
+    const h = Math.floor((exportWidth * cssH / cssW) / 2) * 2;
 
     const area = w * h;
+    // H.264 级别按每秒宏块数选：2560 宽 60fps 超出 5.1 级上限，需要 5.2
+    const macroblocksPerSecond = Math.ceil(w / 16) * Math.ceil(h / 16) * fps;
     let codec = "avc1.42001f";
-    if (area > 2_097_152) codec = "avc1.420033";
+    if (macroblocksPerSecond > 983_040) codec = "avc1.420034";
+    else if (area > 2_097_152) codec = "avc1.420033";
     else if (area > 921_600) codec = "avc1.420028";
 
     setRecording(true);
@@ -773,7 +800,9 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
         fastStart: "in-memory",
       });
       // 优先用显卡编码；不支持时再退回默认（可能是软件编码，慢一些）
-      const base = { codec, width: w, height: h, bitrate: profile.exportBitrate, framerate: fps };
+      // 降档导出时码率按像素面积同比例下调
+      const bitrate = Math.max(8_000_000, Math.round(profile.exportBitrate * (exportWidth / profile.exportWidth) ** 2));
+      const base = { codec, width: w, height: h, bitrate, framerate: fps };
       let config: VideoEncoderConfig = { ...base, hardwareAcceleration: "prefer-hardware" };
       if (!(await VideoEncoder.isConfigSupported(config)).supported) config = base;
       if (!(await VideoEncoder.isConfigSupported(config)).supported) {
@@ -888,7 +917,7 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
             <div className="bar" style={{ width: 230 }}>
               <i style={{ width: `${recProgress}%`, animation: "none", transform: "none" }} />
             </div>
-            <div className="note">粒子开场 + {exportSeq.map(nameOf).join(" → ")}，正在你的显卡上逐帧编码，请勿切走标签页。</div>
+            <div className="note">粒子开场 + {exportSeq.map(nameOf).join(" → ")}，正在你的显卡上逐帧编码，请勿切走标签页。{exportNote && <><br />{exportNote}</>}</div>
           </div>
         )}
       </div>
@@ -900,7 +929,8 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
           <div className="rig-card-title">运镜 <span>可多选，勾上即预览</span>
             <label className="perf-choice" title={perfInfo ? `当前渲染倍率 ${perfInfo.ratio.toFixed(2)}×` : undefined}>画质
               <select value={perfChoice} onChange={(e) => choosePerf(e.target.value as PerfChoice)} disabled={recording}>
-                <option value="auto">自动{perfInfo && perfChoice === "auto" ? `（${{ high: "高", mid: "均衡", low: "流畅" }[perfInfo.tier as "high"] || ""}）` : ""}</option>
+                <option value="auto">自动{perfInfo && perfChoice === "auto" ? `（${PERF_LABELS[perfInfo.tier as PerfTier] || ""}）` : ""}</option>
+                <option value="ultra">极致 · 独显，最高 2.5× 超采样，导出 2560 宽 60fps</option>
                 <option value="high">高 · 超采样，导出 1920 宽</option>
                 <option value="mid">均衡 · 导出 1920 宽</option>
                 <option value="low">流畅 · 导出 1280 宽</option>

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "打包在客户端里的网站：只能把作品写进本地作品文件夹、打开该文件夹。",
+  "description": "打包在客户端里的网站：只能把作品写进本地作品文件夹、打开该文件夹、启动本机显卡引擎、切换全屏。",
   "windows": ["main"],
-  "permissions": ["core:default", "allow-save-work-file", "allow-open-works-folder"]
+  "permissions": ["core:default", "allow-save-work-file", "allow-open-works-folder", "allow-local-engine-start", "allow-set-fullscreen"]
 }

@@ -21,7 +21,9 @@ import PixelLoader from "@/components/PixelLoader";
 import { MorphIcon } from "morphicons/react";
 import { ICON } from "@/lib/icons";
 import AuthorContact from "@/components/AuthorContact";
-import { DESKTOP_DOWNLOAD, isDesktopApp, openWorksFolder } from "@/lib/desktop";
+import { DESKTOP_DOWNLOAD, isDesktopApp, openWorksFolder, setFullscreen } from "@/lib/desktop";
+import { engineAccepts, watchLocalEngine, type EngineStatus } from "@/lib/local-engine";
+import { detectTier, perfProfile, readPerfChoice, savePerfChoice, PERF_EVENT, PERF_LABELS, type PerfChoice } from "@/lib/perf";
 // 现有 API（lib/api.ts）——创作/工作室/修图都用它
 import {
   submitPhoto, checkStatus, editImage, requestRerender,
@@ -42,6 +44,8 @@ const LandingExperience = dynamic(() => import("@/components/LandingExperience")
 const SplatViewer = dynamic(() => import("@/components/SplatViewer"), { ssr: false });
 // Site companion; loads only after the landing and only when the gateway can chat.
 const WhaleCompanion = dynamic(() => import("@/components/WhaleCompanion"), { ssr: false });
+// 画质“极致”档（独立显卡）的界面光追背景；其他档位不加载。
+const RayTracedBackdrop = dynamic(() => import("@/components/RayTracedBackdrop"), { ssr: false });
 
 // Public gateway URLs only; no Beam account token is needed in the browser.
 const BEAM_URL = getDefaultBase();
@@ -53,6 +57,11 @@ const SOURCE_META = {
 type Source = keyof typeof SOURCE_URL;
 const isLocalPage = () => typeof window !== "undefined" && ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
 const isLoopbackAddress = (value: string) => { try { return ["localhost", "127.0.0.1", "[::1]"].includes(new URL(value).hostname); } catch { return false; } };
+// Windows 客户端的算力选择：本机显卡（默认，不占用云端 GPU）或云端 Beam。
+type Compute = "local" | "cloud";
+const COMPUTE_KEY = "ruhua-compute-v1";
+const ENGINE_URL_PATTERN = /^http:\/\/127\.0\.0\.1:47821\/?$/;
+const isEngineAddress = (value = "") => ENGINE_URL_PATTERN.test(value);
 
 // ============================================================
 // 设计系统：注入全局 CSS 变量 + 字体 + 动画
@@ -172,6 +181,10 @@ const GLOBAL_CSS = `
 .nav-right{margin-left:auto;display:flex;align-items:center;gap:14px;flex:none;padding-left:12px;}
 .nav-cta{font-size:13px;padding:8px 18px;white-space:nowrap;}
 .nav-theme{width:34px;height:34px;font-size:15px;flex:none;}
+.nav-quality{display:flex;align-items:center;gap:6px;height:34px;padding:0 4px 0 12px;border:1px solid var(--line);border-radius:980px;background:color-mix(in srgb,var(--card) 70%,transparent);font-size:12px;color:var(--ink2);flex:none;}
+.nav-quality select{border:0;background:none;color:var(--ink);font:inherit;padding:4px 6px;border-radius:980px;cursor:pointer;outline-offset:2px;}
+.nav-quality select option{background:var(--card);color:var(--ink);}
+.nav-fullscreen svg{rotate:0deg!important;}
 .nav-download{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 9px;border:1px solid transparent;border-radius:11px;color:inherit;font-size:12px;white-space:nowrap;text-decoration:none;transition:background 180ms,border-color 180ms,transform 180ms;}
 .nav-download svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round;}
 .nav-download:hover{background:color-mix(in srgb,currentColor 5%,transparent);border-color:color-mix(in srgb,currentColor 8%,transparent);}
@@ -188,6 +201,8 @@ const GLOBAL_CSS = `
   .nav-right{gap:8px;padding-left:8px;}
   .nav-cta{font-size:12px;padding:7px 13px;}
   .nav-theme{width:30px;height:30px;font-size:14px;}
+  .nav-quality span{display:none;}
+  .nav-quality{padding-left:4px;height:30px;}
 }
 @media(max-width:380px){
   .nav-logo{margin-right:10px;}
@@ -625,6 +640,52 @@ function DesktopDownload() {
   </a>;
 }
 
+// 客户端里的全局画质：决定工作室的渲染倍率、导出分辨率，以及“极致”档的光追界面。
+function QualityPicker() {
+  const [choice, setChoice] = useState<PerfChoice>("auto");
+  const [auto, setAuto] = useState("");
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    setShow(isDesktopApp());
+    const sync = () => { setChoice(readPerfChoice()); setAuto(PERF_LABELS[detectTier()]); };
+    sync();
+    window.addEventListener(PERF_EVENT, sync);
+    return () => window.removeEventListener(PERF_EVENT, sync);
+  }, []);
+  if (!show) return null;
+  return <label className="nav-quality" title="画质：极致会开启界面光线追踪，并以 2560 宽 60fps 导出">
+    <span>画质</span>
+    <select value={choice} onChange={e => savePerfChoice(e.target.value as PerfChoice)} aria-label="画质">
+      <option value="auto">自动（{auto}）</option>
+      <option value="ultra">极致 · 光追界面</option>
+      <option value="high">高</option>
+      <option value="mid">均衡</option>
+      <option value="low">流畅 · 核显</option>
+    </select>
+  </label>;
+}
+
+// 客户端的全屏无边框模式：F11 或导航栏按钮切换，Esc 退出。
+function FullscreenToggle() {
+  const [show, setShow] = useState(false);
+  const [full, setFull] = useState(false);
+  useEffect(() => {
+    if (!isDesktopApp()) return;
+    setShow(true);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "F11") { event.preventDefault(); void setFullscreen().then(setFull); }
+      // 其他组件（对话框、输入框）先处理过的 Esc 不抢
+      else if (event.key === "Escape" && !event.defaultPrevented) void setFullscreen(false).then(setFull);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  if (!show) return null;
+  return <button className="nav-theme nav-fullscreen" onClick={() => void setFullscreen().then(setFull)} title={full ? "退出全屏（Esc）" : "全屏无边框（F11）"} aria-label={full ? "退出全屏" : "全屏无边框"} aria-pressed={full} style={{
+    border: "1px solid var(--line)", background: "var(--card)", borderRadius: 980, color: "var(--ink)", display: "grid", placeItems: "center",
+  }}><MorphIcon icon={full ? ICON.collapse : ICON.expand} size={16} strokeWidth={1.6} spring={SPRING} reducedMotion="user" /></button>;
+}
+
 function Nav({ page, setPage, theme, toggleTheme, onShowcase, logoReady = true }) {
   const tabsRef = useRef<HTMLDivElement>(null);
   const [tabRect, setTabRect] = useState({ x: 0, width: 0 });
@@ -667,7 +728,9 @@ function Nav({ page, setPage, theme, toggleTheme, onShowcase, logoReady = true }
       </div>
       <div className="nav-right">
         <DesktopDownload />
+        <QualityPicker />
         <AuthorContact className="nav-contact" />
+        <FullscreenToggle />
         <button className="nav-theme" onClick={toggleTheme} title="切换主题" aria-label={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"} style={{
           border: "1px solid var(--line)", background: "var(--card)", borderRadius: 980,
           color: "var(--ink)", display: "grid", placeItems: "center",
@@ -683,17 +746,41 @@ function Nav({ page, setPage, theme, toggleTheme, onShowcase, logoReady = true }
 // ============================================================
 // 算力来源切换条（创作/工作室共用）
 // ============================================================
-function SourceBar({ source, setSource, conn, device, onReconnect, backend, onApply, busy = false }) {
+function ComputeBar({ compute, setCompute, engine, busy }: { compute: Compute; setCompute: (next: Compute) => void; engine: EngineStatus; busy: boolean }) {
+  const usable = engine.phase !== "missing" && engine.phase !== "error";
+  const gpu = engine.device ? engine.device.replace(/^NVIDIA\s+/i, "").replace(/\s+Laptop GPU$/i, " 笔记本") : "";
+  const localSub = engine.phase === "ready" ? gpu || "已就绪"
+    : engine.phase === "loading" ? "正在载入模型"
+    : engine.phase === "starting" ? "正在启动"
+    : engine.phase === "missing" ? "未安装本机引擎" : "暂不可用";
+  const order: Compute[] = ["local", "cloud"];
+  return <section className="compute-panel" aria-label="算力选择">
+    <div className="compute-heading"><span>算力</span><span>{compute === "local" ? "照片在这台电脑上处理，太慢或出错时自动改用云端" : "照片上传到云端处理"}</span></div>
+    <div className="source-track" style={{ gridTemplateColumns: "repeat(2,minmax(0,1fr))" }}>
+      <span className="source-drop" style={{ width: "calc((100% - 10px)/2)", transform: `translate3d(${order.indexOf(compute) * 100}%,0,0)` }} />
+      <button className="src-card" aria-pressed={compute === "local"} disabled={busy || !usable} onClick={() => setCompute("local")}>
+        <strong>本机显卡</strong><span>{localSub}</span>
+      </button>
+      <button className="src-card" aria-pressed={compute === "cloud"} disabled={busy} onClick={() => setCompute("cloud")}>
+        <strong>云端</strong><span>Beam · RTX 4090</span>
+      </button>
+    </div>
+    {!usable && <p className="compute-note">{"本机显卡引擎没有启动成功，暂时使用云端。" + (engine.message ? "原因：" + engine.message.slice(0, 160) : "")}</p>}
+  </section>;
+}
+
+function SourceBar({ source, setSource, conn, device, onReconnect, backend, onApply, busy = false, local = false }) {
   const order: Source[] = ["beam", "local"];
   const [draft, setDraft] = useState(backend);
   const [error, setError] = useState("");
   const [developer, setDeveloper] = useState(false);
   useEffect(() => setDeveloper(isLocalPage()), []);
   useEffect(() => { setDraft(backend); setError(""); }, [backend, source]);
-  const statusText = busy ? "照片正在云端重建" : conn === "ok" ? "云端服务已就绪" : conn === "checking" ? "正在连接云端服务" : conn === "fail" ? "云端暂未连接，请稍后重试" : "正在检查云端服务";
+  const statusText = local ? (busy ? "照片正在本机显卡上重建" : "本机显卡已选用 · 云端仅用于修图与助手")
+    : busy ? "照片正在云端重建" : conn === "ok" ? "云端服务已就绪" : conn === "checking" ? "正在连接云端服务" : conn === "fail" ? "云端暂未连接，请稍后重试" : "正在检查云端服务";
   const color = conn === "ok" ? "#299d66" : conn === "fail" ? "#b77738" : "var(--ink3)";
   return <>
-    <section className={"service-status" + (conn === "ok" ? " is-ready" : conn === "checking" ? " is-checking" : "")} aria-label="云端服务状态" role="status"><i aria-hidden="true" /><span>{statusText}</span>{conn === "fail" ? <button disabled={busy} onClick={onReconnect}>重新连接 ↻</button> : <small>READY WHEN YOU ARE</small>}</section>
+    <section className={"service-status" + (local || conn === "ok" ? " is-ready" : conn === "checking" ? " is-checking" : "")} aria-label="服务状态" role="status"><i aria-hidden="true" /><span>{statusText}</span>{conn === "fail" && !local ? <button disabled={busy} onClick={onReconnect}>重新连接 ↻</button> : <small>READY WHEN YOU ARE</small>}</section>
     {developer && <details className="developer-settings"><summary>本地开发 · 高级设置</summary><section className="compute-panel" aria-label="本地开发设置">
     <div className="compute-heading"><span>开发服务</span><span style={{ color }}>{device || "未连接"}</span></div>
     <div className="source-track">
@@ -721,7 +808,8 @@ function SourceBar({ source, setSource, conn, device, onReconnect, backend, onAp
 // ============================================================
 // 创作页：选算力 → 上传 → 显影
 // ============================================================
-function CreatePage({ source, setSource, conn, device, onDone, onReconnect, backend, onApply, onBusy, incoming = null, onIncomingTaken }: { incoming?: { file: File; id: number } | null; onIncomingTaken?: () => void; [key: string]: any }) {
+function CreatePage({ source, setSource, conn, device, onDone, onReconnect, backend, taskBase, compute, setCompute, engine, onApply, onBusy, incoming = null, onIncomingTaken }: { incoming?: { file: File; id: number } | null; onIncomingTaken?: () => void; [key: string]: any }) {
+  const local = isEngineAddress(taskBase);
   const [phase, setPhase] = useState("idle");
   const [pickedFile, setPickedFile] = useState<File | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -742,12 +830,33 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
   }, []);
   useEffect(() => () => { generation.current++; stopTimers(); }, [stopTimers]);
   const fail = (message: string) => { stopTimers(); busyRef.current = false; setErrMsg(message); setPhase("error"); };
+  // 本机显卡处理太久（或出错、引擎退出）时，把同一张照片改交云端，不让用户干等。
+  // 首次打开时模型载入约 30 秒 + 首张约 20 秒，预算留足；渲染视频更久。
+  const handoffFile = useRef<{ file: File; renderVideo: boolean } | null>(null);
+  async function handoffToCloud(reason: string, token: number) {
+    const job = handoffFile.current;
+    handoffFile.current = null;
+    if (!job || !backend || isEngineAddress(backend)) { fail(reason); return; }
+    stopTimers(); setStage("本机" + reason.replace(/[。.]$/, "") + " · 已改由云端继续");
+    try {
+      const { call_id } = await submitPhoto(job.file, job.renderVideo, false, backend);
+      if (token !== generation.current) return;
+      const task = { id: call_id, base: backend, started: Date.now() };
+      pendingRef.current = task; beginPolling(task, token);
+    } catch (e) {
+      if (token !== generation.current) return;
+      fail(e instanceof Error ? e.message : "云端提交失败，请重试。");
+    }
+  }
   function beginPolling(task: { id: string; base: string; started: number }, token: number) {
     let failures = 0;
+    const local = isEngineAddress(task.base);
+    const budget = (handoffFile.current?.renderVideo ? 240 : 120) * 1000;
     clockRef.current = setInterval(() => setElapsed(Math.floor((Date.now() - task.started) / 1000)), 1000);
     const poll = async () => {
       if (token !== generation.current) return;
       if (Date.now() - task.started > 25 * 60 * 1000) { fail("等待超过 25 分钟。任务可能仍在云端运行，可继续查询原任务。"); return; }
+      if (local && handoffFile.current && Date.now() - task.started > budget) { void handoffToCloud("处理时间过长", token); return; }
       try {
         const st = await checkStatus(task.id, task.base);
         if (token !== generation.current) return;
@@ -756,11 +865,16 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
           stopTimers(); busyRef.current = false; pendingRef.current = null; setPhase("done");
           onDone?.({ ...st, backend_url: task.base }); return;
         }
-        if (st.status === "error") { pendingRef.current = null; fail(st.message || "显影失败，请重试。"); return; }
-        setStage(st.status === "queued" ? "已排队 · 等待 GPU 唤醒" : st.stage || "高斯泼溅 · 显影中");
+        if (st.status === "error") {
+          pendingRef.current = null;
+          if (local && handoffFile.current) { void handoffToCloud("显卡处理失败", token); return; }
+          fail(st.message || "显影失败，请重试。"); return;
+        }
+        setStage(st.status === "queued" ? (isEngineAddress(task.base) ? "已排队 · 等待本机显卡" : "已排队 · 等待 GPU 唤醒") : st.stage || "高斯泼溅 · 显影中");
       } catch (e) {
         if (token !== generation.current) return;
         failures++;
+        if (failures >= 4 && local && handoffFile.current) { void handoffToCloud("显卡引擎无响应", token); return; }
         if (failures >= 4) { fail("暂时无法获取进度。可继续查询原任务，不会重复提交。" ); return; }
         setStage("连接暂时中断 · 正在重新查询");
       }
@@ -772,9 +886,9 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
   useEffect(() => () => readAbort.current?.abort(), []);
   async function handleFile(picked: File) {
     if (busyRef.current) return;
-    if (!backend) { fail("云端服务暂不可用，请稍后重试。"); return; }
+    if (!taskBase) { fail("云端服务暂不可用，请稍后重试。"); return; }
     if (!isDevelopablePhoto(picked)) { fail("请选择 50MB 以内的 jpg、png、webp 或 heic 图片。"); return; }
-    const token = ++generation.current, taskBase = backend;
+    const token = ++generation.current, base = taskBase;
     stopTimers(); pendingRef.current = null; busyRef.current = true;
     setErrMsg(""); setElapsed(0); setPickedFile(null); setReadRatio(0); setStage("正在读取照片"); setPhase("reading");
     const started = Date.now();
@@ -796,16 +910,24 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
       if (blob.size > 20 * 1024 * 1024) setStage(`照片 ${mb(blob.size)} MB，正在压缩到 20MB 以内`);
       const { file } = await preparePhoto(blob, picked.name);
       if (token !== generation.current) return;
-      setPickedFile(file); setStage("照片上传中"); setPhase("uploading");
+      setPickedFile(file); setStage(isEngineAddress(base) ? "照片交给本机显卡" : "照片上传中"); setPhase("uploading");
       announceMoment({ kind: "upload", file });
-      const { call_id } = await submitPhoto(file, renderVideo, false, taskBase, ({ sent, total, bytesPerSecond }) => {
+      handoffFile.current = isEngineAddress(base) ? { file, renderVideo } : null;
+      let accepted: { call_id: string };
+      try {
+        accepted = await submitPhoto(file, renderVideo, false, base, ({ sent, total, bytesPerSecond }) => {
         if (token !== generation.current) return;
         const speed = bytesPerSecond >= 1048576 ? `${mb(bytesPerSecond)} MB/s` : `${Math.round(bytesPerSecond / 1024)} KB/s`;
-        setStage(total && sent < total ? `照片上传中 · ${mb(sent)} / ${mb(total)} MB · ${speed}` : "照片已上传 · 等待服务确认");
-      });
+          setStage(total && sent < total ? `照片上传中 · ${mb(sent)} / ${mb(total)} MB · ${speed}` : "照片已上传 · 等待服务确认");
+        });
+      } catch (error) {
+        // 本机引擎没接住（刚退出、端口被占）：直接交给云端
+        if (token !== generation.current || !handoffFile.current) throw error;
+        setPhase("processing"); void handoffToCloud("显卡引擎不可用", token); return;
+      }
       if (token !== generation.current) return;
-      stopTimers(); setPhase("processing"); setStage("已接收 · 等待 GPU 唤醒");
-      const task = { id: call_id, base: taskBase, started };
+      stopTimers(); setPhase("processing"); setStage(isEngineAddress(base) ? "已接收 · 本机显卡准备中" : "已接收 · 等待 GPU 唤醒");
+      const task = { id: accepted.call_id, base, started };
       pendingRef.current = task; beginPolling(task, token);
     } catch (e) {
       readAbort.current = null; setReadStalled(false);
@@ -826,11 +948,12 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
     void handleFileRef.current(incoming.file);
   }, [incoming, onIncomingTaken]);
   return <main style={{ maxWidth: 1024, margin: "0 auto", padding: "64px 24px 64px" }}>
-    <header className="create-heading"><h1>从这张照片开始。</h1><p>上传一张图片，云端将为它重建三维场景。</p></header>
-    <SourceBar source={source} setSource={setSource} conn={conn} device={device} onReconnect={onReconnect} backend={backend} onApply={onApply} busy={busy} />
+    <header className="create-heading"><h1>从这张照片开始。</h1><p>{local ? "选择一张图片，你的显卡将为它重建三维场景。" : "上传一张图片，云端将为它重建三维场景。"}</p></header>
+    {engine.phase !== "off" && engine.phase !== "missing" && <ComputeBar compute={compute} setCompute={setCompute} engine={engine} busy={busy} />}
+    <SourceBar source={source} setSource={setSource} conn={conn} device={device} onReconnect={onReconnect} backend={backend} onApply={onApply} busy={busy} local={local} />
     {!busy && phase !== "done" && <>
       <DropZone onFile={handleFile} />
-      <label className="video-option"><input type="checkbox" checked={renderVideo} onChange={e => setRenderVideo(e.target.checked)} />同时生成云端运镜视频（耗时和费用会增加）</label>
+      <label className="video-option"><input type="checkbox" checked={renderVideo} onChange={e => setRenderVideo(e.target.checked)} />{local ? "同时用本机显卡渲染运镜视频" : "同时生成云端运镜视频（耗时和费用会增加）"}</label>
       <p className="compute-note" style={{ textAlign: "center" }}>也可以在 3D 工作室里直接导出视频。</p>
     </>}
     {busy && <section className="develop-stage" aria-busy="true">
@@ -841,7 +964,7 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
       {phase === "reading" ? <div className="read-note">
         {readStalled && <p>照片可能存放在 iCloud，Windows 正在从云端下载原图，国内网络下可能较慢。可以在资源管理器里右键照片选择“始终保留在此设备上”，下载完成后再选择会快很多。</p>}
         <button type="button" onClick={cancelReading}>取消</button>
-      </div> : <p className="compute-note" style={{ textAlign: "center" }}>首次唤醒可能需要几分钟。画面展示显影过程，任务状态以云端返回为准。</p>}
+      </div> : <p className="compute-note" style={{ textAlign: "center" }}>{local ? "本机显卡处理中，模型载入后每张约十秒。画面展示显影过程。" : "首次唤醒可能需要几分钟。画面展示显影过程，任务状态以云端返回为准。"}</p>}
     </section>}
     {phase === "done" && <div style={{ textAlign: "center", padding: 40 }}><OkMark /><p>显影完成，已保存到作品库。</p></div>}
     {phase === "error" && <div className="creation-error" role="alert"><p>{errMsg}</p><button onClick={() => {
@@ -1366,6 +1489,22 @@ export default function App() {
   const [incoming, setIncoming] = useState<{ file: File; id: number } | null>(null);
   const takeIncoming = useCallback(() => setIncoming(null), []);
   const [doubao, setDoubao] = useState<DoubaoPreferences>({ mode: "site", apiKey: "", model: "" });
+  const [engine, setEngine] = useState<EngineStatus>({ phase: "off", url: "" });
+  const [compute, setComputeState] = useState<Compute>("local");
+  useEffect(() => {
+    try { if (localStorage.getItem(COMPUTE_KEY) === "cloud") setComputeState("cloud"); } catch {}
+    return watchLocalEngine(setEngine);
+  }, []);
+  const [rayUi, setRayUi] = useState(false);
+  useEffect(() => {
+    const update = () => { try { setRayUi(perfProfile().rayTracedUi); } catch { setRayUi(false); } };
+    update();
+    window.addEventListener(PERF_EVENT, update);
+    return () => window.removeEventListener(PERF_EVENT, update);
+  }, []);
+  const setCompute = (next: Compute) => { setComputeState(next); try { localStorage.setItem(COMPUTE_KEY, next); } catch {} };
+  // 生成与重建走哪里；修图、助手、旧作品仍按各自记录的后端。
+  const taskBase = compute === "local" && engineAccepts(engine) ? engine.url : backend;
   const probeId = useRef(0);
   const openVersion = useRef(0);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -1448,7 +1587,7 @@ export default function App() {
   };
   const keepResult = (st) => {
     const { id, gallery_id, viewer_quality, preview_error, offline_mobile_url, offline_original_url, offline_viewer_url, offline_ply_url, offline_video_url, ...remote } = st;
-    const item = { ...remote, backend_url: remote.backend_url || backend, thumb: fileUrl(st.job_id, "original.jpg", st.backend_url || backend), title: "显影场景", date: new Date().toLocaleDateString("zh-CN"), meta: SOURCE_META[source]?.name || "", fav: false };
+    const item = { ...remote, backend_url: remote.backend_url || backend, thumb: fileUrl(st.job_id, "original.jpg", st.backend_url || backend), title: "显影场景", date: new Date().toLocaleDateString("zh-CN"), meta: isEngineAddress(remote.backend_url) ? "本机显卡" : SOURCE_META[source]?.name || "", fav: false };
     setResult({ ...item, gallery_id: galleryId(item), viewer_quality: "full" });
     void cacheGalleryItem(item, { quality: "full" });
     navigate("studio");
@@ -1460,7 +1599,7 @@ export default function App() {
     const [{ mobile, viewer, ply, quality }, original, video] = await Promise.all([getGalleryScene(item, navigator.onLine), getGalleryAsset(item.id, "original"), item.mp4_file ? getGalleryAsset(item.id, "video", item.mp4_file) : undefined]);
     if (version !== openVersion.current) return;
     if (!mobile && !viewer && !ply && !navigator.onLine) throw new Error("这件作品还没有完整保存到此浏览器，请联网后打开或继续保存。");
-    if (!isLocalPage() && isLoopbackAddress(item.backend_url || "") && !mobile && !viewer && !ply) throw new Error("这是本地开发服务中的作品，请在原电脑的本地页面打开并保存。");
+    if (!isLocalPage() && isLoopbackAddress(item.backend_url || "") && !mobile && !viewer && !ply && !(isDesktopApp() && isEngineAddress(item.backend_url))) throw new Error(isEngineAddress(item.backend_url) ? "这是本机显卡生成的作品，请在 Windows 客户端里打开。" : "这是本地开发服务中的作品，请在原电脑的本地页面打开并保存。");
     const useMobile = quality === "mobile";
     const baseItem = { ...item, gallery_id: item.id, backend_url: item.backend_url || backend, viewer_quality: useMobile ? "mobile" : "full", offline_mobile_url: mobile ? URL.createObjectURL(mobile) : undefined, offline_original_url: original ? URL.createObjectURL(original) : undefined, offline_viewer_url: viewer ? URL.createObjectURL(viewer) : undefined, offline_ply_url: ply ? URL.createObjectURL(ply) : undefined, offline_video_url: video ? URL.createObjectURL(video) : undefined };
     if (useMobile) {
@@ -1481,11 +1620,13 @@ export default function App() {
     <BrandIntro />
     {!splashDone && <LandingExperience exitDuration={960} onExitStart={() => setShowcaseMotion("enter")} onEnter={() => { setSplashDone(true); setShowcaseMotion(null); window.scrollTo(0, 0); }} />}
     <ShowcaseTransition direction={showcaseMotion} />
-    <div className="showcase-workspace" inert={!splashDone} aria-hidden={!splashDone} style={{ visibility: splashDone || showcaseMotion ? "visible" : "hidden" }}>
+    {/* 工作室和显影期间停下，把显卡让给场景渲染与本机推理 */}
+    {rayUi && <RayTracedBackdrop theme={theme} active={splashDone && page !== "studio" && !creating} />}
+    <div className="showcase-workspace" inert={!splashDone} aria-hidden={!splashDone} style={{ visibility: splashDone || showcaseMotion ? "visible" : "hidden", position: "relative", zIndex: 1 }}>
       <Nav page={page} setPage={navigate} theme={theme} toggleTheme={() => setTheme(t => t === "dark" ? "light" : "dark")} onShowcase={() => { setShowcaseMotion("return"); setSplashDone(false); }} logoReady={splashDone || showcaseMotion === "enter"} />
       {routeTransitionId > 0 && <div key={`wipe-${routeTransitionId}`} className="route-wipe" aria-hidden="true" style={{ visibility: splashDone ? "visible" : "hidden" }} />}
       <div className={page === "home" ? "page-enter" : ""} style={{ display: page === "home" ? "block" : "none" }}><HomePage setPage={navigate} active={page === "home" && (splashDone || showcaseMotion === "enter")} ready={splashDone || showcaseMotion === "enter"} /></div>
-      {(page === "create" || creating || incoming) && <div className="page-enter" style={{ display: page === "create" ? "block" : "none" }}><CreatePage source={source} setSource={setSource} conn={conn} device={device} backend={backend} onApply={applyBackend} onReconnect={() => probe(backend)} onBusy={setCreating} onDone={keepResult} incoming={incoming} onIncomingTaken={takeIncoming} /></div>}
+      {(page === "create" || creating || incoming) && <div className="page-enter" style={{ display: page === "create" ? "block" : "none" }}><CreatePage source={source} setSource={setSource} conn={conn} device={device} backend={backend} taskBase={taskBase} compute={compute} setCompute={setCompute} engine={engine} onApply={applyBackend} onReconnect={() => probe(backend)} onBusy={setCreating} onDone={keepResult} incoming={incoming} onIncomingTaken={takeIncoming} /></div>}
       <div key={`page-${page}`} className="page-enter" data-page={page}>
         {page === "studio" && <StudioPage result={result} setPage={navigate} conn={conn} device={device} onLoadFull={loadFull} />}
         {page === "enhance" && <EnhancePage result={result} setPage={navigate} doubao={doubao} onDoubaoChange={setDoubao} onRerenderDone={keepResult} />}
