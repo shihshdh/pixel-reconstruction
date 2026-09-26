@@ -144,6 +144,7 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 struct EngineState {
     child: Option<Child>,
     python: Option<PathBuf>,
+    installer: Option<Child>,
 }
 
 #[derive(serde::Serialize)]
@@ -162,10 +163,24 @@ fn engine_python_in(env: &Path) -> Option<PathBuf> {
     ok.then_some(python)
 }
 
-/// 按顺序查找：环境变量 PIXEL_ENGINE_PYTHON → 配置文件 engine-python.txt →
+/// 一键安装的运行环境根目录（安装脚本装好后写入 engine-runtime.txt）。
+fn runtime_root(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let pointer = app.path().app_local_data_dir().ok()?.join("engine").join("engine-runtime.txt");
+    let root = PathBuf::from(std::fs::read_to_string(pointer).ok()?.trim());
+    root.is_dir().then_some(root)
+}
+
+/// 按顺序查找：一键安装的环境 → 环境变量 PIXEL_ENGINE_PYTHON → 配置文件 engine-python.txt →
 /// conda 登记的所有环境（~/.conda/environments.txt）→ 常见安装位置下的 envs → ~/sharp-env。
 fn find_engine_python(app: &tauri::AppHandle) -> Option<PathBuf> {
     let mut envs: Vec<PathBuf> = Vec::new();
+    if let Some(root) = runtime_root(app) {
+        envs.push(root.join("python"));
+    }
+    // 测试一键安装流程用：只认一键安装的环境，忽略本机已有的 conda 等环境
+    if std::env::var("PIXEL_ENGINE_ONLY_RUNTIME").is_ok_and(|v| v == "1") {
+        return envs.iter().find_map(|env| engine_python_in(env));
+    }
     // 允许填 python.exe 本身，也允许填环境目录
     let as_env = |value: &str| {
         let path = PathBuf::from(value.trim());
@@ -218,11 +233,14 @@ fn has_nvidia_gpu() -> bool {
     Path::new(&system).join("System32").join("nvcuda.dll").is_file()
 }
 
-/// 引擎脚本：安装后在资源目录 engine/；开发构建直接用仓库里的源码。
+/// 引擎文件：安装后在资源目录 engine/；开发构建直接用仓库里的源码。
+fn engine_file(app: &tauri::AppHandle, name: &str) -> Option<PathBuf> {
+    let bundled = app.path().resource_dir().ok().map(|d| d.join("engine").join(name));
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join(r"..\..\backend\local_engine").join(name);
+    bundled.into_iter().chain(std::iter::once(source)).find(|p| p.exists())
+}
 fn engine_script(app: &tauri::AppHandle) -> Option<PathBuf> {
-    let bundled = app.path().resource_dir().ok().map(|d| d.join("engine").join("engine.py"));
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join(r"..\..\backend\local_engine\engine.py");
-    bundled.into_iter().chain(std::iter::once(source)).find(|p| p.is_file())
+    engine_file(app, "engine.py")
 }
 
 fn log_tail(path: &Path) -> String {
@@ -264,6 +282,7 @@ fn local_engine_start(app: tauri::AppHandle, state: tauri::State<'_, Mutex<Engin
         .args(["--port", &ENGINE_PORT.to_string(), "--parent-pid", &std::process::id().to_string(), "--data"])
         .arg(&data)
         .env("PYTHONIOENCODING", "utf-8")
+        .envs(runtime_root(&app).map(|root| root.join("models").join("sharp_2572gikvuh.pt")).filter(|p| p.is_file()).map(|p| ("SHARP_CKPT", p)))
         .stdin(Stdio::null())
         .stdout(output.try_clone().map_err(|e| e.to_string())?)
         .stderr(output);
@@ -286,12 +305,90 @@ fn set_fullscreen(window: tauri::WebviewWindow, on: Option<bool>) -> Result<bool
     Ok(next)
 }
 
+/// 结束一个进程及其子进程（安装脚本会拉起 curl、pip）。
+fn kill_tree(child: &mut Child) {
+    let mut command = Command::new("taskkill");
+    command.args(["/PID", &child.id().to_string(), "/T", "/F"]).stdout(Stdio::null()).stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let _ = command.status();
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[derive(serde::Serialize)]
+struct InstallInfo {
+    running: bool,
+    status: Option<String>,
+}
+
+/// 本机引擎一键安装（backend/local_engine/install-engine.ps1）：
+/// start 在后台开始（已在进行时不重复）；status 读进度；cancel 停止，已下载的部分保留，下次断点续传。
+/// 安装位置：有 D 盘时优先 D:\Pixel Reconstruction\engine-runtime，其次本机应用数据目录，由脚本按剩余空间选择。
+#[tauri::command]
+fn local_engine_install(app: tauri::AppHandle, state: tauri::State<'_, Mutex<EngineState>>, action: String) -> Result<InstallInfo, String> {
+    let mut engine = state.lock().map_err(|_| "引擎状态不可用")?;
+    let data = app.path().app_local_data_dir().map_err(|e| e.to_string())?.join("engine");
+    std::fs::create_dir_all(&data).map_err(|e| e.to_string())?;
+    let status_path = data.join("install-status.json");
+    let running = |engine: &mut EngineState| matches!(engine.installer.as_mut().map(|c| c.try_wait()), Some(Ok(None)));
+    match action.as_str() {
+        "start" if !running(&mut engine) => {
+            if !has_nvidia_gpu() {
+                return Err("NO_GPU：这台电脑没有可用的 NVIDIA 显卡".into());
+            }
+            let script = engine_file(&app, "install-engine.ps1").ok_or("客户端缺少安装脚本，请重新安装客户端")?;
+            let vendor = engine_file(&app, "vendor").ok_or("客户端缺少安装文件，请重新安装客户端")?;
+            let local = app.path().app_local_data_dir().map_err(|e| e.to_string())?.join("engine-runtime");
+            let mut roots = Vec::new();
+            if Path::new(r"D:\").is_dir() {
+                roots.push(r"D:\Pixel Reconstruction\engine-runtime".to_string());
+            }
+            roots.push(local.to_string_lossy().into_owned());
+            let _ = std::fs::remove_file(&status_path);
+            let mut command = Command::new("powershell.exe");
+            command
+                .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"])
+                .arg(&script)
+                .arg("-Roots").arg(roots.join("|"))
+                .arg("-Status").arg(&status_path)
+                .arg("-Pointer").arg(data.join("engine-runtime.txt"))
+                .arg("-Vendor").arg(&vendor)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(std::fs::File::create(data.join("install.log")).map(Stdio::from).unwrap_or(Stdio::null()));
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                command.creation_flags(CREATE_NO_WINDOW);
+            }
+            engine.installer = Some(command.spawn().map_err(|e| format!("无法启动安装：{e}"))?);
+        }
+        "cancel" => {
+            if let Some(mut child) = engine.installer.take() {
+                kill_tree(&mut child);
+            }
+        }
+        "start" | "status" => {}
+        _ => return Err("未知操作".into()),
+    }
+    let running = running(&mut engine);
+    Ok(InstallInfo { running, status: std::fs::read_to_string(&status_path).ok() })
+}
+
 fn stop_engine(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<Mutex<EngineState>>() {
         if let Ok(mut engine) = state.lock() {
             if let Some(mut child) = engine.child.take() {
                 let _ = child.kill();
                 let _ = child.wait();
+            }
+            // 安装中关掉客户端：停掉下载，下次启动断点续传
+            if let Some(mut child) = engine.installer.take() {
+                kill_tree(&mut child);
             }
         }
     }
@@ -309,7 +406,7 @@ fn main() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
         .manage(Mutex::new(EngineState::default()))
-        .invoke_handler(tauri::generate_handler![save_work_file, open_works_folder, local_engine_start, set_fullscreen])
+        .invoke_handler(tauri::generate_handler![save_work_file, open_works_folder, local_engine_start, local_engine_install, set_fullscreen])
         .setup(|app| {
             let handle = app.handle().clone();
             let popup_handle = app.handle().clone();

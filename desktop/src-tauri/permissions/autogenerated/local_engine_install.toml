@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-local-engine-install"
+description = "Enables the local_engine_install command without any pre-configured scope."
+commands.allow = ["local_engine_install"]
+
+[[permission]]
+identifier = "deny-local-engine-install"
+description = "Denies the local_engine_install command without any pre-configured scope."
+commands.deny = ["local_engine_install"]

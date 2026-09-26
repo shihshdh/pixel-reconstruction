@@ -5,7 +5,9 @@
 // - 蓝玻璃球：薄膜干涉的彩虹反射 + 斯涅尔折射穿过球体，Beer–Lambert 染成品牌蓝，并在台面投下焦散光斑；
 // - 白瓷球（清漆反射）、铬镜球（多次反射）、磨砂蓝球；
 // - 一颗绕场飞行的发光光球作为第二光源，照亮台面与球体，带辉光；
-// - 台面：解析软阴影 + 接触遮蔽 + 清晰倒影；天空有缓慢流动的蓝白极光光带。
+// - 台面：解析软阴影 + 接触遮蔽 + 清晰倒影；
+// - 天空是流动的极光：三层光幕，颜色随时间不停轮转。它是真正的环境光——玻璃、铬镜、台面倒影
+//   按反射/折射原理映出它，漫反射表面也被它染上天空光。
 // 主光方向跟随指针，地平线溶进页面底色，球都放在两侧，不压住正文。
 //
 // 画质：按屏幕实际像素比渲染，每像素 4 次旋转网格超采样抗锯齿。
@@ -89,16 +91,42 @@ vec3 orbLight(vec3 p, vec3 n){
   return vec3(.5,.76,1.) * max(0., dot(n, d*inversesqrt(l2))) * 1.1 / (1. + l2*1.6);
 }
 
+float hash1(float n){ return fract(sin(n) * 43758.5453); }
+float noise1(float x){ float i = floor(x), f = fract(x); f = f*f*(3. - 2.*f); return mix(hash1(i), hash1(i + 1.), f); }
+// 颜色随时间不停轮转的光谱（余弦调色板）
+vec3 spectrum(float t){ return .5 + .5*cos(6.2832*(t + vec3(0., .33, .67))); }
+
+// 极光：三层光幕。下缘锐利、向上缓慢消散；细密的竖直光柱沿光幕滑动；
+// 亮度脉冲沿光幕传播；光幕本身随时间漂移起伏；颜色随时间、高度、方位不停变化。
+vec3 aurora(vec3 rd){
+  if (rd.y < -.03) return vec3(0.);
+  float az = atan(rd.x, -rd.z);
+  vec3 col = vec3(0.);
+  for (int k = 0; k < 3; k++){
+    float fk = float(k);
+    float flow = T*(.05 + .018*fk);
+    float h = .035 + .05*fk + .035*sin(az*(1.5 + .45*fk) + flow*2.2 + fk*2.1) + .02*sin(az*4.1 - flow*3.1 + fk);
+    float d = rd.y - h;
+    float body = d < 0. ? exp(-d*d / .0005) : exp(-d / (.06 + .035*fk));
+    float rays = .5 + .5*noise1(az*42. + flow*24. + fk*13.) * (.55 + .45*noise1(az*9. - flow*7. + fk*5.));
+    float pulse = .55 + .45*sin(az*2.6 - T*.42 + fk*1.9);
+    vec3 tint = spectrum(T*.045 + fk*.21 + az*.09 + d*1.6);
+    tint = mix(tint, vec3(.15,.55,1.), .12);   // 略向品牌蓝靠拢
+    col += tint * body * rays * pulse * (.62 - .12*fk);
+  }
+  return col * smoothstep(-.03, .03, rd.y);
+}
+vec3 AMB;   // 极光照到场景里的天空光（在 main 里算一次）
+
 vec3 env(vec3 rd){
   float up = clamp(rd.y*.5 + .5, 0., 1.);
   vec3 top = mix(vec3(.9,.95,1.02), vec3(.03,.07,.16), DARK);
   vec3 c = mix(BG, top, smoothstep(.5, 1., up));
   c = mix(c, BG * mix(.95, 1., DARK), smoothstep(.5, .2, up));
-  // 蓝白极光：两条缓慢流动的光带
-  float a1 = sin(rd.x*2.2 + T*.07 + sin(rd.z*1.7 - T*.05)*1.4);
-  float band = exp(-pow((rd.y - .32 - .08*a1) * 7., 2.));
-  float band2 = exp(-pow((rd.y - .55 + .06*sin(rd.x*3.1 - T*.06)) * 9., 2.));
-  c += (SKY * band * .22 + vec3(.75,.88,1.) * band2 * .12) * mix(1., 1.9, DARK) * smoothstep(.45, .6, up);
+  // 极光：深色背景上是发光叠加；浅色背景上按色相染色，保证白底上也看得见
+  vec3 A = aurora(rd);
+  float s = clamp(max(A.r, max(A.g, A.b)), 0., 1.);
+  c = DARK > .5 ? c + A*1.25 : mix(c, (A / max(s, 1e-3))*.78 + .12, s*.5);
   // 柔光箱主光 + 冷色轮廓光
   vec3 x = normalize(cross(L, vec3(0,1,0)));
   float box = smoothstep(.72, .96, dot(rd, L)) * smoothstep(.55, .2, abs(dot(rd, x)));
@@ -127,7 +155,7 @@ vec3 trace(vec3 ro, vec3 rd){
       vec3 base = mix(vec3(.985,.99,1.), vec3(.05,.08,.14), DARK);
       float ao = occlusionAll(p, n);
       float lit = .5 + .5 * shadow(p + n*1e-3);
-      vec3 diffuse = base * lit * ao + orbLight(p, n) * ao;
+      vec3 diffuse = base * lit * ao + orbLight(p, n) * ao + AMB * base * ao * .6;
       // 焦散：玻璃球把主光聚成一团蓝色光斑，落在它的影子里
       vec3 axis = S0.xyz - p;
       float along = dot(axis, L);
@@ -155,7 +183,7 @@ vec3 trace(vec3 ro, vec3 rd){
       // 白瓷：漫反射底 + 清漆反射
       float dif = max(0., dot(n, L)) * shadow(p + n*1e-3);
       float fr = fresnel(rd, n, .045);
-      vec3 body = vec3(.96,.975,1.) * (.42 + .6*dif) + orbLight(p, n) + SKY * .06 * (1. - n.y);
+      vec3 body = vec3(.96,.975,1.) * (.42 + .6*dif) + orbLight(p, n) + SKY * .06 * (1. - n.y) + AMB * .8;
       acc += thr * body * (1. - fr);
       thr *= fr;
       ro = p + n*1e-3; rd = reflect(rd, n);
@@ -169,7 +197,7 @@ vec3 trace(vec3 ro, vec3 rd){
       vec3 h = normalize(L - rd);
       float spec = pow(max(0., dot(n, h)), 60.) * .4;
       float fr = fresnel(rd, n, .04);
-      acc += thr * (BLUE * (.3 + .25*n.y + .95*dif) + orbLight(p, n)*.5 + spec) * (1. - fr);
+      acc += thr * (BLUE * (.3 + .25*n.y + .95*dif) + orbLight(p, n)*.5 + AMB*.35 + spec) * (1. - fr);
       thr *= fr;
       ro = p + n*1e-3; rd = reflect(rd, n);
     } else {
@@ -195,6 +223,8 @@ void main(){
   // 光球沿椭圆轨道在右侧缓缓绕行，时而飞到镜面球后面
   float w = T*.23;
   S4 = vec4(hw*.8 + cos(w)*.55, -.25 + .22*sin(w*1.3), -.5 + sin(w)*.9, .09);
+  // 天空光：取正前方地平线上方两处的极光平均，作为漫反射表面的环境照明
+  AMB = (aurora(normalize(vec3(-.6, .1, -1.))) + aurora(normalize(vec3(.6, .1, -1.)))) * .5 * mix(.35, .6, DARK);
   float a = .9 + P.x*.35 + .15*sin(T*.09);
   L = normalize(vec3(cos(a)*1.4, 1.6 + P.y*.25, sin(a)*.8 + .9));
   vec3 ro = vec3(P.x*.12, .28 - P.y*.06, 4.6);
@@ -220,7 +250,7 @@ void main(){
   }
   c /= SS;
   // 中间区域再向页面底色收一些，保证正文可读
-  float calm = smoothstep(.8, .2, abs(uv.x) / (.5*aspect)) * .55;
+  float calm = smoothstep(.8, .2, abs(uv.x) / (.5*aspect)) * .38;
   c = mix(c, BG, calm);
   // 暗角：深色主题四角压暗，浅色主题四角轻微偏蓝，画面更有景深
   float vig = smoothstep(.45, 1.25, length(uv / vec2(aspect*.5, .5)) * .75);

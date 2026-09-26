@@ -18,7 +18,7 @@
   <img src="https://img.shields.io/badge/%E9%83%A8%E7%BD%B2-Netlify-00c7b7?style=flat-square&logo=netlify&logoColor=white" alt="Netlify">
 </p>
 
-<img src="docs/images/hero.jpg" alt="首页：由单张图片重建的 3D 场景" width="100%">
+<img src="docs/images/hero.jpg" alt="Windows 客户端「极致」画质：光线追踪界面与流动的极光" width="100%">
 
 </div>
 
@@ -26,7 +26,7 @@
 
 重建使用 Apple 的 [SHARP](https://github.com/apple/ml-sharp) 模型，在云端 GPU 上完成单图推理，一次大约一分钟。查看、运镜和视频导出都在浏览器本地完成，不需要安装任何软件。
 
-也可以使用 Windows 客户端（Windows 10/11，64 位）：[从网站下载](https://pixel-reconstruction.netlify.app/download/PixelReconstruction-Setup.exe) · [GitHub Releases](https://github.com/shihshdh/pixel-reconstruction/releases/latest)。客户端把页面和素材打包在本地，启动快，照片和作品会另存到本机，说明见 [desktop/README.md](desktop/README.md)。
+也可以使用 Windows 客户端（Windows 10/11，64 位）：[从网站下载](https://pixel-reconstruction.netlify.app/download/PixelReconstruction-Setup.exe) · [GitHub Releases](https://github.com/shihshdh/pixel-reconstruction/releases/latest)。客户端把页面和素材打包在本地，启动快，照片和作品会另存到本机。有 NVIDIA 显卡的电脑会在后台自动装好本机引擎（国内镜像直连），之后照片直接用自己的显卡重建，约 7 秒一张、不上传；独显默认「极致」画质，界面换成实时光线追踪与流动的极光。说明见 [desktop/README.md](desktop/README.md)。
 
 ## 效果
 
@@ -36,10 +36,13 @@
     <td width="50%"><img src="docs/images/studio.jpg" alt="工作室"></td>
   </tr>
   <tr>
-    <td><b>显影</b><br>上传后，云端开始重建。等待时，照片以粒子形式由中心向外逐步聚合。</td>
-    <td><b>工作室</b><br>在重建出的场景里自由移动，编排镜头序列，导出 MP4。</td>
+    <td><b>显影</b><br>本机显卡或云端开始重建。等待时，照片以粒子形式由中心向外逐步聚合。</td>
+    <td><b>工作室</b><br>在重建出的场景里自由移动，编排镜头序列，导出 MP4（「极致」档 2560 宽 60fps）。</td>
   </tr>
 </table>
+
+<p align="center"><img src="docs/images/raytrace.jpg" alt="极致画质下的光线追踪界面（浅色主题）" width="100%"></p>
+<p align="center"><sub>「极致」画质（Windows 客户端 · 独立显卡）：界面背景实时光线追踪——玻璃折射与焦散、白瓷、铬镜、发光光球，天空是颜色不停变化的流动极光，球体与台面按反射原理映出它。画质可在导航栏的液态玻璃滑块上拖动切换。</sub></p>
 
 <p align="center"><img src="docs/images/companion.jpg" alt="助手的几种状态" width="720"></p>
 <p align="center"><sub>页面右下角的助手会随时间更换道具与动作，也可以回答使用问题。</sub></p>

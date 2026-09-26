@@ -7,7 +7,7 @@
 - 启动约 0.6 秒出现界面，首页 3D 场景约 3 秒就绪；
 - 独立窗口，没有地址栏和标签页，窗口大小与位置会被记住；
 - **本机显卡生成**：有 NVIDIA 显卡、并且装好了 SHARP 的 Python 环境时，照片直接在本机显卡上重建，不占用云端 GPU，也不上传照片（见下文“本机显卡引擎”）。没有 NVIDIA 显卡或显存不足 6GB 的电脑照常使用云端，界面里不出现本机选项；
-- **画质五档**（导航栏“画质”，工作室里同步）：自动 / 极致 / 高 / 均衡 / 流畅。独显客户端默认“极致”：预览最高 2.5× 超采样、导出 2560 宽 60fps，界面背景换成实时光线追踪；核显自动落在“均衡”或“流畅”，也能手动切换任意一档。运行中按实际帧率升降渲染倍率，帧率目标按屏幕刷新率自动定（60Hz 屏 60fps，高刷屏 120fps）。场景数据始终是全量点数；
+- **画质五档**（导航栏“画质”液态玻璃滑块，可点可拖，工作室里同步）：自动 / 极致 / 高 / 均衡 / 流畅。独显客户端默认“极致”：预览最高 2.5× 超采样、导出 2560 宽 60fps，界面背景换成实时光线追踪；核显自动落在“均衡”或“流畅”，也能手动切换任意一档。运行中按实际帧率升降渲染倍率，帧率目标按屏幕刷新率自动定（60Hz 屏 60fps，高刷屏 120fps）。场景数据始终是全量点数；
 - **导出不等太久**：导出前先按目标分辨率试画几帧估算耗时，超过本档预算（极致/高 60 秒）自动降一档分辨率并提示；
 - **光追界面**（极致档）：玻璃球（薄膜彩虹反射、折射、焦散）、白瓷、铬镜、磨砂蓝球与发光光球，解析软阴影和倒影，每像素 4× 超采样抗锯齿，帧率跟随刷新率（最高 120fps）。掉帧时依次关超采样、降到 30fps、降分辨率，最后停在静帧；进入工作室、显影期间、窗口隐藏时停止，把显卡让给场景和推理；
 - **全屏无边框**：F11 或导航栏按钮切换，Esc 退出；
@@ -29,7 +29,20 @@
 - 任务数据在 `%LOCALAPPDATA%\app.pixelreconstruction.desktop\engine`，日志 `engine.log`；
 - 客户端退出（包括被强制结束）时引擎随之退出，不会留下占显存的进程。
 
-PyTorch 和模型权重有 5GB 以上，不打包进安装包。客户端按顺序查找可用的 Python：环境变量 `PIXEL_ENGINE_PYTHON` → `%APPDATA%\app.pixelreconstruction.desktop\engine-python.txt`（写 python.exe 或环境目录）→ conda 登记的环境（名字带 sharp 的优先）→ 常见 Anaconda/Miniconda 位置 → `~\sharp-env`。环境里需要 `sharp`、`torch`（CUDA 版）、`fastapi`、`uvicorn`、`python-multipart`、`pillow`，安装见 `backend/本地GPU指南.md`。
+### 一键安装（国内直连）
+
+PyTorch（CUDA 版约 2.9GB）和模型权重（2.8GB）都超过安装包与 GitHub Release 单文件约 2GB 的上限，不能打进安装包；小件随安装包带上，大件在后台下载：
+
+- **随安装包**：安装脚本 `backend/local_engine/install-engine.ps1`、SHARP 源码（`vendor/ml-sharp`，Apple 许可允许保留声明再分发）、pip 安装包、固定版本的依赖清单；
+- **后台下载**：客户端启动时检测到 NVIDIA 显卡（显存 ≥ 6GB）且还没有本机引擎，就自动在后台安装，导航栏显示进度环，创作页显示详细进度，可以暂停；装好之前照片照常走云端，装好后自动切到本机；
+- **下载源**：Python 嵌入版（npmmirror → python.org）、PyTorch（南京大学 → 上海交大 → 官方）、依赖（清华 → 腾讯 → 中科大 → 官方 PyPI）、模型权重（Apple 官方 CDN → hf-mirror）。大文件先对各源测速选最快的，持续低于 80KB/s 一分钟就换源；
+- **可靠性**：`curl.exe` 断点续传，PyTorch 与权重校验官方 SHA-256；关掉客户端或断网后，下次启动从断点继续；
+- **驱动**：按 nvidia-smi 报告的 CUDA 版本选 cu128（RTX 50 系必须）或 cu126；驱动太旧会提示更新；
+- **位置**：有 D 盘时装在 `D:\Pixel Reconstruction\engine-runtime`，否则在本机应用数据目录，按剩余空间选择（需约 14GB，装好后占约 9GB）。独立的嵌入版 Python，不影响系统里已有的 Python。
+
+2026-09-26 国内家宽直连实测（本机）：南大镜像 PyTorch 4–9MB/s，Apple CDN 权重 4.5–7.6MB/s，全程约 15 分钟。
+
+也可以用自己装好的环境：客户端按顺序查找一键安装的环境 → 环境变量 `PIXEL_ENGINE_PYTHON` → `%APPDATA%\app.pixelreconstruction.desktop\engine-python.txt`（写 python.exe 或环境目录）→ conda 登记的环境（名字带 sharp 的优先）→ 常见 Anaconda/Miniconda 位置 → `~\sharp-env`。环境里需要 `sharp`、`torch`（CUDA 版）、`fastapi`、`uvicorn`、`python-multipart`、`pillow`，手动安装见 `backend/本地GPU指南.md`。测试一键安装流程时可设 `PIXEL_ENGINE_ONLY_RUNTIME=1`，忽略已有环境。
 
 ## 构建
 
@@ -55,4 +68,4 @@ npm run build
 
 - 安装包没有代码签名，首次运行时 Windows SmartScreen 可能提示“Windows 已保护你的电脑”，点“更多信息 → 仍要运行”即可。去掉这个提示需要购买代码签名证书。
 - 默认安装到当前用户目录，不需要管理员权限。
-- 页面可以通过 `window.__PIXEL_DESKTOP__` 判断自己是否运行在客户端里。客户端只向页面开放四个本地命令：往作品文件夹写文件（文件名和类型都有白名单，不能写到别的目录）、打开作品文件夹、启动本机显卡引擎、切换全屏。`info.json` 不包含任务 Token 或下载链接。
+- 页面可以通过 `window.__PIXEL_DESKTOP__` 判断自己是否运行在客户端里。客户端只向页面开放五个本地命令：往作品文件夹写文件（文件名和类型都有白名单，不能写到别的目录）、打开作品文件夹、启动本机显卡引擎、安装本机显卡引擎（只运行随安装包附带的脚本）、切换全屏。`info.json` 不包含任务 Token 或下载链接。

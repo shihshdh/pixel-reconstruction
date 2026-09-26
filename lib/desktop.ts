@@ -1,5 +1,5 @@
 // Windows 客户端（desktop/）里的本地作品文件夹。网页版里这些函数什么都不做。
-// 客户端只向站点开放四个命令：往“作品”文件夹写文件、打开这个文件夹、启动本机显卡引擎、切换全屏（见 desktop/src-tauri/src/main.rs）。
+// 客户端只向站点开放五个命令：往“作品”文件夹写文件、打开这个文件夹、启动与安装本机显卡引擎、切换全屏（见 desktop/src-tauri/src/main.rs）。
 
 type Internals = { invoke: (cmd: string, args?: unknown, options?: { headers?: Record<string, string> }) => Promise<unknown> };
 type DesktopWindow = Window & { __PIXEL_DESKTOP__?: { version: string }; __TAURI_INTERNALS__?: Internals };
@@ -61,4 +61,19 @@ export async function setFullscreen(on?: boolean): Promise<boolean> {
   const desktop = api();
   if (!desktop) return false;
   return await desktop.invoke("set_fullscreen", { on: on ?? null }) as boolean;
+}
+
+export type InstallProgress = {
+  state: "running" | "done" | "error"; step: number; steps: number; label: string; detail: string;
+  received: number; total: number; speed: number; root: string; flavor: string; error: string; updated?: number;
+};
+/** 本机引擎一键安装：start 在后台开始（已在进行时不重复），status 读进度，cancel 停止（已下载部分保留）。 */
+export async function engineInstall(action: "start" | "status" | "cancel"): Promise<{ running: boolean; status: InstallProgress | null }> {
+  const desktop = api();
+  if (!desktop) throw new Error("只有 Windows 客户端可以安装本机引擎");
+  const result = await desktop.invoke("local_engine_install", { action }) as { running: boolean; status: string | null };
+  let status: InstallProgress | null = null;
+  // 进度文件由 PowerShell 写入，可能带 BOM
+  try { status = result.status ? JSON.parse(result.status.replace(/^﻿/, "")) : null; } catch {}
+  return { running: result.running, status };
 }

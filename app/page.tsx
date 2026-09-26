@@ -22,7 +22,8 @@ import { MorphIcon } from "morphicons/react";
 import { ICON } from "@/lib/icons";
 import AuthorContact from "@/components/AuthorContact";
 import { DESKTOP_DOWNLOAD, isDesktopApp, openWorksFolder, setFullscreen } from "@/lib/desktop";
-import { engineAccepts, watchLocalEngine, type EngineStatus } from "@/lib/local-engine";
+import { engineAccepts, engineInstalling, pauseEngineInstall, resumeEngineInstall, watchLocalEngine, type EngineStatus } from "@/lib/local-engine";
+import LiquidSegmented, { LiquidIndicator } from "@/components/LiquidSegmented";
 import { detectTier, perfProfile, readPerfChoice, savePerfChoice, PERF_EVENT, PERF_LABELS, type PerfChoice } from "@/lib/perf";
 // 现有 API（lib/api.ts）——创作/工作室/修图都用它
 import {
@@ -181,9 +182,26 @@ const GLOBAL_CSS = `
 .nav-right{margin-left:auto;display:flex;align-items:center;gap:14px;flex:none;padding-left:12px;}
 .nav-cta{font-size:13px;padding:8px 18px;white-space:nowrap;}
 .nav-theme{width:34px;height:34px;font-size:15px;flex:none;}
-.nav-quality{display:flex;align-items:center;gap:6px;height:34px;padding:0 4px 0 12px;border:1px solid var(--line);border-radius:980px;background:color-mix(in srgb,var(--card) 70%,transparent);font-size:12px;color:var(--ink2);flex:none;}
-.nav-quality select{border:0;background:none;color:var(--ink);font:inherit;padding:4px 6px;border-radius:980px;cursor:pointer;outline-offset:2px;}
-.nav-quality select option{background:var(--card);color:var(--ink);}
+.nav-quality{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink3);flex:none;}
+.nav-quality .lq>button{padding:6px 11px;}
+.engine-pill{display:flex;align-items:center;gap:7px;height:30px;padding:0 12px 0 10px;border:1px solid var(--line);border-radius:999px;background:color-mix(in srgb,var(--card) 75%,transparent);font-size:11px;color:var(--ink2);white-space:nowrap;flex:none;}
+.engine-pill i{position:relative;width:14px;height:14px;border-radius:50%;background:conic-gradient(var(--accent) calc(var(--p,0)*1turn),color-mix(in srgb,var(--ink3) 25%,transparent) 0);}
+.engine-pill i::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--card);}
+.install-card{margin-top:18px;padding:18px 20px;border-radius:20px;border:1px solid var(--line);background:color-mix(in srgb,var(--card) 60%,transparent);}
+.install-card h3{margin:0 0 6px;font-size:14px;font-weight:600;color:var(--ink);}
+.install-card p{margin:0;font-size:12px;line-height:1.7;color:var(--ink2);}
+.install-meter{position:relative;height:10px;margin:14px 0 10px;border-radius:999px;overflow:hidden;background:color-mix(in srgb,var(--track) 80%,transparent);box-shadow:inset 0 1px 2px rgba(20,50,90,.12);}
+.install-meter i{position:absolute;inset:0 auto 0 0;border-radius:inherit;background:linear-gradient(90deg,#4da3ff,var(--accent));box-shadow:inset 0 1px 1px rgba(255,255,255,.55),0 0 12px rgba(0,113,227,.35);transition:width .8s cubic-bezier(.2,.8,.2,1);}
+.install-meter i::after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.55) 50%,transparent 70%);background-size:220% 100%;animation:install-flow 1.8s linear infinite;}
+@keyframes install-flow{from{background-position:120% 0}to{background-position:-100% 0}}
+.install-row{display:flex;justify-content:space-between;gap:12px;font-size:11px;color:var(--ink3);font-variant-numeric:tabular-nums;}
+.install-actions{display:flex;gap:10px;margin-top:14px;align-items:center;}
+.install-actions button{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:7px 16px;font-size:12px;}
+.install-actions button.primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+.install-actions small{font-size:11px;color:var(--ink3);}
+@media(max-width:1180px){.nav-quality>span{display:none;}.nav-quality .lq>button{padding:6px 8px;}}
+@media(max-width:980px){.nav-quality{display:none;}}
+@media(prefers-reduced-motion:reduce){.install-meter i::after{animation:none;}}
 .nav-fullscreen svg{rotate:0deg!important;}
 .nav-download{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 9px;border:1px solid transparent;border-radius:11px;color:inherit;font-size:12px;white-space:nowrap;text-decoration:none;transition:background 180ms,border-color 180ms,transform 180ms;}
 .nav-download svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round;}
@@ -201,8 +219,7 @@ const GLOBAL_CSS = `
   .nav-right{gap:8px;padding-left:8px;}
   .nav-cta{font-size:12px;padding:7px 13px;}
   .nav-theme{width:30px;height:30px;font-size:14px;}
-  .nav-quality span{display:none;}
-  .nav-quality{padding-left:4px;height:30px;}
+
 }
 @media(max-width:380px){
   .nav-logo{margin-right:10px;}
@@ -653,19 +670,29 @@ function QualityPicker() {
     return () => window.removeEventListener(PERF_EVENT, sync);
   }, []);
   if (!show) return null;
-  return <label className="nav-quality" title="画质：极致会开启界面光线追踪，并以 2560 宽 60fps 导出">
-    <span>画质</span>
-    <select value={choice} onChange={e => savePerfChoice(e.target.value as PerfChoice)} aria-label="画质">
-      <option value="auto">自动（{auto}）</option>
-      <option value="ultra">极致 · 光追界面</option>
-      <option value="high">高</option>
-      <option value="mid">均衡</option>
-      <option value="low">流畅 · 核显</option>
-    </select>
-  </label>;
+  return <div className="nav-quality">
+    <span aria-hidden="true">画质</span>
+    <LiquidSegmented<PerfChoice> ariaLabel="画质" value={choice} onChange={savePerfChoice} options={[
+      { value: "auto", label: "自动", title: `按硬件自动选择（当前：${auto}）` },
+      { value: "ultra", label: "极致", title: "独显：最高 2.5× 超采样、2560 宽 60fps 导出、光追界面" },
+      { value: "high", label: "高", title: "超采样预览，1920 宽导出" },
+      { value: "mid", label: "均衡", title: "1920 宽导出" },
+      { value: "low", label: "流畅", title: "核显或低功耗：1280 宽导出" },
+    ]} />
+  </div>;
 }
 
 // 客户端的全屏无边框模式：F11 或导航栏按钮切换，Esc 退出。
+// 后台安装本机引擎时，导航栏显示一个小进度环；点一下去创作页看详情。
+function EngineInstallPill({ engine, onOpen }: { engine: EngineStatus; onOpen: () => void }) {
+  if (engine.phase !== "installing") return null;
+  const install = engine.install;
+  const ratio = install ? ((install.step - 1) + (install.total ? install.received / install.total : 0)) / Math.max(1, install.steps) : 0;
+  return <button className="engine-pill" onClick={onOpen} title={install ? `${install.label} ${install.detail}` : "正在准备安装本机引擎"}>
+    <i style={{ ["--p" as string]: ratio.toFixed(3) }} />本机引擎 {Math.round(ratio * 100)}%
+  </button>;
+}
+
 function FullscreenToggle() {
   const [show, setShow] = useState(false);
   const [full, setFull] = useState(false);
@@ -686,7 +713,7 @@ function FullscreenToggle() {
   }}><MorphIcon icon={full ? ICON.collapse : ICON.expand} size={16} strokeWidth={1.6} spring={SPRING} reducedMotion="user" /></button>;
 }
 
-function Nav({ page, setPage, theme, toggleTheme, onShowcase, logoReady = true }) {
+function Nav({ page, setPage, theme, toggleTheme, onShowcase, logoReady = true, engine = { phase: "off", url: "" } as EngineStatus }) {
   const tabsRef = useRef<HTMLDivElement>(null);
   const [tabRect, setTabRect] = useState({ x: 0, width: 0 });
   useEffect(() => {
@@ -718,7 +745,7 @@ function Nav({ page, setPage, theme, toggleTheme, onShowcase, logoReady = true }
         <BrandMark size={27} /><span className="brand-name">Pixel Reconstruction</span>
       </button>
       <div className="nav-tabs" ref={tabsRef}>
-        {tabRect.width > 0 && <span aria-hidden="true" className="nav-drop" style={{ transform: `translate3d(${tabRect.x}px,0,0) scaleX(${tabRect.width / 100})` }} />}
+        {tabRect.width > 0 && <LiquidIndicator className="nav-drop" left={tabRect.x} width={tabRect.width} />}
         {tabs.map(([id, label]) => (
           <button key={id} className="nav-tab" aria-current={page === id ? "page" : undefined} onClick={() => setPage(id)} style={{
             border: 0, background: "none", padding: 0, letterSpacing: "0.02em",
@@ -728,6 +755,7 @@ function Nav({ page, setPage, theme, toggleTheme, onShowcase, logoReady = true }
       </div>
       <div className="nav-right">
         <DesktopDownload />
+        <EngineInstallPill engine={engine} onOpen={() => setPage("create")} />
         <QualityPicker />
         <AuthorContact className="nav-contact" />
         <FullscreenToggle />
@@ -746,26 +774,48 @@ function Nav({ page, setPage, theme, toggleTheme, onShowcase, logoReady = true }
 // ============================================================
 // 算力来源切换条（创作/工作室共用）
 // ============================================================
+const mb = (bytes: number) => (bytes / 1048576).toFixed(0);
+function InstallCard({ engine }: { engine: EngineStatus }) {
+  const install = engine.install;
+  const ratio = install ? ((install.step - 1) + (install.total ? install.received / install.total : 0)) / Math.max(1, install.steps) : 0;
+  const eta = install && install.speed > 0 && install.total ? Math.max(0, (install.total - install.received) / install.speed) : 0;
+  const etaText = eta > 90 ? `约 ${Math.round(eta / 60)} 分钟` : eta > 0 ? `约 ${Math.round(eta)} 秒` : "";
+  if (engine.phase === "installing") return <div className="install-card" role="status" aria-live="polite">
+    <h3>正在后台安装本机引擎 · {install ? `${install.step}/${install.steps}` : "准备中"}</h3>
+    <p>{install?.label || "正在准备"}{install?.detail ? ` · ${install.detail}` : ""}</p>
+    <div className="install-meter" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(ratio * 100)}><i style={{ width: `${Math.max(2, ratio * 100)}%` }} /></div>
+    <div className="install-row"><span>{install?.total ? `${mb(install.received)} / ${mb(install.total)} MB` : " "}</span><span>{install?.speed ? `${(install.speed / 1048576).toFixed(1)} MB/s${etaText ? " · " + etaText : ""}` : ""}</span></div>
+    <div className="install-actions"><button onClick={pauseEngineInstall}>暂停</button><small>装好之前照片照常用云端处理。可以关掉客户端，下次打开从断点继续。</small></div>
+  </div>;
+  if (engine.phase === "install-paused") return <div className="install-card">
+    <h3>本机引擎安装已暂停</h3>
+    <p>你的电脑有 NVIDIA 显卡，装上本机引擎后照片在本机处理，更快、不上传。需下载约 6GB（国内镜像，断点续传），占用约 9GB 磁盘。</p>
+    <div className="install-actions"><button className="primary" onClick={resumeEngineInstall}>{install?.step ? "继续安装" : "一键安装"}</button><small>模型权重由 Apple 以研究许可发布，下载即表示同意其 LICENSE_MODEL。</small></div>
+  </div>;
+  if (engine.phase === "install-error") return <div className="install-card" role="alert">
+    <h3>本机引擎安装没有完成</h3>
+    <p>{engine.message || "安装中断。"}已下载的部分会保留，重试时断点续传。</p>
+    <div className="install-actions"><button className="primary" onClick={resumeEngineInstall}>重试</button><small>在此之前照片照常用云端处理。</small></div>
+  </div>;
+  return null;
+}
+
 function ComputeBar({ compute, setCompute, engine, busy }: { compute: Compute; setCompute: (next: Compute) => void; engine: EngineStatus; busy: boolean }) {
-  const usable = engine.phase !== "missing" && engine.phase !== "error";
+  const usable = !engineInstalling(engine) && engine.phase !== "error";
   const gpu = engine.device ? engine.device.replace(/^NVIDIA\s+/i, "").replace(/\s+Laptop GPU$/i, " 笔记本") : "";
   const localSub = engine.phase === "ready" ? gpu || "已就绪"
     : engine.phase === "loading" ? "正在载入模型"
     : engine.phase === "starting" ? "正在启动"
-    : engine.phase === "missing" ? "未安装本机引擎" : "暂不可用";
-  const order: Compute[] = ["local", "cloud"];
+    : engine.phase === "installing" ? "正在后台安装" : engineInstalling(engine) ? "未安装本机引擎" : "暂不可用";
   return <section className="compute-panel" aria-label="算力选择">
     <div className="compute-heading"><span>算力</span><span>{compute === "local" ? "照片在这台电脑上处理，太慢或出错时自动改用云端" : "照片上传到云端处理"}</span></div>
-    <div className="source-track" style={{ gridTemplateColumns: "repeat(2,minmax(0,1fr))" }}>
-      <span className="source-drop" style={{ width: "calc((100% - 10px)/2)", transform: `translate3d(${order.indexOf(compute) * 100}%,0,0)` }} />
-      <button className="src-card" aria-pressed={compute === "local"} disabled={busy || !usable} onClick={() => setCompute("local")}>
-        <strong>本机显卡</strong><span>{localSub}</span>
-      </button>
-      <button className="src-card" aria-pressed={compute === "cloud"} disabled={busy} onClick={() => setCompute("cloud")}>
-        <strong>云端</strong><span>Beam · RTX 4090</span>
-      </button>
-    </div>
-    {!usable && <p className="compute-note">{"本机显卡引擎没有启动成功，暂时使用云端。" + (engine.message ? "原因：" + engine.message.slice(0, 160) : "")}</p>}
+    <LiquidSegmented<Compute> size="md" ariaLabel="算力" style={{ display: "grid", width: "100%" }} disabled={busy}
+      value={usable ? compute : "cloud"} onChange={setCompute} options={[
+        { value: "local", label: "本机显卡", sub: localSub, disabled: !usable },
+        { value: "cloud", label: "云端", sub: "Beam · RTX 4090" },
+      ]} />
+    {engine.phase === "error" && <p className="compute-note">{"本机显卡引擎没有启动成功，暂时使用云端。" + (engine.message ? "原因：" + engine.message.slice(0, 160) : "")}</p>}
+    <InstallCard engine={engine} />
   </section>;
 }
 
@@ -949,7 +999,7 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
   }, [incoming, onIncomingTaken]);
   return <main style={{ maxWidth: 1024, margin: "0 auto", padding: "64px 24px 64px" }}>
     <header className="create-heading"><h1>从这张照片开始。</h1><p>{local ? "选择一张图片，你的显卡将为它重建三维场景。" : "上传一张图片，云端将为它重建三维场景。"}</p></header>
-    {engine.phase !== "off" && engine.phase !== "missing" && <ComputeBar compute={compute} setCompute={setCompute} engine={engine} busy={busy} />}
+    {engine.phase !== "off" && <ComputeBar compute={compute} setCompute={setCompute} engine={engine} busy={busy} />}
     <SourceBar source={source} setSource={setSource} conn={conn} device={device} onReconnect={onReconnect} backend={backend} onApply={onApply} busy={busy} local={local} />
     {!busy && phase !== "done" && <>
       <DropZone onFile={handleFile} />
@@ -1623,7 +1673,7 @@ export default function App() {
     {/* 工作室和显影期间停下，把显卡让给场景渲染与本机推理 */}
     {rayUi && <RayTracedBackdrop theme={theme} active={splashDone && page !== "studio" && !creating} />}
     <div className="showcase-workspace" inert={!splashDone} aria-hidden={!splashDone} style={{ visibility: splashDone || showcaseMotion ? "visible" : "hidden", position: "relative", zIndex: 1 }}>
-      <Nav page={page} setPage={navigate} theme={theme} toggleTheme={() => setTheme(t => t === "dark" ? "light" : "dark")} onShowcase={() => { setShowcaseMotion("return"); setSplashDone(false); }} logoReady={splashDone || showcaseMotion === "enter"} />
+      <Nav engine={engine} page={page} setPage={navigate} theme={theme} toggleTheme={() => setTheme(t => t === "dark" ? "light" : "dark")} onShowcase={() => { setShowcaseMotion("return"); setSplashDone(false); }} logoReady={splashDone || showcaseMotion === "enter"} />
       {routeTransitionId > 0 && <div key={`wipe-${routeTransitionId}`} className="route-wipe" aria-hidden="true" style={{ visibility: splashDone ? "visible" : "hidden" }} />}
       <div className={page === "home" ? "page-enter" : ""} style={{ display: page === "home" ? "block" : "none" }}><HomePage setPage={navigate} active={page === "home" && (splashDone || showcaseMotion === "enter")} ready={splashDone || showcaseMotion === "enter"} /></div>
       {(page === "create" || creating || incoming) && <div className="page-enter" style={{ display: page === "create" ? "block" : "none" }}><CreatePage source={source} setSource={setSource} conn={conn} device={device} backend={backend} taskBase={taskBase} compute={compute} setCompute={setCompute} engine={engine} onApply={applyBackend} onReconnect={() => probe(backend)} onBusy={setCreating} onDone={keepResult} incoming={incoming} onIncomingTaken={takeIncoming} /></div>}

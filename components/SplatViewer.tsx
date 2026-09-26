@@ -6,6 +6,7 @@ import { prefersReduced, useFlipList } from "@/lib/motion";
 import { downloadJobFile } from "@/lib/api";
 import { downloadAsset, type DownloadProgress } from "@/lib/asset-download";
 import { isDesktopApp, openWorksFolder, saveWorkFile, workFolder } from "@/lib/desktop";
+import LiquidSegmented from "@/components/LiquidSegmented";
 import { createFrameGovernor, perfProfile, readPerfChoice, savePerfChoice, PERF_EVENT, PERF_LABELS, type PerfChoice, type PerfProfile, type PerfTier } from "@/lib/perf";
 
 /**
@@ -927,15 +928,15 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
         {/* 运镜选择 */}
         <div className="rig-card">
           <div className="rig-card-title">运镜 <span>可多选，勾上即预览</span>
-            <label className="perf-choice" title={perfInfo ? `当前渲染倍率 ${perfInfo.ratio.toFixed(2)}×` : undefined}>画质
-              <select value={perfChoice} onChange={(e) => choosePerf(e.target.value as PerfChoice)} disabled={recording}>
-                <option value="auto">自动{perfInfo && perfChoice === "auto" ? `（${PERF_LABELS[perfInfo.tier as PerfTier] || ""}）` : ""}</option>
-                <option value="ultra">极致 · 独显，最高 2.5× 超采样，导出 2560 宽 60fps</option>
-                <option value="high">高 · 超采样，导出 1920 宽</option>
-                <option value="mid">均衡 · 导出 1920 宽</option>
-                <option value="low">流畅 · 导出 1280 宽</option>
-              </select>
-            </label>
+            <div className="perf-choice" title={perfInfo ? `当前渲染倍率 ${perfInfo.ratio.toFixed(2)}×` : undefined}>
+              <LiquidSegmented<PerfChoice> ariaLabel="画质" value={perfChoice} onChange={choosePerf} disabled={recording} options={[
+                { value: "auto", label: perfInfo && perfChoice === "auto" ? `自动·${PERF_LABELS[perfInfo.tier as PerfTier] || ""}` : "自动", title: "按硬件自动选择" },
+                { value: "ultra", label: "极致", title: "独显，最高 2.5× 超采样，导出 2560 宽 60fps" },
+                { value: "high", label: "高", title: "超采样，导出 1920 宽" },
+                { value: "mid", label: "均衡", title: "导出 1920 宽" },
+                { value: "low", label: "流畅", title: "导出 1280 宽" },
+              ]} />
+            </div>
           </div>
           <div className="rig-deck">
             <button
