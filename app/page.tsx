@@ -23,6 +23,7 @@ import { ICON } from "@/lib/icons";
 import AuthorContact from "@/components/AuthorContact";
 import { DESKTOP_DOWNLOAD, isDesktopApp, openWorksFolder, setFullscreen, titleBarMouseDown } from "@/lib/desktop";
 import WindowControls from "@/components/WindowControls";
+import { computeUiZoom } from "@/lib/ui-scale";
 import { engineAccepts, engineInstalling, pauseEngineInstall, resumeEngineInstall, watchLocalEngine, type EngineStatus } from "@/lib/local-engine";
 import LiquidSegmented, { LiquidIndicator } from "@/components/LiquidSegmented";
 import { detectTier, perfProfile, readPerfChoice, savePerfChoice, PERF_EVENT, PERF_LABELS, type PerfChoice } from "@/lib/perf";
@@ -204,6 +205,7 @@ const GLOBAL_CSS = `
 @media(max-width:980px){.nav-quality{display:none;}}
 @media(prefers-reduced-motion:reduce){.install-meter i::after{animation:none;}}
 .nav-fullscreen svg{rotate:0deg!important;}
+.showcase-workspace{zoom:var(--ui-zoom,1);}
 .nav-download{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 9px;border:1px solid transparent;border-radius:11px;color:inherit;font-size:12px;white-space:nowrap;text-decoration:none;transition:background 180ms,border-color 180ms,transform 180ms;}
 .nav-download svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round;}
 .nav-download:hover{background:color-mix(in srgb,currentColor 5%,transparent);border-color:color-mix(in srgb,currentColor 8%,transparent);}
@@ -1546,6 +1548,13 @@ export default function App() {
   useEffect(() => {
     try { if (localStorage.getItem(COMPUTE_KEY) === "cloud") setComputeState("cloud"); } catch {}
     return watchLocalEngine(setEngine);
+  }, []);
+  // 大窗口、全屏时界面整体等比放大（见 lib/ui-scale.ts）
+  useEffect(() => {
+    const apply = () => document.documentElement.style.setProperty("--ui-zoom", String(computeUiZoom()));
+    apply();
+    window.addEventListener("resize", apply);
+    return () => window.removeEventListener("resize", apply);
   }, []);
   const [rayUi, setRayUi] = useState(false);
   useEffect(() => {

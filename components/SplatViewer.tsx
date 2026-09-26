@@ -7,6 +7,7 @@ import { downloadJobFile } from "@/lib/api";
 import { downloadAsset, type DownloadProgress } from "@/lib/asset-download";
 import { isDesktopApp, openWorksFolder, saveWorkFile, workFolder } from "@/lib/desktop";
 import LiquidSegmented from "@/components/LiquidSegmented";
+import { renderZoom } from "@/lib/ui-scale";
 import { createFrameGovernor, perfProfile, readPerfChoice, savePerfChoice, PERF_EVENT, PERF_LABELS, type PerfChoice, type PerfProfile, type PerfTier } from "@/lib/perf";
 
 /**
@@ -55,6 +56,10 @@ const FLY_KEYS: Record<string, [number, number, number]> = {
 };
 const INTRO_DUR = 2.6; // 开场粒子凝聚时长
 const BLEND_DUR = 0.8; // 运镜之间的过渡时长
+// 停顿：每段运镜结束时镜头停一下再接下一段，片尾多停一会儿。
+// 一直在动的镜头像幻灯片匀速翻页；有停有动，节奏才有起伏（参考 onetake 的节奏原则）。
+const HOLD_DUR = 0.6;
+const END_HOLD_DUR = 1.0;
 
 const easeInOut = (t: number) =>
   t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
@@ -145,7 +150,8 @@ function trajectory(preset: Preset, t: number): Pose {
 type Seg =
   | { kind: "intro"; dur: number; to: Pose }
   | { kind: "move"; preset: Preset; dur: number }
-  | { kind: "blend"; from: Pose; to: Pose; dur: number };
+  | { kind: "blend"; from: Pose; to: Pose; dur: number }
+  | { kind: "hold"; pose: Pose; dur: number };
 
 type Timeline = { segs: Seg[]; total: number };
 
@@ -166,16 +172,33 @@ function buildTimeline(seq: Preset[], withIntro: boolean): Timeline {
   const segs: Seg[] = [];
   if (withIntro) segs.push({ kind: "intro", dur: INTRO_DUR, to: trajectory(seq[0], 0) });
   seq.forEach((p, i) => {
-    if (i > 0)
+    if (i > 0) {
+      segs.push({ kind: "hold", dur: HOLD_DUR, pose: trajectory(seq[i - 1], 1) });
       segs.push({
         kind: "blend",
         dur: BLEND_DUR,
         from: trajectory(seq[i - 1], 1),
         to: trajectory(p, 0),
       });
+    }
     segs.push({ kind: "move", preset: p, dur: PRESETS.find((x) => x.id === p)!.dur });
   });
+  // 只有导出（带开场）的成片在结尾停住；预览循环播放时不需要
+  if (withIntro && seq.length) segs.push({ kind: "hold", dur: END_HOLD_DUR, pose: trajectory(seq[seq.length - 1], 1) });
   return { segs, total: segs.reduce((s, x) => s + x.dur, 0) };
+}
+
+/** 快门打开的半帧内镜头移动了多少（位置、朝向、视角、侧倾的加权和） */
+function shutterMotion(tl: Timeline, t: number, fps: number) {
+  const a = sampleTimeline(tl, t - .25 / fps).pose, b = sampleTimeline(tl, t + .25 / fps).pose;
+  const la = a.look || [0, 0, 0], lb = b.look || [0, 0, 0];
+  return Math.hypot(a.pos[0] - b.pos[0], a.pos[1] - b.pos[1], a.pos[2] - b.pos[2]) * 6
+    + Math.hypot(la[0] - lb[0], la[1] - lb[1], la[2] - lb[2]) * 2
+    + Math.abs(a.fovScale - b.fovScale) * 4 + Math.abs((a.roll || 0) - (b.roll || 0)) * 3;
+}
+/** 动态模糊的子帧数：几乎不动 1 张，越快越多，最多 4 张 */
+function blurSamples(tl: Timeline, t: number, fps: number) {
+  return Math.max(1, Math.min(4, Math.ceil(shutterMotion(tl, t, fps) / .004)));
 }
 
 /** 在时间轴上采样：返回相机位姿 + 粒子尺寸(splatScale) */
@@ -186,6 +209,7 @@ function sampleTimeline(tl: Timeline, time: number): { pose: Pose; splat: number
       const k = s.dur > 0 ? t / s.dur : 1;
       if (s.kind === "move") return { pose: trajectory(s.preset, Math.min(k, 1)), splat: 1 };
       if (s.kind === "blend") return { pose: lerpPose(s.from, s.to, k), splat: 1 };
+      if (s.kind === "hold") return { pose: s.pose, splat: 1 };
       // intro：机位从后方滑入 + 粒子从尘埃凝聚成像
       const start: Pose = {
         ...s.to,
@@ -198,7 +222,7 @@ function sampleTimeline(tl: Timeline, time: number): { pose: Pose; splat: number
   const lastSeg = tl.segs[tl.segs.length - 1];
   const endPose =
     lastSeg.kind === "move" ? trajectory(lastSeg.preset, 1)
-    : lastSeg.kind === "blend" ? lastSeg.to : lastSeg.to;
+    : lastSeg.kind === "hold" ? lastSeg.pose : lastSeg.to;
   return { pose: endPose, splat: 1 };
 }
 
@@ -260,7 +284,8 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
   const applyPixelRatio = (ratio: number) => {
     const renderer = rendererRef.current, mount = mountRef.current;
     if (!renderer || !mount) return;
-    renderer.setPixelRatio(ratio);
+    // 界面整体放大（全屏、大窗口）时画布也被放大，按同一倍数提高渲染分辨率，保持清晰
+    renderer.setPixelRatio(ratio * renderZoom(mount));
     renderer.setSize(mount.clientWidth || 960, mount.clientHeight || 600);
     viewerRef.current?.forceRenderNextFrame?.();
     setPerfInfo(info => ({ tier: profileRef.current?.tier || info?.tier || "", ratio }));
@@ -461,7 +486,7 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
           precision: "highp",
           preserveDrawingBuffer: true, // 录制抓帧的前提
         });
-        renderer.setPixelRatio(dpr);
+        renderer.setPixelRatio(dpr * renderZoom(mount));
         renderer.setClearColor(new THREE.Color(0x04060a), 1);
         renderer.setSize(W, H);
         rendererRef.current = renderer;
@@ -493,6 +518,8 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
         const ro = new ResizeObserver(() => {
           const w = mount.clientWidth || 960;
           const h = mount.clientHeight || 600;
+          // 进出全屏时界面缩放倍数会变：按新的倍数补偿渲染分辨率
+          if (!recordingRef.current) renderer.setPixelRatio((governorRef.current?.ratio ?? dpr) * renderZoom(mount));
           renderer.setSize(w, h);
           if (viewer.camera) {
             viewer.camera.aspect = w / h;
@@ -768,7 +795,10 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
       for (let i = 0; i < 4; i++) { viewer.update(); viewer.render(); }
       rendererRef.current?.getContext().finish();
       const perFrame = (performance.now() - started) / 4;
-      const estimate = perFrame * 1.3 * total / 1000;
+      // 动态模糊会给快速运镜的帧多渲染几张子帧，按整条时间轴的平均子帧数计入
+      let rendered = total;
+      if (profile.tier === "ultra" || profile.tier === "high") { rendered = 0; for (let i = 0; i < total; i++) rendered += blurSamples(tl, i / fps, fps); }
+      const estimate = perFrame * 1.3 * rendered / 1000;
       if (estimate > profile.exportBudgetSeconds && profile.fallbackExportWidth < exportWidth) {
         exportWidth = profile.fallbackExportWidth;
         rendererRef.current?.setPixelRatio(exportWidth / cssW);
@@ -833,18 +863,40 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
       });
       const direct = w === canvas.width && h === canvas.height;
 
+      // 动态模糊（高、极致档）：像电影摄影机的 180° 快门，在每帧前后各 1/4 帧的时间里渲染多张子帧再平均。
+      // 快速运镜因此自然拖影，而不是一格一格地跳；镜头几乎不动的帧只渲染一次，不白白增加导出时间。
+      const blurOn = profile.tier === "ultra" || profile.tier === "high";
+      const accumulator = blurOn ? new OffscreenCanvas(w, h) : null;
+      const acc = accumulator?.getContext("2d") || null;
       for (let i = 0; i < total; i++) {
         if (!recordingRef.current || viewerRef.current !== viewer) return;
         if (encodeError) throw encodeError;
-        const { pose, splat } = sampleTimeline(tl, i / fps);
-        applyPose(cam, pose);
-        setSplat(splat);
-        await drawFrame();
-        if (!recordingRef.current || viewerRef.current !== viewer) return;
+        const t = i / fps;
+        const samples = acc ? blurSamples(tl, t, fps) : 1;
+        let source: CanvasImageSource = canvas;
+        if (samples > 1 && acc) {
+          for (let j = 0; j < samples; j++) {
+            const { pose, splat } = sampleTimeline(tl, t + ((j + .5) / samples - .5) * .5 / fps);
+            applyPose(cam, pose);
+            setSplat(splat);
+            await drawFrame();
+            if (!recordingRef.current || viewerRef.current !== viewer) return;
+            acc.globalAlpha = 1 / (j + 1);   // 逐张累积成平均值
+            acc.drawImage(canvas, 0, 0, w, h);
+          }
+          acc.globalAlpha = 1;
+          source = accumulator!;
+        } else {
+          const { pose, splat } = sampleTimeline(tl, t);
+          applyPose(cam, pose);
+          setSplat(splat);
+          await drawFrame();
+          if (!recordingRef.current || viewerRef.current !== viewer) return;
+        }
 
         const timing = { timestamp: Math.round((i / fps) * 1_000_000), duration: Math.round(1_000_000 / fps) };
-        const bitmap = direct ? null : await createImageBitmap(canvas, { resizeWidth: w, resizeHeight: h, resizeQuality: "high" });
-        const frame = new VideoFrame(bitmap || canvas, timing);
+        const bitmap = direct || source !== canvas ? null : await createImageBitmap(canvas, { resizeWidth: w, resizeHeight: h, resizeQuality: "high" });
+        const frame = new VideoFrame(bitmap || source, timing);
         encoder.encode(frame, { keyFrame: i % fps === 0 });
         frame.close();
         bitmap?.close();
