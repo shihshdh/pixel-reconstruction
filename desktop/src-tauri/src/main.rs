@@ -403,7 +403,13 @@ fn main() {
                 let _ = window.set_focus();
             }
         }))
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // 记住窗口位置、大小和最大化状态；不记“是否有标题栏”——否则会把旧版保存的
+        // 带标题栏状态恢复回来，无边框设置被覆盖，窗口顶上又多出一条黑色系统标题栏
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(tauri_plugin_window_state::StateFlags::all() & !tauri_plugin_window_state::StateFlags::DECORATIONS)
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .manage(Mutex::new(EngineState::default()))
         .invoke_handler(tauri::generate_handler![save_work_file, open_works_folder, local_engine_start, local_engine_install, set_fullscreen])
@@ -450,6 +456,17 @@ fn main() {
                     NewWindowResponse::Deny
                 })
                 .build()?;
+            // 双保险：创建后再关一次系统标题栏
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_decorations(false);
+                let _ = window.set_shadow(true);
+                // 旧版带标题栏时保存的位置，换成无边框后可能有一截落在屏幕外：拉回屏幕中间
+                if let (Ok(position), Ok(false)) = (window.outer_position(), window.is_maximized()) {
+                    if position.x < 0 || position.y < 0 {
+                        let _ = window.center();
+                    }
+                }
+            }
             Ok(())
         })
         .build(tauri::generate_context!())

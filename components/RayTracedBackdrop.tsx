@@ -3,6 +3,7 @@
 // 两片互相错开的磨砂玻璃圆片（浅色：雾蓝与薄荷；深色：香槟金与烟熏茶色，黑金配色），
 // 一片几乎透明的大玻璃横扫画面，只看得见它细亮的边——“丝带”；弧线内侧的圆片被它折射错位，带一点色散。
 // 窗外的光透过百叶窗落下斜向光带，在玻璃里更明显；玻璃有细颗粒、斜面边缘、落在身后的柔影。
+// 圆片边缘和丝带上各有一段流光沿圆周流动，颜色随时间不停变化（深色主题偏金）。
 // 颜色整体克制，正文区域再向页面底色收一些。圆片、光带缓慢移动，指针移动时有视差。
 //
 // 画质：按屏幕实际像素比渲染，每像素 4 次旋转网格超采样抗锯齿。
@@ -29,6 +30,24 @@ float A;             // aspect ratio; scene coordinates: x in [0, A], y in [0, 1
 float PX;            // one pixel in scene units
 
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+
+// 玻璃边缘的流光：沿着圆周流动的光段，颜色随时间与位置不停变化（深色主题偏金）
+vec3 spectrum(float t){ return .5 + .5*cos(6.2832*(t + vec3(0., .33, .67))); }
+// 返回 rgb = 流光颜色，a = 强度
+vec4 edgeFlow(vec2 p, vec2 c, float speed, float phase){
+  float a = atan(p.y - c.y, p.x - c.x);
+  float run = fract(a * .32 - T * speed + phase);
+  float band = smoothstep(.0, .1, run) * smoothstep(.42, .1, run);      // 一段前亮后拖尾的光
+  float band2 = smoothstep(.55, .62, run) * smoothstep(.85, .62, run) * .5;
+  vec3 hue = spectrum(T * .05 + a * .35 + phase);
+  hue = mix(hue, vec3(.95,.78,.45), DARK * .5);
+  return vec4(hue, band + band2);
+}
+// 深色主题：流光是发光叠加；浅色主题：白底上叠光看不见，改为按强度染上流光的颜色
+vec3 applyFlow(vec3 col, vec4 flow, float amount){
+  float k = clamp(flow.a * amount, 0., 1.);
+  return DARK > .5 ? col + flow.rgb * k * 1.3 : mix(col, flow.rgb * .85 + .08, k * .85);
+}
 
 // 窗外的光透过百叶窗落下的斜向光带，缓慢移动
 float blinds(vec2 p){
@@ -62,7 +81,9 @@ vec3 disc(vec3 under, vec2 p, vec2 c, float r, vec3 tint, float frost){
   g *= mix(1.08, .8, t);
   g += (hash(floor(p / PX)) - .5) * .03;                     // 玻璃表面的细颗粒
   g = mix(g, g * .82, smoothstep(.03, .0, edge) * .6);       // 斜面：边缘一圈更厚更深
-  g += smoothstep(1.6*PX, 0., abs(edge - 1.2*PX)) * mix(.55, .45, DARK) * (.55 + .45*dot(normalize(p - c), normalize(vec2(-.6, .8))));
+  float rim = smoothstep(1.6*PX, 0., abs(edge - 1.2*PX));
+  g += rim * mix(.55, .45, DARK) * (.55 + .45*dot(normalize(p - c), normalize(vec2(-.6, .8))));
+  g = applyFlow(g, edgeFlow(p, c, .045, c.x), smoothstep(3.*PX, 0., abs(edge - 1.2*PX)) + smoothstep(14.*PX, 0., edge) * .35);   // 流光
   float aa = smoothstep(-PX, PX, edge);                      // 抗锯齿的圆边
   return mix(under, g, aa);
 }
@@ -98,7 +119,10 @@ vec3 shade(vec2 frag){
   }
   // 弧线本身：一条极细的高光，深色主题里是金色
   vec3 lineCol = mix(vec3(.96,.98,1.), vec3(.93,.80,.52), DARK);
-  col += lineCol * (exp(-pow(d / (1.1*PX), 2.)) * .75 + exp(-abs(d) * 90.) * .06);
+  float line = exp(-pow(d / (1.1*PX), 2.));
+  col += lineCol * (line * .75 + exp(-abs(d) * 90.) * .06);
+  // 丝带上的流光：一段彩色光沿弧线缓缓流过，外侧带一点辉光
+  col = applyFlow(col, edgeFlow(p, cc, .03, .2), exp(-pow(d / (2.4*PX), 2.)) + exp(-abs(d) * 70.) * .45);
   return col;
 }
 
