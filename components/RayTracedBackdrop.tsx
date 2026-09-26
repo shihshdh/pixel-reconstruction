@@ -1,14 +1,12 @@
 "use client";
-// 界面背景的实时光线追踪（画质“极致”档，独立显卡）。
+// 界面背景：液态玻璃（画质“极致”档，独立显卡）。参考 macOS Tahoe 的液态玻璃壁纸：
+// 一整片从左下卷向右上的弯曲玻璃浪面，边缘是一条极细的高光线；透过玻璃看到的是柔焦的天空、
+// 颜色不停变化的流光与沙丘状色块。
 //
-// 每个像素发出一条光线，与五颗球和一块白色台面求解析交点，最多弹射 6 次：
-// - 蓝玻璃球：薄膜干涉的彩虹反射 + 斯涅尔折射穿过球体，Beer–Lambert 染成品牌蓝，并在台面投下焦散光斑；
-// - 白瓷球（清漆反射）、铬镜球（多次反射）、磨砂蓝球；
-// - 一颗绕场飞行的发光光球作为第二光源，照亮台面与球体，带辉光；
-// - 台面：解析软阴影 + 接触遮蔽 + 清晰倒影；
-// - 天空是流动的极光：三层光幕，颜色随时间不停轮转。它是真正的环境光——玻璃、铬镜、台面倒影
-//   按反射/折射原理映出它，漫反射表面也被它染上天空光。
-// 主光方向跟随指针，地平线溶进页面底色，球都放在两侧，不压住正文。
+// 每个像素沿视线与玻璃曲面求交（屏幕空间光线追踪）：由厚度场求表面法线，按斯涅尔定律折射，
+// 三个颜色通道折射率略不同（色散）；玻璃内部的褶皱像柱面透镜，把视线弯向上方的天空，
+// 形成蓝色玻璃里浅色的流纹；菲涅尔反射映出天空，Beer–Lambert 吸收让厚处更深。
+// 玻璃浪面随时间起伏、流纹沿浪势流动，指针移动时玻璃与后景有视差。
 //
 // 画质：按屏幕实际像素比渲染，每像素 4 次旋转网格超采样抗锯齿。
 // 性能与体验：帧率跟随屏幕刷新率（最高 120fps）；持续掉帧依次关超采样、降到 30fps、降分辨率，仍不够就停在静帧。
@@ -30,231 +28,130 @@ uniform vec2 P;      // smoothed pointer, -1..1
 uniform vec3 BG;     // page background colour
 uniform float DARK;  // 1 in dark theme
 
-const vec3 BLUE = vec3(.0,.443,.890);   // #0071e3 brand blue
-const vec3 SKY = vec3(.36,.66,1.);
-const float IOR = 1.47;
+const float IOR = 1.5;
+float A;             // aspect ratio; scene coordinates: x in [0, A], y in [0, 1] (up)
 
-vec4 S0, S1, S2, S3, S4;  // glass, pearl, chrome, frosted blue, glowing orb
-vec3 L;                   // key light direction (towards light)
-
-float sphere(vec3 ro, vec3 rd, vec4 s){
-  vec3 oc = ro - s.xyz;
-  float b = dot(oc, rd);
-  float c = dot(oc, oc) - s.w*s.w;
-  float h = b*b - c;
-  if (h < 0.) return -1.;
-  float t = -b - sqrt(h);
-  return t > 1e-3 ? t : -1.;
-}
-void test(vec3 ro, vec3 rd, vec4 s, float k, inout float t, inout float id, inout vec3 n){
-  float d = sphere(ro, rd, s);
-  if (d > 0. && d < t){ t = d; id = k; n = normalize(ro + rd*d - s.xyz); }
-}
-// 0 none, 1 floor, 2 glass, 3 pearl, 4 chrome, 5 frosted, 6 orb
-float hitScene(vec3 ro, vec3 rd, out float t, out vec3 n){
-  float id = 0.; t = 1e9; n = vec3(0,1,0);
-  float f = rd.y < 0. ? (-1.15 - ro.y) / rd.y : -1.;
-  if (f > 1e-3){ t = f; id = 1.; }
-  test(ro, rd, S0, 2., t, id, n);
-  test(ro, rd, S1, 3., t, id, n);
-  test(ro, rd, S2, 4., t, id, n);
-  test(ro, rd, S3, 5., t, id, n);
-  test(ro, rd, S4, 6., t, id, n);
-  return id;
-}
-
-float softShadow(vec3 ro, vec3 rd, vec4 s, float k){
-  vec3 oc = ro - s.xyz;
-  float b = dot(oc, rd);
-  float c = dot(oc, oc) - s.w*s.w;
-  float h = b*b - c;
-  float d = sqrt(max(0., s.w*s.w - h)) - s.w;
-  float t = -b - sqrt(max(h, 0.));
-  return (t < 0. || b > 0.) ? 1. : smoothstep(0., 1., k*d/t);
-}
-float shadow(vec3 p){
-  return mix(1., softShadow(p, L, S0, 2.4), .5) * softShadow(p, L, S1, 2.4)
-       * softShadow(p, L, S2, 2.4) * softShadow(p, L, S3, 2.4);
-}
-float occlusion(vec3 p, vec3 n, vec4 s){
-  vec3 d = s.xyz - p;
-  float l = length(d);
-  return 1. - max(0., dot(n, d/l)) * (s.w*s.w) / (l*l);
-}
-float occlusionAll(vec3 p, vec3 n){
-  return occlusion(p, n, S0) * occlusion(p, n, S1) * occlusion(p, n, S2) * occlusion(p, n, S3);
-}
-// 发光光球作为第二光源：蓝白色，按距离平方衰减
-vec3 orbLight(vec3 p, vec3 n){
-  vec3 d = S4.xyz - p;
-  float l2 = dot(d, d);
-  return vec3(.5,.76,1.) * max(0., dot(n, d*inversesqrt(l2))) * 1.1 / (1. + l2*1.6);
-}
-
-float hash1(float n){ return fract(sin(n) * 43758.5453); }
-float noise1(float x){ float i = floor(x), f = fract(x); f = f*f*(3. - 2.*f); return mix(hash1(i), hash1(i + 1.), f); }
 // 颜色随时间不停轮转的光谱（余弦调色板）
 vec3 spectrum(float t){ return .5 + .5*cos(6.2832*(t + vec3(0., .33, .67))); }
 
-// 极光：三层光幕。下缘锐利、向上缓慢消散；细密的竖直光柱沿光幕滑动；
-// 亮度脉冲沿光幕传播；光幕本身随时间漂移起伏；颜色随时间、高度、方位不停变化。
-vec3 aurora(vec3 rd){
-  if (rd.y < -.03) return vec3(0.);
-  float az = atan(rd.x, -rd.z);
-  vec3 col = vec3(0.);
-  for (int k = 0; k < 3; k++){
-    float fk = float(k);
-    float flow = T*(.05 + .018*fk);
-    float h = .035 + .05*fk + .035*sin(az*(1.5 + .45*fk) + flow*2.2 + fk*2.1) + .02*sin(az*4.1 - flow*3.1 + fk);
-    float d = rd.y - h;
-    float body = d < 0. ? exp(-d*d / .0005) : exp(-d / (.06 + .035*fk));
-    float rays = .5 + .5*noise1(az*42. + flow*24. + fk*13.) * (.55 + .45*noise1(az*9. - flow*7. + fk*5.));
-    float pulse = .55 + .45*sin(az*2.6 - T*.42 + fk*1.9);
-    vec3 tint = spectrum(T*.045 + fk*.21 + az*.09 + d*1.6);
-    tint = mix(tint, vec3(.15,.55,1.), .12);   // 略向品牌蓝靠拢
-    col += tint * body * rays * pulse * (.62 - .12*fk);
-  }
-  return col * smoothstep(-.03, .03, rd.y);
-}
-vec3 AMB;   // 极光照到场景里的天空光（在 main 里算一次）
-
-vec3 env(vec3 rd){
-  float up = clamp(rd.y*.5 + .5, 0., 1.);
-  vec3 top = mix(vec3(.9,.95,1.02), vec3(.03,.07,.16), DARK);
-  vec3 c = mix(BG, top, smoothstep(.5, 1., up));
-  c = mix(c, BG * mix(.95, 1., DARK), smoothstep(.5, .2, up));
-  // 极光：深色背景上是发光叠加；浅色背景上按色相染色，保证白底上也看得见
-  vec3 A = aurora(rd);
-  float s = clamp(max(A.r, max(A.g, A.b)), 0., 1.);
-  c = DARK > .5 ? c + A*1.25 : mix(c, (A / max(s, 1e-3))*.78 + .12, s*.5);
-  // 柔光箱主光 + 冷色轮廓光
-  vec3 x = normalize(cross(L, vec3(0,1,0)));
-  float box = smoothstep(.72, .96, dot(rd, L)) * smoothstep(.55, .2, abs(dot(rd, x)));
-  c += box * mix(1.05, .8, DARK);
-  vec3 rim = normalize(vec3(-L.x, .35, -.6));
-  c += SKY * smoothstep(.9, .99, dot(rd, rim)) * .5;
+// ---- 后景：柔焦的天空、流动的光带与沙丘状色块（透过玻璃会被折射） ----
+vec3 backdrop(vec2 p){
+  // 视差：后景移动得比玻璃少，形成纵深
+  p += P * vec2(.006, -.004);
+  float t = T;
+  vec3 skyTop = mix(vec3(.40,.62,.93), vec3(.07,.05,.40), DARK);
+  vec3 skyLow = mix(vec3(.95,.965,.985), vec3(.43,.33,.84), DARK);
+  vec3 c = mix(skyLow, skyTop, smoothstep(.38, 1.05, p.y));
+  // 流光：天空里两条颜色不停变化的光带，缓慢流动
+  float w1 = p.y - .74 - .05*sin(p.x*1.6 + t*.11) - .025*sin(p.x*4.1 - t*.07);
+  float w2 = p.y - .9 - .04*sin(p.x*2.3 - t*.09 + 1.3);
+  vec3 h1 = spectrum(t*.03 + p.x*.07), h2 = spectrum(t*.03 + .4 - p.x*.05);
+  c += ((h1 - .35) * exp(-w1*w1*38.) * .32 + (h2 - .35) * exp(-w2*w2*60.) * .22) * mix(.35, 1.2, DARK);
+  // 左侧远处的青蓝色小丘
+  float hill = p.y - (.4 + .13*exp(-pow((p.x - .22 - .03*sin(t*.07)) * 3.2, 2.)));
+  c = mix(c, mix(vec3(.05,.66,.86), vec3(.14,.22,.72), DARK), smoothstep(.07, -.07, hill) * .92);
+  // 右侧大块钴蓝，内部一团天蓝色辉光
+  vec2 q = p - vec2(A*.64 + .04*sin(t*.05), .2 + .02*sin(t*.06 + 1.));
+  float mass = length(q * vec2(.78, 1.2)) - .46;
+  c = mix(c, mix(vec3(.0,.27,.86), vec3(.02,.09,.62), DARK), smoothstep(.28, -.22, mass));
+  vec2 g = q - vec2(.02, .13);
+  c += mix(vec3(.26,.48,.62), vec3(.14,.2,.5), DARK) * exp(-dot(g, g) * 8.) * .7;
+  // 前景两块浅色柔影（左下、右下）
+  float s1 = length((p - vec2(A*.2, -.2)) * vec2(.85, 1.35)) - .42;
+  c = mix(c, mix(vec3(.80,.87,.94), vec3(.44,.49,.82), DARK), smoothstep(.13, -.13, s1));
+  float s2 = length((p - vec2(A*1.03, -.08)) * vec2(1.1, .78)) - .46;
+  c = mix(c, mix(vec3(.84,.9,.95), vec3(.5,.55,.84), DARK), smoothstep(.1, -.1, s2) * .95);
   return c;
 }
 
-float fresnel(vec3 rd, vec3 n, float f0){ return f0 + (1. - f0) * pow(1. - max(0., dot(-rd, n)), 5.); }
-// 薄膜干涉：玻璃表面随视角变化的彩虹色反射
-vec3 iridescence(float cosT){
-  return .6 + .4*cos(6.2832*(vec3(.0,.33,.67) + 1.6*cosT + .12*sin(T*.2)));
+// ---- 玻璃浪面：一道从左下卷向右上的弯曲玻璃 ----
+// 浪峰线 y = crest(x)；浪面在线的下方。厚度场 h(p) 决定表面法线，从而决定折射偏移。
+float crest(float x){
+  float u = x / A;
+  return .52 + .56*sin((u - .52) * 2.7) + .035*sin(x*2.1 + T*.21) + .018*sin(x*5.3 - T*.33);
+}
+float thickness(vec2 p){
+  p -= P * vec2(.018, -.012);                       // 玻璃视差更大：离得更近
+  float y = crest(p.x);
+  float slope = (crest(p.x + .01) - crest(p.x - .01)) / .02;
+  float d = (y - p.y) / sqrt(1. + slope*slope);     // 到浪峰线的距离，浪面内为正
+  if (d < 0.) return d;                              // 负值：浪面之外
+  // 浪峰处一道卷起的厚唇，往里渐薄；右上方有顺浪势流动的细纹
+  float h = smoothstep(0., .1, d) * (1. - .35*smoothstep(.12, .7, d)) + .25*exp(-d*28.);
+  float along = p.x;
+  h += .07 * sin(d*42. - T*.55 + along*1.8) * smoothstep(.02, .09, d) * smoothstep(.55, .1, d) * smoothstep(A*.3, A*.9, along);
+  h += .012 * sin(d*110. + T*.4 - along*3.) * smoothstep(.01, .05, d) * smoothstep(.3, .05, d);
+  return h;
 }
 
-vec3 trace(vec3 ro, vec3 rd){
-  vec3 acc = vec3(0.), thr = vec3(1.);
-  for (int bounce = 0; bounce < 6; bounce++){
-    float t; vec3 n;
-    float id = hitScene(ro, rd, t, n);
-    if (id < .5){ acc += thr * env(rd); break; }
-    vec3 p = ro + rd*t;
-    if (id < 1.5){
-      // 白色亮面台面：阴影、接触遮蔽、光球照明、玻璃球焦散，外加清晰倒影
-      float fog = smoothstep(2.5, 9., t);
-      vec3 base = mix(vec3(.985,.99,1.), vec3(.05,.08,.14), DARK);
-      float ao = occlusionAll(p, n);
-      float lit = .5 + .5 * shadow(p + n*1e-3);
-      vec3 diffuse = base * lit * ao + orbLight(p, n) * ao + AMB * base * ao * .6;
-      // 焦散：玻璃球把主光聚成一团蓝色光斑，落在它的影子里
-      vec3 axis = S0.xyz - p;
-      float along = dot(axis, L);
-      float off = length(axis - L*along);
-      float caustic = along > 0. ? exp(-pow(off / (S0.w*.42), 2.)) * (1.2 + .25*sin(T*1.3 + off*20.)) : 0.;
-      diffuse += BLUE * caustic * mix(.55, .9, DARK) + vec3(.8,.9,1.) * caustic * .25;
-      float fr = fresnel(rd, n, .03) * .7 * (1. - fog);
-      acc += thr * mix(diffuse * (1. - fr), BG, fog);
-      thr *= fr;
-      ro = p + n*1e-3; rd = reflect(rd, n);
-    } else if (id < 2.5){
-      // 蓝玻璃：彩虹薄膜反射 + 折射穿过球体（Beer–Lambert 染色）
-      float cosT = max(0., dot(-rd, n));
-      float fr = fresnel(rd, n, .05);
-      acc += thr * fr * env(reflect(rd, n)) * iridescence(cosT);
-      vec3 r = refract(rd, n, 1./IOR);
-      float len = -2. * dot(p - S0.xyz, r);
-      vec3 q = p + r*len;
-      vec3 nq = normalize(S0.xyz - q);
-      vec3 o = refract(r, nq, IOR);
-      if (dot(o, o) < 1e-4) o = reflect(r, nq);
-      thr *= (1. - fr) * exp(-(1. - BLUE) * len * .5);
-      ro = q - nq*1e-3; rd = o;
-    } else if (id < 3.5){
-      // 白瓷：漫反射底 + 清漆反射
-      float dif = max(0., dot(n, L)) * shadow(p + n*1e-3);
-      float fr = fresnel(rd, n, .045);
-      vec3 body = vec3(.96,.975,1.) * (.42 + .6*dif) + orbLight(p, n) + SKY * .06 * (1. - n.y) + AMB * .8;
-      acc += thr * body * (1. - fr);
-      thr *= fr;
-      ro = p + n*1e-3; rd = reflect(rd, n);
-    } else if (id < 4.5){
-      // 铬镜：冷色金属，边缘更亮
-      thr *= vec3(.88,.92,.98) * fresnel(rd, n, .7);
-      ro = p + n*1e-3; rd = reflect(rd, n);
-    } else if (id < 5.5){
-      // 磨砂品牌蓝
-      float dif = max(0., dot(n, L)) * shadow(p + n*1e-3);
-      vec3 h = normalize(L - rd);
-      float spec = pow(max(0., dot(n, h)), 60.) * .4;
-      float fr = fresnel(rd, n, .04);
-      acc += thr * (BLUE * (.3 + .25*n.y + .95*dif) + orbLight(p, n)*.5 + AMB*.35 + spec) * (1. - fr);
-      thr *= fr;
-      ro = p + n*1e-3; rd = reflect(rd, n);
-    } else {
-      // 发光光球：中心近白，边缘天蓝
-      float core = pow(max(0., dot(-rd, n)), 2.);
-      acc += thr * mix(SKY * 1.1, vec3(1.2,1.25,1.3), core);
-      break;
-    }
-    if (max(thr.r, max(thr.g, thr.b)) < .01) break;
+vec3 shade(vec2 frag){
+  vec2 p = vec2(frag.x / R.y, frag.y / R.y);
+  float h = thickness(p);
+  vec3 bg = backdrop(p);
+  float px = 1. / R.y;
+  // 浪面外：后景 + 浪峰上方一圈淡淡的光晕
+  if (h < 0.) {
+    float d = -h;
+    return bg + mix(vec3(.9,.95,1.), vec3(.55,.62,1.), DARK) * exp(-d * 90.) * .12;
   }
-  return acc;
+  // 表面法线：厚度场的梯度
+  float e = 1.5 * px;
+  float hx = thickness(p + vec2(e, 0.)) - thickness(p - vec2(e, 0.));
+  float hy = thickness(p + vec2(0., e)) - thickness(p - vec2(0., e));
+  vec3 n = normalize(vec3(-hx / (2.*e) * .045, -hy / (2.*e) * .045, 1.));
+  // 斯涅尔折射：视线垂直入射，按法线弯折；三个颜色通道折射率略不同（色散）
+  vec3 v = vec3(0., 0., -1.);
+  float depth = .22 + .18*h;
+  // 玻璃内部的褶皱像柱面透镜：把视线向上弯，采到上方浅色的天空，于是蓝色玻璃里出现一道道浅色流纹。
+  // 浪峰下方的厚唇同理，折射进来的是天空而不是发光。
+  float yc = crest(p.x - P.x*.018);
+  float dd = yc - (p.y + P.y*.012);
+  float fold = pow(.5 + .5*sin(dd*34. - T*.5 + p.x*1.7), 4.) * smoothstep(.03, .1, dd) * smoothstep(.6, .12, dd) * smoothstep(A*.25, A*.85, p.x);
+  float fold2 = pow(.5 + .5*sin(dd*21. + T*.32 - p.x*2.4 + 1.), 6.) * smoothstep(.1, .25, dd) * smoothstep(.8, .3, dd) * .7;
+  float lip = smoothstep(.07, .0, dd);
+  vec2 lift = vec2(-.04, 1.) * (fold * .42 + fold2 * .3 + lip * .34);
+  vec3 rr = refract(v, n, 1./(IOR - .012)), rg = refract(v, n, 1./IOR), rb = refract(v, n, 1./(IOR + .014));
+  // 磨砂感：每个通道再取两处轻微偏开的样本（浅景深）
+  vec2 j = vec2(.004, .003);
+  vec3 col;
+  col.r = (backdrop(p + rr.xy*depth + lift*1.03 + j).r + backdrop(p + rr.xy*depth + lift*1.03 - j).r) * .5;
+  col.g = (backdrop(p + rg.xy*depth + lift + j.yx).g + backdrop(p + rg.xy*depth + lift - j.yx).g) * .5;
+  col.b = (backdrop(p + rb.xy*depth + lift*.97 - j).b + backdrop(p + rb.xy*depth + lift*.97 + j).b) * .5;
+  // 玻璃本身的淡蓝色吸收（Beer–Lambert）
+  col *= exp(-vec3(.75, .38, .06) * h * (1. - .6*max(fold, lip)) * mix(.85, .7, DARK));
+  // 菲涅尔反射：映出天空与柔光（光从左上方来）
+  float cosT = max(0., n.z);
+  float fr = .04 + .96 * pow(1. - cosT, 5.);
+  vec3 L = normalize(vec3(-.55, .65, .52));
+  vec3 refl = backdrop(vec2(p.x - n.x*.3, .82 + .15*(1. - cosT))) * (.8 + .35*max(0., dot(reflect(v, n), L)));
+  col = mix(col, refl, clamp(fr * .9, 0., .38));
+  // 高光：表面朝向光源处的镜面反射
+  vec3 hv = normalize(L - v);
+  col += pow(max(0., dot(n, hv)), 120.) * mix(.3, .28, DARK);
+  // 浪峰边缘：一条极细极亮的高光线，内侧再有一条更淡的次级线
+  float y = crest(p.x - P.x*.018);
+  float slope = (crest(p.x + .01) - crest(p.x - .01)) / .02;
+  float d = (y - (p.y + P.y*.012)) / sqrt(1. + slope*slope);
+  float edge = exp(-pow(d / (1.1*px), 2.)) * .95 + exp(-pow((d - .006) / (1.6*px), 2.)) * .22;
+  // 边线亮度沿浪峰流动变化，颜色带一点青色
+  edge *= .75 + .25*sin(p.x*3. - T*.5);
+  col += mix(vec3(.85,.97,1.), vec3(.7,.8,1.), DARK) * edge;
+  return col;
 }
 
 void main(){
-  vec2 uv = (gl_FragCoord.xy - .5*R) / R.y;
-  float aspect = R.x / R.y;
-  // 球都放在画面两侧的留白里（视口半宽约 1.31×宽高比），中间留给正文
-  float hw = 1.31 * aspect;
-  S0 = vec4(-hw*.92, -.48 + .06*sin(T*.55), -.35, .52);
-  S1 = vec4(-hw*.66, -.93 + .03*sin(T*.7 + 2.), .9, .22);
-  S2 = vec4(hw*.92, .38 + .05*sin(T*.47 + 1.7), -1.5, .46);
-  S3 = vec4(hw*.74, -.8 + .03*sin(T*.63 + .6), .6, .3);
-  // 光球沿椭圆轨道在右侧缓缓绕行，时而飞到镜面球后面
-  float w = T*.23;
-  S4 = vec4(hw*.8 + cos(w)*.55, -.25 + .22*sin(w*1.3), -.5 + sin(w)*.9, .09);
-  // 天空光：取正前方地平线上方两处的极光平均，作为漫反射表面的环境照明
-  AMB = (aurora(normalize(vec3(-.6, .1, -1.))) + aurora(normalize(vec3(.6, .1, -1.)))) * .5 * mix(.35, .6, DARK);
-  float a = .9 + P.x*.35 + .15*sin(T*.09);
-  L = normalize(vec3(cos(a)*1.4, 1.6 + P.y*.25, sin(a)*.8 + .9));
-  vec3 ro = vec3(P.x*.12, .28 - P.y*.06, 4.6);
-  vec3 ta = vec3(0., -.18, 0.);
-  vec3 f = normalize(ta - ro), r = normalize(cross(f, vec3(0,1,0))), u = cross(r, f);
-  // 抗锯齿：旋转网格 4 次超采样（RGSS），球的轮廓与倒影边缘不再有锯齿
+  A = R.x / R.y;
   vec3 c = vec3(0.);
   for (int i = 0; i < 4; i++){
     if (float(i) >= SS) break;
     vec2 o = SS > 1.5 ? (i == 0 ? vec2(.125,.375) : i == 1 ? vec2(-.375,.125) : i == 2 ? vec2(-.125,-.375) : vec2(.375,-.125)) : vec2(0.);
-    vec2 q = (gl_FragCoord.xy + o - .5*R) / R.y;
-    vec3 rd = normalize(q.x*r + q.y*u + 1.75*f);
-    vec3 sc = trace(ro, rd);
-    // 光球辉光：主光线离光球最近的距离决定光晕强度，被挡住时减弱
-    vec3 oc = S4.xyz - ro;
-    float along = max(0., dot(oc, rd));
-    float dist = length(oc - rd*along);
-    float th; vec3 hn;
-    float blocker = hitScene(ro, rd, th, hn);
-    float visible = (blocker < .5 || th > along - S4.w || blocker > 5.5) ? 1. : .25;
-    sc += SKY * (exp(-dist*9.) * .55 + exp(-dist*2.6) * .12) * visible * mix(.8, 1.3, DARK);
-    c += sc;
+    c += shade(gl_FragCoord.xy + o);
   }
   c /= SS;
-  // 中间区域再向页面底色收一些，保证正文可读
-  float calm = smoothstep(.8, .2, abs(uv.x) / (.5*aspect)) * .38;
+  // 正文区域向页面底色收一些，保证可读；四周保持壁纸的饱和度
+  vec2 uv = gl_FragCoord.xy / R;
+  float calm = smoothstep(.36, .12, abs(uv.x - .5)) * mix(.3, .3, DARK);
   c = mix(c, BG, calm);
-  // 暗角：深色主题四角压暗，浅色主题四角轻微偏蓝，画面更有景深
-  float vig = smoothstep(.45, 1.25, length(uv / vec2(aspect*.5, .5)) * .75);
-  c = mix(c, mix(c*.97 + SKY*.02, c*.7, DARK), vig);
   c += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898,78.233))) * 43758.5453) - .5) / 255.; // 抖动去色带
   gl_FragColor = vec4(c, 1.);
 }
