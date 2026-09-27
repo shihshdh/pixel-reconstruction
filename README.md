@@ -30,6 +30,9 @@
 
 ## 效果
 
+<p align="center"><a href="https://github.com/shihshdh/pixel-reconstruction/releases/download/v1.7.2/PixelReconstruction-Promo-720p.mp4"><img src="docs/images/promo-poster.jpg" alt="宣传片：点击观看" width="100%"></a></p>
+<p align="center"><sub>▶ <b>宣传片</b>（1 分 30 秒）：<a href="https://github.com/shihshdh/pixel-reconstruction/releases/download/v1.7.2/PixelReconstruction-Promo-720p.mp4">720p 在线观看（26MB）</a> · <a href="https://github.com/shihshdh/pixel-reconstruction/releases/download/v1.7.2/PixelReconstruction-Promo-1080p60.mp4">1080p 60 帧原画质（183MB）</a>。九个三维场景与手写诗句、上传显影、生成运镜、豆包修图、AI 客服、作品库，全部为客户端真实操作录制，配乐原创。</sub></p>
+
 <table>
   <tr>
     <td width="50%"><img src="docs/images/develop.jpg" alt="显影过程"></td>
