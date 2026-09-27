@@ -1,5 +1,6 @@
 "use client";
 
+import { patchSplatBuffer } from "@/lib/splat-perf";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 // 动效地基：FLIP 让序列增删时后面的片段平滑让位
 import { prefersReduced, useFlipList } from "@/lib/motion";
@@ -463,6 +464,7 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
           assetPromise,
         ]);
         if (disposed || !mountRef.current) return;
+        patchSplatBuffer(GS);
         loadedAssetRef.current = { identity, blob: asset };
         downloading = false; setStalled(false);
         assetLoaded?.(asset);

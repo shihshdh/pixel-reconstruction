@@ -4,6 +4,7 @@ import { isDesktopApp } from "@/lib/desktop";
 import { perfProfile } from "@/lib/perf";
 import { useEffect, useRef } from "react";
 import { INTRO_SCENE_START } from "@/lib/intro";
+import { patchSplatBuffer } from "@/lib/splat-perf";
 
 import type { LandingScene } from "@/lib/landing-scenes";
 
@@ -19,8 +20,10 @@ const PROCESS_MS = 45000; // after download: time allowed for parsing and the fi
 const LOADER_PROCESSING = 1;
 
 /** A real SHARP scene. The photograph remains visible if WebGL or its asset fails. */
-export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onStatus, onInteraction, onProgress }: {
+export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onStatus, onInteraction, onProgress, startDelay = 0 }: {
   scene: LandingScene;
+  /** 切换场景时先让标题的换场动画（约 0.45 秒）跑完，再开始占主线程的载入 */
+  startDelay?: number;
   depth: number;
   reducedMotion: boolean;
   onStatus: (status: LandingSceneStatus) => void;
@@ -145,6 +148,10 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
         });
         if (disposed) return;
       }
+      if (startDelay > 0) {
+        await new Promise(resolve => setTimeout(resolve, startDelay));
+        if (disposed) return;
+      }
       // The HEAD probe, library import and time to first byte are covered too.
       arm(STALL_MS);
       try {
@@ -160,8 +167,10 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
         if (!asset.ok) throw new Error("Scene unavailable");
         const [GS, THREE] = await Promise.all([import("@mkkellogg/gaussian-splats-3d"), import("three")]);
         if (disposed) return;
+        patchSplatBuffer(GS);
         renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: isDesktopApp() ? "high-performance" : "low-power" });
-        renderer.setPixelRatio(desktopProfile ? desktopProfile.maxPixelRatio : Math.min(window.devicePixelRatio || 1, low ? 1.25 : 1.5));
+        // 展示页按屏幕原生分辨率渲染，不做超采样：八十多万个高斯全屏铺满，2.25 倍超采样要画 900 多万像素，客户端里明显掉帧
+        renderer.setPixelRatio(desktopProfile ? Math.min(desktopProfile.maxPixelRatio, window.devicePixelRatio || 1) : Math.min(window.devicePixelRatio || 1, low ? 1.25 : 1.5));
         // 透明底：单张照片重建的场景在天空等远处偶有稀疏的空洞，透出下面同一张原图，而不是黑底
         renderer.setClearColor(0x171710, 0);
         renderer.setSize(mount.clientWidth, mount.clientHeight);
@@ -182,6 +191,12 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
           integerBasedSort: false,
           renderMode: GS.RenderMode.OnChange,
         });
+        // 展示页不需要八叉树（只用于拾取与视锥剔除，这里镜头始终看着整个场景）：不建，排序时直接全排。
+        // 建树要在主线程上逐个读出八十多万个高斯的中心，客户端里实测卡住主线程 7 秒。
+        const skipSplatTree = () => { if (viewer?.splatMesh) viewer.splatMesh.buildSplatTree = () => Promise.resolve(); };
+        skipSplatTree();
+        const createSplatMesh = viewer.createSplatMesh?.bind(viewer);
+        if (createSplatMesh) viewer.createSplatMesh = () => { createSplatMesh(); skipSplatTree(); };
         const measure = () => {
           if (!viewer?.camera || disposed) return;
           const w = mount.clientWidth, h = mount.clientHeight;

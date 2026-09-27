@@ -57,11 +57,42 @@ export async function startLocalEngine(): Promise<{ url: string; python: string 
   return await desktop.invoke("local_engine_start") as { url: string; python: string };
 }
 
-/** 全屏无边框模式。不传参数时切换，返回切换后的状态；网页版返回 false。 */
+/** 全屏无边框模式。不传参数时切换，返回切换后的状态；网页版返回 false。
+ *  窗口尺寸一变，界面缩放（lib/ui-scale.ts）和 3D 画布都会在一帧里跳到新尺寸，看上去是“闪一下”。
+ *  这里用一层与页面同色的幕布遮住这一跳：120ms 淡入 → 切换、等新尺寸排好版 → 320ms 淡出。
+ *  只动一层纯色的不透明度，合成器几乎不花力气（对整页做模糊反而会让切换期间掉到 27fps）。 */
+let switching = false;
 export async function setFullscreen(on?: boolean): Promise<boolean> {
   const desktop = api();
   if (!desktop) return false;
-  return await desktop.invoke("set_fullscreen", { on: on ?? null }) as boolean;
+  const current = await desktop.invoke("plugin:window|is_fullscreen", { label: "main" }).catch(() => null) as boolean | null;
+  const next = on ?? !current;
+  if (current === next || switching) return !!current;
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  switching = true;
+  const veil = document.createElement("div");
+  const bg = getComputedStyle(document.body).backgroundColor;
+  veil.style.cssText = `position:fixed;inset:0;z-index:2147483646;pointer-events:none;opacity:0;background:${bg && bg !== "rgba(0, 0, 0, 0)" ? bg : "#0b0b0c"}`;
+  try {
+    if (!still) {
+      document.body.appendChild(veil);
+      await veil.animate([{ opacity: 0 }, { opacity: .92 }], { duration: 120, easing: "cubic-bezier(.4,0,1,1)", fill: "forwards" }).finished.catch(() => {});
+    }
+    const result = await desktop.invoke("set_fullscreen", { on: next }) as boolean;
+    // 等窗口真的换了尺寸、页面按新尺寸排好版（最多 500ms）
+    await new Promise<void>(resolve => {
+      let done = false;
+      const finish = () => { if (done) return; done = true; removeEventListener("resize", resized); requestAnimationFrame(() => requestAnimationFrame(() => resolve())); };
+      const resized = () => setTimeout(finish, 90);
+      addEventListener("resize", resized);
+      setTimeout(finish, 500);
+    });
+    if (!still) await veil.animate([{ opacity: .92 }, { opacity: 0 }], { duration: 320, easing: "cubic-bezier(.2,.9,.25,1)", fill: "forwards" }).finished.catch(() => {});
+    return result;
+  } finally {
+    veil.remove();
+    switching = false;
+  }
 }
 
 export type InstallProgress = {
@@ -86,11 +117,11 @@ export async function windowAction(action: "start_dragging" | "minimize" | "togg
   return desktop.invoke(`plugin:window|${action}`, { label: "main" });
 }
 
-/** 按下的是标题栏的空白处（不是按钮、链接、输入框）时开始拖动窗口；双击最大化/还原。 */
+/** 按下的是标题栏的空白处（不是按钮、链接、输入框，也没有标 data-no-drag）时开始拖动窗口；双击最大化/还原。 */
 export function titleBarMouseDown(event: { button: number; detail: number; target: EventTarget | null; preventDefault(): void }) {
   if (!api() || event.button !== 0) return;
   const target = event.target as Element | null;
-  if (target?.closest('button, a, input, select, textarea, [role="button"], [role="radio"], [role="tab"], label')) return;
+  if (target?.closest('button, a, input, select, textarea, [role="button"], [role="radio"], [role="tab"], label, [data-no-drag]')) return;
   event.preventDefault();
   void windowAction(event.detail === 2 ? "toggle_maximize" : "start_dragging");
 }

@@ -301,8 +301,58 @@ fn local_engine_start(app: tauri::AppHandle, state: tauri::State<'_, Mutex<Engin
 #[tauri::command]
 fn set_fullscreen(window: tauri::WebviewWindow, on: Option<bool>) -> Result<bool, String> {
     let next = on.unwrap_or(!window.is_fullscreen().map_err(|e| e.to_string())?);
+    // 最大化的无边框窗口直接进全屏时，窗口不会铺满整个屏幕（任务栏那一截还在）：
+    // 先取消最大化再进全屏，退出全屏时再恢复最大化
+    if next {
+        let was_maximized = window.is_maximized().unwrap_or(false);
+        WAS_MAXIMIZED.store(was_maximized, std::sync::atomic::Ordering::Relaxed);
+        if was_maximized {
+            let _ = window.unmaximize();
+        }
+    }
     window.set_fullscreen(next).map_err(|e| e.to_string())?;
+    if !next && WAS_MAXIMIZED.swap(false, std::sync::atomic::Ordering::Relaxed) {
+        let _ = window.maximize();
+    } else if !next {
+        // 退出全屏后系统异步还原窗口尺寸；还原完再检查一次是否落在任务栏下面
+        let window = window.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(350));
+            fit_to_work_area(&window);
+        });
+    }
     Ok(next)
+}
+
+/// 进全屏前窗口是否最大化（退出全屏时恢复）
+static WAS_MAXIMIZED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 窗口必须完整落在显示器的工作区（不含任务栏）里。记住的窗口尺寸可能比屏幕还大——比如在全屏前后
+/// 保存下来的——还原后窗口底部压在任务栏下面、甚至伸出屏幕。接近整屏大小时直接最大化（并把还原尺寸
+/// 设成工作区的 80%），否则缩到工作区内、整体挪回屏幕里。最大化和全屏时不动。
+fn fit_to_work_area(window: &tauri::WebviewWindow) {
+    if window.is_maximized().unwrap_or(false) || window.is_fullscreen().unwrap_or(false) || window.is_minimized().unwrap_or(false) {
+        return;
+    }
+    let Ok(Some(monitor)) = window.current_monitor().or_else(|_| window.primary_monitor()) else { return };
+    let area = monitor.work_area();
+    let (ax, ay) = (area.position.x, area.position.y);
+    let (aw, ah) = (area.size.width as i32, area.size.height as i32);
+    let (Ok(pos), Ok(size)) = (window.outer_position(), window.outer_size()) else { return };
+    let (w, h) = (size.width as i32, size.height as i32);
+    if pos.x >= ax && pos.y >= ay && pos.x + w <= ax + aw && pos.y + h <= ay + ah {
+        return;
+    }
+    if w >= aw * 9 / 10 || h >= ah * 9 / 10 {
+        let (rw, rh) = (aw * 4 / 5, ah * 4 / 5);
+        let _ = window.set_size(tauri::PhysicalSize::new(rw as u32, rh as u32));
+        let _ = window.set_position(tauri::PhysicalPosition::new(ax + (aw - rw) / 2, ay + (ah - rh) / 2));
+        let _ = window.maximize();
+    } else {
+        let x = pos.x.clamp(ax, ax + aw - w);
+        let y = pos.y.clamp(ay, ay + ah - h);
+        let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+    }
 }
 
 /// 结束一个进程及其子进程（安装脚本会拉起 curl、pip）。
@@ -460,12 +510,12 @@ fn main() {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_decorations(false);
                 let _ = window.set_shadow(true);
-                // 旧版带标题栏时保存的位置，换成无边框后可能有一截落在屏幕外：拉回屏幕中间
-                if let (Ok(position), Ok(false)) = (window.outer_position(), window.is_maximized()) {
-                    if position.x < 0 || position.y < 0 {
-                        let _ = window.center();
-                    }
-                }
+                // 记住的位置和尺寸由 window-state 插件在窗口就绪时还原；还原后再确认窗口完整落在工作区里
+                let window = window.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(600));
+                    fit_to_work_area(&window);
+                });
             }
             Ok(())
         })

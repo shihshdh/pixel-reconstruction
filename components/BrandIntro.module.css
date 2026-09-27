@@ -62,7 +62,8 @@
 .debug{position:absolute;left:12px;right:12px;bottom:12px;z-index:2;margin:0;padding:6px 10px;border-radius:8px;background:#000b;color:#fbf9f0;font:11px/1.5 SFMono-Regular,Consolas,monospace}
 
 /* Hidden header copy: destination for the flight, and the skip pill in the landing's own spot. */
-.chrome{pointer-events:none}
+/* 顶栏接收按下：客户端里用来拖动窗口（网页版 titleBarMouseDown 什么都不做，点击照常冒泡到“点击跳过”） */
+.chrome{pointer-events:auto}
 .skip{display:inline-block;animation:chromeIn 1080ms cubic-bezier(.16,1,.3,1) 1890ms both}
 .chrome .skip{color:#1d1d1f;border-color:#0000001a;background:#ffffffb3;box-shadow:inset 0 1px 0 #fff,0 6px 20px #0000000d}
 

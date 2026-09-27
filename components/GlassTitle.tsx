@@ -60,6 +60,9 @@ export default function GlassTitle({ lines, lang, tint = "#ffffff", luma = .15, 
   const [shown, setShown] = useState<Title>({ lines, lang });
   const [layout, setLayout] = useState<{ w: number; h: number; font: string; size: number; spacing: string; weight: string; lines: Line[] } | null>(null);
   const [refract, setRefract] = useState(false);
+  // 换语言的动画期间（旧字模糊退出、新字弹簧进入，约 0.6 秒）玻璃退成普通磨砂：折射滤镜整条链
+  // （字形高度场、梯度、三次位移做色散）每帧重算很贵，动画中的字本来就在模糊，看不出差别
+  const [swapping, setSwapping] = useState(false);
   const reduced = useRef(false);
   // 逐帧直接写 DOM 的部分（不经过 React）：光源方向、色调
   const lights = useRef<{ key: SVGFEDistantLightElement | null; counter: SVGFEDistantLightElement | null; body: SVGFEDistantLightElement | null }>({ key: null, counter: null, body: null });
@@ -99,6 +102,7 @@ export default function GlassTitle({ lines, lang, tint = "#ffffff", luma = .15, 
       a.o = Math.min(1, p); a.b = EXIT_BLUR * Math.max(0, 1 - p); a.s = EXIT_SCALE + (1 - EXIT_SCALE) * p;
       paintSwap();
       a.raf = moving ? requestAnimationFrame(enter) : 0;
+      if (!moving) setSwapping(false);
     };
     cancelAnimationFrame(a.raf);
     a.raf = requestAnimationFrame(enter);
@@ -114,6 +118,7 @@ export default function GlassTitle({ lines, lang, tint = "#ffffff", luma = .15, 
     if (a.timer) clearTimeout(a.timer);
     if (reduced.current) { setShown({ lines, lang }); return; }
     // 退出：从当前状态出发（打断进入时也不会跳）
+    setSwapping(true);
     const from = { o: a.o, b: a.b, s: a.s };
     const started = performance.now();
     const exit = (now: number) => {
@@ -246,9 +251,11 @@ export default function GlassTitle({ lines, lang, tint = "#ffffff", luma = .15, 
   const dim = Math.max(0, Math.min(1, (luma - .12) / .3));
   const lift = (1.4 - dim * .55).toFixed(2);
   const frost = (blur * .28).toFixed(1);
-  const backdrop = refract
-    ? `url(#gt-r-${id}) blur(calc(${frost}px + var(--gt-b) * 1px)) saturate(1.55) brightness(${lift})`
-    : `blur(calc(6px + var(--gt-b) * 1px)) saturate(1.6) brightness(${lift})`;
+  const backdrop = !refract
+    ? `blur(calc(6px + var(--gt-b) * 1px)) saturate(1.6) brightness(${lift})`
+    : swapping
+    ? `blur(calc(${frost}px + var(--gt-b) * 1px)) saturate(1.55) brightness(${lift})`
+    : `url(#gt-r-${id}) blur(calc(${frost}px + var(--gt-b) * 1px)) saturate(1.55) brightness(${lift})`;
   const glyphs = shown.lines.map((line, i) => <span key={i}>{line}{i < shown.lines.length - 1 && <br />}</span>);
 
   return <h1 ref={rootRef} className={`gt ${className || ""}`} style={style} lang={shown.lang} data-refract={refract || undefined}

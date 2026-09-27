@@ -14,6 +14,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import BrandMark from "./BrandMark";
+import { titleBarMouseDown } from "@/lib/desktop";
 import { INTRO_TEMPO, INTRO_TIME } from "@/lib/intro";
 import { startGlass, type GlassGeometry, type GlassHandle, type GlassTimeline } from "@/lib/intro-glass";
 import landing from "./LandingExperience.module.css";
@@ -322,9 +323,10 @@ export default function BrandIntro() {
     <canvas ref={glassRef} className={s.glass} />
     {debug && <p className={s.debug}>{debug}</p>}
     {/* A hidden copy of the landing header: the flight's destination and the skip pill's place. */}
-    <div className={`${landing.header} ${s.chrome}`}>
+    {/* 开场动画期间也能拖动窗口：顶栏与应用里的标题栏一样（“跳过”仍是点击跳过） */}
+    <div className={`${landing.header} ${s.chrome}`} onMouseDown={titleBarMouseDown}>
       <div ref={targetRef} className={landing.brand} style={{ visibility: "hidden" }}><BrandMark size={40} /><span>Pixel<br />Reconstruction<small>SINGLE-IMAGE 3D</small></span></div>
-      <span ref={skipRef} className={`${landing.skip} ${s.skip}`}>跳过<span aria-hidden="true">↗</span></span>
+      <span ref={skipRef} data-no-drag="" className={`${landing.skip} ${s.skip}`}>跳过<span aria-hidden="true">↗</span></span>
     </div>
   </div>;
 }

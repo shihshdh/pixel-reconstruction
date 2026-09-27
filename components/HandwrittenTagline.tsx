@@ -7,7 +7,8 @@
 //
 // 流畅度：
 // - 光晕不用 CSS 滤镜（每帧重绘都要重新模糊），而是每笔下面垫一条更宽、半透明的同色调线，一起描出来；
-// - 3D 场景载入（解析、排序）会占主线程，笔画动画在主线程上跑，所以等场景就绪（hold 为 false）再写；
+// - 3D 场景载入（解析、排序）会占主线程，笔画动画在主线程上跑，所以尽量等场景就绪（hold 为 false）再写；
+//   但最多等 HOLD_MAX_MS（切换场景的载入实测约 1.5 秒），网络慢时诗句也不会一直空着；
 // - 写完后把最终状态写进样式并释放全部动画，之后不再有逐帧开销。
 //
 // 换场景时与液态玻璃标题同一套节奏：旧诗句 120ms 模糊退出，新诗句在标题落定、场景就绪后开始书写。
@@ -23,6 +24,7 @@ export type Handwriting = {
 const EXIT_MS = 120;
 const PAD = 8;
 const MAX_MS = 3400;
+const HOLD_MAX_MS = 2500;
 
 /** 每一笔的开始时间与时长（毫秒）。先按恒定笔速排，整句超过 3.4 秒就整体等比加快（提笔停顿一起缩短）。 */
 function schedule(data: Handwriting) {
@@ -104,15 +106,17 @@ export default function HandwrittenTagline({ data, ink, halo, hold = false, dela
     // 依次等：页面开场动画结束 → 场景就绪 → 标题落定（delay）
     const html = document.documentElement;
     let watcher: MutationObserver | undefined;
+    let holdTimer: ReturnType<typeof setTimeout> | undefined;
     const afterIntro = () => {
-      const go = () => { release.current = null; timer = setTimeout(write, start); };
-      if (holdRef.current) release.current = go; else go();
+      let started = false;
+      const go = () => { if (started) return; started = true; release.current = null; if (holdTimer) clearTimeout(holdTimer); timer = setTimeout(write, start); };
+      if (holdRef.current) { release.current = go; holdTimer = setTimeout(go, HOLD_MAX_MS); } else go();
     };
     if (html.getAttribute("data-intro") === "play") {
       watcher = new MutationObserver(() => { if (html.getAttribute("data-intro") !== "play") { watcher?.disconnect(); afterIntro(); } });
       watcher.observe(html, { attributes: true, attributeFilter: ["data-intro"] });
     } else afterIntro();
-    return () => { cancelled = true; release.current = null; watcher?.disconnect(); if (timer) clearTimeout(timer); animations.forEach(a => a.cancel()); };
+    return () => { cancelled = true; release.current = null; watcher?.disconnect(); if (timer) clearTimeout(timer); if (holdTimer) clearTimeout(holdTimer); animations.forEach(a => a.cancel()); };
   }, [shown]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { data: d, ink: color, halo: glow } = shown;

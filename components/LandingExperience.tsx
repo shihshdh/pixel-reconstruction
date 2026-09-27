@@ -33,7 +33,10 @@ export default function LandingExperience({ onEnter, onExitStart, exitDuration =
   // 轮流播放的场景：每个停留 SCENE_DWELL_MS；正在拖动探索、减少动态效果时不自动换
   const [sceneIndex, setSceneIndex] = useState(0);
   const scene = LANDING_SCENES[sceneIndex];
+  // 第一次之后的场景切换：新场景晚一点开始载入，先让标题换语言的动画流畅跑完
+  const switched = useRef(false);
   const showScene = useCallback((index: number) => {
+    switched.current = true;
     setSceneIndex(index);
     setLoad({ phase: "download", percent: null });
     setStatus("loading");
@@ -121,7 +124,7 @@ export default function LandingExperience({ onEnter, onExitStart, exitDuration =
               className={`${styles.poster} ${index !== sceneIndex ? styles.posterHidden : ""}`}
               src={`/scene/${item.id}.jpg`} alt={index === sceneIndex ? item.alt : ""} aria-hidden={index !== sceneIndex} fetchPriority={index === sceneIndex ? "high" : "low"} />;
           })}
-          <div className={`${styles.splats} ${status === "ready" ? styles.splatsReady : ""}`}><LandingSplat key={`${scene.id}-${sceneAttempt}`} scene={scene} depth={depth} reducedMotion={reduced} onStatus={sceneStatus} onInteraction={exploreScene} onProgress={sceneProgress} /></div>
+          <div className={`${styles.splats} ${status === "ready" ? styles.splatsReady : ""}`}><LandingSplat key={`${scene.id}-${sceneAttempt}`} startDelay={switched.current ? 480 : 0} scene={scene} depth={depth} reducedMotion={reduced} onStatus={sceneStatus} onInteraction={exploreScene} onProgress={sceneProgress} /></div>
         </div>
         <div className={styles.shade} aria-hidden="true" />
 
