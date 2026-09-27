@@ -1,6 +1,7 @@
 "use client";
 
 import GlassTitle from "@/components/GlassTitle";
+import LiquidSegmented from "@/components/LiquidSegmented";
 import { DESKTOP_DOWNLOAD, isDesktopApp, titleBarMouseDown } from "@/lib/desktop";
 import WindowControls from "@/components/WindowControls";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
@@ -55,6 +56,9 @@ export default function LandingExperience({ onEnter, onExitStart, exitDuration =
     quietTimer.current = setTimeout(restoreCopy, 1000);
   }, [restoreCopy]);
   const reveal = Math.max(0, Math.min(1, (depth - 0.25) / 0.6));
+  // 标题区域的原图越亮，标题下方压得越暗（不去加重玻璃的色调）
+  const dim = Math.max(0, Math.min(1, (scene.luma - .12) / .3));
+  const count = LANDING_SCENES.length;
   useEffect(() => {
     if (reduced || exploring || status !== "ready" || LANDING_SCENES.length < 2) return;
     const timer = setTimeout(() => showScene((sceneIndex + 1) % LANDING_SCENES.length), SCENE_DWELL_MS);
@@ -101,14 +105,20 @@ export default function LandingExperience({ onEnter, onExitStart, exitDuration =
       if (event.shiftKey && (document.activeElement === first || document.activeElement === scrollRef.current)) { event.preventDefault(); last?.focus(); }
       if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
     }}
-    style={{ "--depth": depth, "--reveal": reveal } as CSSProperties}>
+    style={{ "--depth": depth, "--reveal": reveal, "--dim": dim, "--scene-tint": scene.tint } as CSSProperties}>
     <div className={styles.journey}>
       <div className={styles.viewport}>
         <div className={styles.scene}>
-          {/* 每个场景一张原图：切换时先淡入下一张原图，3D 场景载入完成后再淡出，全程不黑屏 */}
-          {LANDING_SCENES.map((item, index) => <img key={item.id}
-            className={`${styles.poster} ${index !== sceneIndex || status === "ready" ? styles.posterHidden : ""}`}
-            src={`/scene/${item.id}.jpg`} alt={index === sceneIndex ? item.alt : ""} aria-hidden={index !== sceneIndex} fetchPriority={index === 0 ? "high" : "low"} />)}
+          {/* 每个场景一张原图：切换时先淡入下一张原图，3D 场景载入后叠在它上面（原图不撤走，
+              场景里稀疏的地方透出的就是原图），全程不黑屏 */}
+          {/* 只挂载上一个（淡出用）、当前和下一个（预载）场景的原图，首屏不必一次下载全部 */}
+          {LANDING_SCENES.map((item, index) => {
+            const offset = (index - sceneIndex + count) % count;
+            if (offset > 1 && offset < count - 1) return null;
+            return <img key={item.id}
+              className={`${styles.poster} ${index !== sceneIndex ? styles.posterHidden : ""}`}
+              src={`/scene/${item.id}.jpg`} alt={index === sceneIndex ? item.alt : ""} aria-hidden={index !== sceneIndex} fetchPriority={index === sceneIndex ? "high" : "low"} />;
+          })}
           <div className={`${styles.splats} ${status === "ready" ? styles.splatsReady : ""}`}><LandingSplat key={`${scene.id}-${sceneAttempt}`} scene={scene} depth={depth} reducedMotion={reduced} onStatus={sceneStatus} onInteraction={exploreScene} onProgress={sceneProgress} /></div>
         </div>
         <div className={styles.shade} aria-hidden="true" />
@@ -128,7 +138,8 @@ export default function LandingExperience({ onEnter, onExitStart, exitDuration =
         <div className={styles.intro} aria-hidden={reveal > .5}>
           <div className={styles.sceneCopy} data-scene-copy="intro">
           <span className={styles.eyebrow}><i /> 单张照片 · 三维重建</span>
-          <GlassTitle lines={["一张照片，", "一整个世界。"]} />
+          {/* 标题用场景所在地的语言，玻璃的色调取自场景的主光 */}
+          <GlassTitle lines={scene.title.lines} lang={scene.title.lang} tint={scene.tint} luma={scene.luma} />
           <p>拍下的那一刻，从此可以走进去。</p>
           </div>
         </div>
@@ -144,14 +155,19 @@ export default function LandingExperience({ onEnter, onExitStart, exitDuration =
 
         <footer className={styles.footer}>
           <div className={styles.sceneLabel}>
-            {LANDING_SCENES.length > 1 && <div className={styles.scenes} role="tablist" aria-label="切换展示场景">
-              {LANDING_SCENES.map((item, index) => <button key={item.id} role="tab" aria-selected={index === sceneIndex}
-                className={styles.sceneTab} onClick={() => index !== sceneIndex && showScene(index)}>
-                <b>{item.name}</b><small>{item.place}</small>
-                {index === sceneIndex && status === "ready" && !reduced && <i key={`${item.id}-${sceneAttempt}`} className={exploring ? styles.dwellPaused : styles.dwell}
-                  style={{ animationDuration: `${SCENE_DWELL_MS}ms` }} aria-hidden="true" />}
-              </button>)}
-            </div>}
+            {/* 场景切换：一条玻璃轨道，选中项是一滴会流动的玻璃（可点、可拖、方向键）；
+                选中项底部的细线走完停留时间。窄屏只显示圆点。 */}
+            {count > 1 && <LiquidSegmented className={styles.scenes} ariaLabel="切换展示场景" value={scene.id}
+              onChange={id => showScene(LANDING_SCENES.findIndex(item => item.id === id))}
+              options={LANDING_SCENES.map((item, index) => ({
+                value: item.id, title: `${item.name} · ${item.place}`,
+                label: <>
+                  <span className={styles.sceneName}>{item.name}</span><span className={styles.sceneDot} aria-hidden="true" />
+                  {index === sceneIndex && status === "ready" && !reduced && <i key={`${item.id}-${sceneAttempt}`} className={exploring ? styles.dwellPaused : styles.dwell}
+                    style={{ animationDuration: `${SCENE_DWELL_MS}ms` }} aria-hidden="true" />}
+                </>,
+              }))} />}
+            <div className={styles.sceneStatus}>
             <span className={`${styles.statusDot} ${status === "ready" ? styles.readyDot : ""}`} />
             <span>{status === "ready" ? "实时 3D · 拖动探索" : status === "loading" ? (load.phase === "process" ? "正在整理空间" : "正在唤醒空间") : "原图预览"}</span>
             {status === "fallback" && <button className={styles.retryScene} onClick={retryScene}>重新载入 3D</button>}
@@ -165,6 +181,7 @@ export default function LandingExperience({ onEnter, onExitStart, exitDuration =
               </span>
               {load.phase === "download" && load.percent !== null && <span className={styles.loadPercent} aria-hidden="true">{Math.floor(load.percent)}%</span>}
             </span>}
+            </div>
           </div>
           <button onClick={advance} className={styles.scrollHint} tabIndex={reveal > .7 ? -1 : 0} aria-label="向下滚动，显示开始创作">
             <span>向下滚动</span><span className={styles.scrollLine} aria-hidden="true" />

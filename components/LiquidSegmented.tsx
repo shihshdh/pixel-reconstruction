@@ -1,9 +1,10 @@
 "use client";
 // 液态玻璃分段滑块：点选、拖动、键盘都可以。滑块是一块会流动的玻璃——
-// 移动时前沿先走、后沿跟上被拉长变薄，到位回弹；按住时轻微鼓起，拖动时跟手，松手吸附到最近的选项。
+// 移动时前沿先走、后沿跟上被拉长变薄，到位回弹；按下时玻璃抬起鼓起（从不缩小）、边缘光变亮，
+// 拖动时跟手，松手吸附到最近的选项。
 // 物理见 lib/liquid.ts。减少动态效果时直接跳到目标。
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { LiquidSpring } from "@/lib/liquid";
+import { LiquidSpring, Spring } from "@/lib/liquid";
 
 export type LiquidOption<T extends string> = { value: T; label: ReactNode; sub?: ReactNode; disabled?: boolean; title?: string };
 
@@ -20,6 +21,7 @@ const CSS = `
   background:radial-gradient(ellipse 60% 100% at 50% 0%,rgba(255,255,255,.95),rgba(255,255,255,0) 72%);opacity:.9;}
 .lq-thumb::after{content:"";position:absolute;inset:0;border-radius:inherit;
   background:radial-gradient(60% 120% at var(--hx,50%) 100%,color-mix(in srgb,var(--accent) 18%,transparent),transparent 70%);}
+.lq-thumb[data-pressed]{box-shadow:inset 0 1px 1.5px #fff,inset 0 -1px 2px rgba(0,90,200,.18),0 8px 22px rgba(0,70,160,.2),0 1px 3px rgba(0,40,110,.12);}
 [data-theme="dark"] .lq{box-shadow:inset 0 1px 2px rgba(0,0,0,.35);}
 [data-theme="dark"] .lq-thumb{background:linear-gradient(165deg,rgba(255,255,255,.26),rgba(255,255,255,.08) 50%,rgba(208,180,124,.2));
   box-shadow:inset 0 1px 1px rgba(255,255,255,.35),inset 0 -1px 2px rgba(208,180,124,.2),0 6px 18px rgba(0,0,0,.4);}
@@ -62,7 +64,9 @@ export default function LiquidSegmented<T extends string>({ options, value, onCh
   const springRef = useRef<LiquidSpring | null>(null);
   const rafRef = useRef(0);
   const lastRef = useRef(0);
-  const pressRef = useRef(1);
+  // 按下：response 0.25、阻尼 0.72 的弹簧鼓起到 1.08
+  const pressRef = useRef(new Spring(1, .25, .72));
+  const pressingRef = useRef(false);
   const [hot, setHot] = useState<T | null>(null);   // 拖动中滑块下的选项，文字先亮起
   const [dragging, setDragging] = useState(false);
   const reduced = useRef(false);
@@ -78,7 +82,8 @@ export default function LiquidSegmented<T extends string>({ options, value, onCh
     if (!spring || !thumb || !track) return;
     const width = Math.max(0, spring.right - spring.left);
     thumb.style.width = width + "px";
-    thumb.style.transform = `translate3d(${spring.left}px,0,0) scale(${pressRef.current},${spring.squash * pressRef.current})`;
+    const press = pressRef.current.value;
+    thumb.style.transform = `translate3d(${spring.left}px,0,0) scale(${press},${spring.squash * press})`;
     // 高光跟着滑块在槽里的位置走，像光从一侧打过来
     thumb.style.setProperty("--hx", `${Math.round(((spring.left + width / 2) / Math.max(1, track.clientWidth)) * 100)}%`);
   }, []);
@@ -92,11 +97,12 @@ export default function LiquidSegmented<T extends string>({ options, value, onCh
       const dt = lastRef.current ? Math.min(.05, (now - lastRef.current) / 1000) : 1 / 60;
       lastRef.current = now;
       const moving = spring.step(dt);
-      const pressTarget = spring.dragging ? 1.05 : 1;
-      pressRef.current += (pressTarget - pressRef.current) * Math.min(1, dt * 18);
+      const press = pressRef.current;
+      press.target = spring.dragging || pressingRef.current ? 1.08 : 1;
+      const swelling = press.step(dt);
       paint();
-      if (moving || Math.abs(pressRef.current - pressTarget) > .002) rafRef.current = requestAnimationFrame(frame);
-      else { pressRef.current = pressTarget; paint(); rafRef.current = 0; }
+      if (moving || swelling || pressingRef.current) rafRef.current = requestAnimationFrame(frame);
+      else rafRef.current = 0;
     };
     rafRef.current = requestAnimationFrame(frame);
   }, [paint]);
@@ -147,6 +153,17 @@ export default function LiquidSegmented<T extends string>({ options, value, onCh
     if (disabled || event.button !== 0 || !springRef.current) return;
     const spring = springRef.current;
     drag.current = { id: event.pointerId, x: event.clientX, moved: false, width: spring.right - spring.left };
+    setPressed(true);
+    // 在控件外松开也要落回原大小
+    const release = () => { removeEventListener("pointerup", release); removeEventListener("pointercancel", release); if (pressingRef.current) setPressed(false); };
+    addEventListener("pointerup", release);
+    addEventListener("pointercancel", release);
+  };
+  const setPressed = (on: boolean) => {
+    pressingRef.current = on;
+    if (on) thumbRef.current?.setAttribute("data-pressed", "");
+    else thumbRef.current?.removeAttribute("data-pressed");
+    if (!reduced.current) animate();
   };
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     const state = drag.current, spring = springRef.current, track = trackRef.current;
@@ -169,6 +186,7 @@ export default function LiquidSegmented<T extends string>({ options, value, onCh
   const finish = (event: React.PointerEvent<HTMLDivElement>) => {
     const state = drag.current, spring = springRef.current, track = trackRef.current;
     drag.current = null;
+    if (state) setPressed(false);
     if (!state?.moved || !spring || !track) return;
     suppressClick.current = true;
     spring.dragging = false; setDragging(false); setHot(null);

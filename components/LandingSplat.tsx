@@ -162,7 +162,8 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
         if (disposed) return;
         renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: isDesktopApp() ? "high-performance" : "low-power" });
         renderer.setPixelRatio(desktopProfile ? desktopProfile.maxPixelRatio : Math.min(window.devicePixelRatio || 1, low ? 1.25 : 1.5));
-        renderer.setClearColor(0x171710, 1);
+        // 透明底：单张照片重建的场景在天空等远处偶有稀疏的空洞，透出下面同一张原图，而不是黑底
+        renderer.setClearColor(0x171710, 0);
         renderer.setSize(mount.clientWidth, mount.clientHeight);
         renderer.domElement.setAttribute("aria-label", "由照片生成的三维高斯场景");
         renderer.domElement.addEventListener("webglcontextlost", fail);

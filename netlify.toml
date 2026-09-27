@@ -18,18 +18,13 @@
 # The landing scenes are requested as ?v=<version> (components/LandingSplat.tsx),
 # so they can be cached for a year. Bump v= whenever a .ksplat changes.
 [[headers]]
-  for = "/scene/landing.ksplat"
-  [headers.values]
-    Cache-Control = "public, max-age=31536000, immutable"
-
-[[headers]]
-  for = "/scene/landing-lo.ksplat"
+  for = "/scene/*.ksplat"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
 
 # Unversioned URLs keep a short cache so replacing them takes effect within a day.
 [[headers]]
-  for = "/scene/landing.jpg"
+  for = "/scene/*.jpg"
   [headers.values]
     Cache-Control = "public, max-age=86400"
 

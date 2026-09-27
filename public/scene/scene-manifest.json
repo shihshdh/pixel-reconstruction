@@ -21,22 +21,127 @@
         }
       ]
     },
-    "hongkong": {
+    "london": {
       "sourceSplats": 1179648,
       "compressionLevel": 1,
       "seed": 9131,
       "variants": [
         {
-          "name": "hongkong.ksplat",
+          "name": "london.ksplat",
           "sampledSplats": 826039,
-          "bytes": 19946780,
+          "bytes": 19861400,
           "fraction": 0.7,
           "scale": 1.12
         },
         {
-          "name": "hongkong-lo.ksplat",
+          "name": "london-lo.ksplat",
           "sampledSplats": 472688,
-          "bytes": 11457408,
+          "bytes": 11378916,
+          "fraction": 0.4,
+          "scale": 1.3
+        }
+      ]
+    },
+    "louvre": {
+      "sourceSplats": 1179648,
+      "compressionLevel": 1,
+      "seed": 9131,
+      "variants": [
+        {
+          "name": "louvre.ksplat",
+          "sampledSplats": 826039,
+          "bytes": 19895180,
+          "fraction": 0.7,
+          "scale": 1.12
+        },
+        {
+          "name": "louvre-lo.ksplat",
+          "sampledSplats": 472688,
+          "bytes": 11398000,
+          "fraction": 0.4,
+          "scale": 1.3
+        }
+      ]
+    },
+    "seine": {
+      "sourceSplats": 1179648,
+      "compressionLevel": 1,
+      "seed": 9131,
+      "variants": [
+        {
+          "name": "seine.ksplat",
+          "sampledSplats": 826039,
+          "bytes": 19935016,
+          "fraction": 0.7,
+          "scale": 1.12
+        },
+        {
+          "name": "seine-lo.ksplat",
+          "sampledSplats": 472688,
+          "bytes": 11441280,
+          "fraction": 0.4,
+          "scale": 1.3
+        }
+      ]
+    },
+    "california": {
+      "sourceSplats": 1179648,
+      "compressionLevel": 1,
+      "seed": 9131,
+      "variants": [
+        {
+          "name": "california.ksplat",
+          "sampledSplats": 826039,
+          "bytes": 20508604,
+          "fraction": 0.7,
+          "scale": 1.12
+        },
+        {
+          "name": "california-lo.ksplat",
+          "sampledSplats": 472688,
+          "bytes": 11914372,
+          "fraction": 0.4,
+          "scale": 1.3
+        }
+      ]
+    },
+    "harbor": {
+      "sourceSplats": 1179648,
+      "compressionLevel": 1,
+      "seed": 9131,
+      "variants": [
+        {
+          "name": "harbor.ksplat",
+          "sampledSplats": 826039,
+          "bytes": 20243392,
+          "fraction": 0.7,
+          "scale": 1.12
+        },
+        {
+          "name": "harbor-lo.ksplat",
+          "sampledSplats": 472688,
+          "bytes": 11724876,
+          "fraction": 0.4,
+          "scale": 1.3
+        }
+      ]
+    },
+    "nice": {
+      "sourceSplats": 1179648,
+      "compressionLevel": 1,
+      "seed": 9131,
+      "variants": [
+        {
+          "name": "nice.ksplat",
+          "sampledSplats": 826039,
+          "bytes": 19898616,
+          "fraction": 0.7,
+          "scale": 1.12
+        },
+        {
+          "name": "nice-lo.ksplat",
+          "sampledSplats": 472688,
+          "bytes": 11424656,
           "fraction": 0.4,
           "scale": 1.3
         }
