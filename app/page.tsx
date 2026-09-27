@@ -24,7 +24,7 @@ import AuthorContact from "@/components/AuthorContact";
 import { DESKTOP_DOWNLOAD, isDesktopApp, openWorksFolder, setFullscreen, titleBarMouseDown } from "@/lib/desktop";
 import WindowControls from "@/components/WindowControls";
 import { computeUiZoom } from "@/lib/ui-scale";
-import { engineAccepts, engineInstalling, pauseEngineInstall, resumeEngineInstall, watchLocalEngine, type EngineStatus } from "@/lib/local-engine";
+import { engineAccepts, engineInstalling, engineWarming, pauseEngineInstall, resumeEngineInstall, watchLocalEngine, type EngineStatus } from "@/lib/local-engine";
 import LiquidSegmented, { LiquidIndicator } from "@/components/LiquidSegmented";
 import { detectTier, perfProfile, readPerfChoice, savePerfChoice, PERF_EVENT, PERF_LABELS, type PerfChoice } from "@/lib/perf";
 // 现有 API（lib/api.ts）——创作/工作室/修图都用它
@@ -809,7 +809,7 @@ function ComputeBar({ compute, setCompute, engine, busy }: { compute: Compute; s
   const gpu = engine.device ? engine.device.replace(/^NVIDIA\s+/i, "").replace(/\s+Laptop GPU$/i, " 笔记本") : "";
   const localSub = engine.phase === "ready" ? gpu || "已就绪"
     : engine.phase === "loading" ? "正在载入模型"
-    : engine.phase === "starting" ? "正在启动"
+    : engine.phase === "starting" || engine.phase === "pending" ? "正在启动"
     : engine.phase === "installing" ? "正在后台安装" : engineInstalling(engine) ? "未安装本机引擎" : "暂不可用";
   return <section className="compute-panel" aria-label="算力选择">
     <div className="compute-heading"><span>算力</span><span>{compute === "local" ? "照片在这台电脑上处理，太慢或出错时自动改用云端" : "照片上传到云端处理"}</span></div>
@@ -863,7 +863,9 @@ function SourceBar({ source, setSource, conn, device, onReconnect, backend, onAp
 // 创作页：选算力 → 上传 → 显影
 // ============================================================
 function CreatePage({ source, setSource, conn, device, onDone, onReconnect, backend, taskBase, compute, setCompute, engine, onApply, onBusy, incoming = null, onIncomingTaken }: { incoming?: { file: File; id: number } | null; onIncomingTaken?: () => void; [key: string]: any }) {
-  const local = isEngineAddress(taskBase);
+  const local = isEngineAddress(taskBase) || (compute === "local" && engineWarming(engine));
+  const engineRef = useRef(engine);
+  engineRef.current = engine;
   const [phase, setPhase] = useState("idle");
   const [pickedFile, setPickedFile] = useState<File | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -940,9 +942,20 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
   useEffect(() => () => readAbort.current?.abort(), []);
   async function handleFile(picked: File) {
     if (busyRef.current) return;
-    if (!taskBase) { fail("云端服务暂不可用，请稍后重试。"); return; }
+    const warming = compute === "local" && engineWarming(engineRef.current);
+    if (!taskBase && !warming) { fail("云端服务暂不可用，请稍后重试。"); return; }
     if (!isDevelopablePhoto(picked)) { fail("请选择 50MB 以内的 jpg、png、webp 或 heic 图片。"); return; }
-    const token = ++generation.current, base = taskBase;
+    const token = ++generation.current;
+    let base = taskBase;
+    if (warming) {
+      // 本机引擎还在启动：等它能接任务（最多 45 秒），不行再交给云端
+      setErrMsg(""); setStage("正在启动本机显卡引擎"); setPhase("reading");
+      const t0 = Date.now();
+      while (Date.now() - t0 < 45000 && engineWarming(engineRef.current)) await new Promise(r => setTimeout(r, 250));
+      if (token !== generation.current) return;
+      base = engineAccepts(engineRef.current) ? engineRef.current.url : backend;
+      if (!base) { fail("云端服务暂不可用，请稍后重试。"); return; }
+    }
     stopTimers(); pendingRef.current = null; busyRef.current = true;
     setErrMsg(""); setElapsed(0); setPickedFile(null); setReadRatio(0); setStage("正在读取照片"); setPhase("reading");
     const started = Date.now();
@@ -1547,8 +1560,14 @@ export default function App() {
   const [compute, setComputeState] = useState<Compute>("local");
   useEffect(() => {
     try { if (localStorage.getItem(COMPUTE_KEY) === "cloud") setComputeState("cloud"); } catch {}
-    return watchLocalEngine(setEngine);
+    if (isDesktopApp()) setEngine({ phase: "pending", url: "" });
   }, []);
+  // 本机显卡引擎推迟到离开三维展示页时才启动：它启动时要读 2.6GB 权重、在显卡上预热一次推理（约 17 秒），
+  // 放在开屏时和展示页抢显卡，实测展示页帧率减半。离开展示页之后才用得到它；
+  // 这期间提交的照片会等它启动（见 CreatePage），不会悄悄改交云端。
+  const [engineWanted, setEngineWanted] = useState(false);
+  useEffect(() => { if (splashDone) setEngineWanted(true); }, [splashDone]);
+  useEffect(() => engineWanted ? watchLocalEngine(setEngine) : undefined, [engineWanted]);
   // 大窗口、全屏时界面整体等比放大（见 lib/ui-scale.ts）
   useEffect(() => {
     const apply = () => document.documentElement.style.setProperty("--ui-zoom", String(computeUiZoom()));

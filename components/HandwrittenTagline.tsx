@@ -45,11 +45,16 @@ function schedule(data: Handwriting) {
 
 type Shown = { data: Handwriting; ink: string; halo: string };
 
-export default function HandwrittenTagline({ data, ink, halo, hold = false, delay = 0, className, style }: {
+export default function HandwrittenTagline({ data, ink, halo, hold = false, delay = 0, className, style, onWritten }: {
   data: Handwriting; ink: string; halo: string; hold?: boolean; delay?: number; className?: string; style?: CSSProperties;
+  /** 写完（true）/ 开始换下一句（false）时通知，展示页据此决定能否让拖动隐去文字 */
+  onWritten?: (written: boolean) => void;
 }) {
   const [shown, setShown] = useState<Shown>({ data, ink, halo });
   const [written, setWritten] = useState(false);
+  const onWrittenRef = useRef(onWritten);
+  onWrittenRef.current = onWritten;
+  useEffect(() => { onWrittenRef.current?.(written); }, [written]);
   const svgRef = useRef<SVGSVGElement>(null);
   const first = useRef(true);
   const holdRef = useRef(hold);

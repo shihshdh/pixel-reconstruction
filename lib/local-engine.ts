@@ -5,7 +5,8 @@
 // 用户可以暂停，暂停状态会记住，下次启动不再自动开始。中途关掉客户端，下次启动从断点继续。
 import { engineInstall, isDesktopApp, startLocalEngine, type InstallProgress } from "./desktop";
 
-export type EnginePhase = "off" | "starting" | "loading" | "ready" | "error" | "installing" | "install-paused" | "install-error";
+/** pending：客户端里还没开始启动（等用户离开三维展示页再启动，见 app/page.tsx） */
+export type EnginePhase = "off" | "pending" | "starting" | "loading" | "ready" | "error" | "installing" | "install-paused" | "install-error";
 export type EngineStatus = { phase: EnginePhase; url: string; device?: string; message?: string; install?: InstallProgress };
 export type { InstallProgress };
 
@@ -13,6 +14,8 @@ const PAUSED_KEY = "ruhua-engine-install-paused";
 
 /** 能接收任务的状态。模型还在载入时提交的照片会在引擎里排队，载入完成后立即处理。 */
 export const engineAccepts = (status: EngineStatus) => status.phase === "loading" || status.phase === "ready";
+/** 还在启动路上、稍等就能接任务的状态：提交照片时应当等它，而不是改交云端 */
+export const engineWarming = (status: EngineStatus) => status.phase === "pending" || status.phase === "starting";
 export const engineInstalling = (status: EngineStatus) => status.phase === "installing" || status.phase === "install-paused" || status.phase === "install-error";
 
 async function health(url: string) {

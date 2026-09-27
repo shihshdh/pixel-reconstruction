@@ -5,6 +5,7 @@ import { perfProfile } from "@/lib/perf";
 import { useEffect, useRef } from "react";
 import { INTRO_SCENE_START } from "@/lib/intro";
 import { patchSplatBuffer } from "@/lib/splat-perf";
+import { scenePath, takePreloaded } from "@/lib/landing-preload";
 
 import type { LandingScene } from "@/lib/landing-scenes";
 
@@ -51,6 +52,8 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
     let renderer: any;
     let resize: ResizeObserver | undefined;
     let timeout: ReturnType<typeof setTimeout> | undefined;
+    let blobUrl = "";
+    let upgradeTimer: ReturnType<typeof setTimeout> | undefined;
     // Watchdog: every sign of progress re-arms it; only sustained silence falls back.
     const arm = (ms: number) => { clearTimeout(timeout); timeout = setTimeout(fail, ms); };
     let reported = "";
@@ -91,12 +94,8 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
       // the scene quiets the copy; the first sample and pointer jitter do not.
       const target = event.target instanceof Element ? event.target : null;
       const overScene = event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom && !target?.closest('button, a, input, [role="button"]');
+      // 只是把鼠标移过场景（视差）不算“探索”，不会让标题和诗句隐去；只有拖动、方向键才算
       if (!sceneReady || reducedRef.current || !overScene) { hoverAnchor = null; return; }
-      if (!hoverAnchor) { hoverAnchor = { x: event.clientX, y: event.clientY }; return; }
-      if (Math.hypot(event.clientX - hoverAnchor.x, event.clientY - hoverAnchor.y) >= 6) {
-        hoverAnchor = { x: event.clientX, y: event.clientY };
-        interactionRef.current?.();
-      }
     };
     const reset = () => { desired.x = 0; desired.y = 0; hoverAnchor = null; };
     const down = (event: PointerEvent) => {
@@ -155,22 +154,28 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
       // The HEAD probe, library import and time to first byte are covered too.
       arm(STALL_MS);
       try {
-        const navigatorInfo = navigator as Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };
-        // 客户端里文件在本地，不必为流量省；只有低档硬件才用轻量版首页场景
         const desktopProfile = isDesktopApp() ? perfProfile() : null;
-        const low = desktopProfile ? desktopProfile.tier === "low" : window.innerWidth < 768 || (navigatorInfo.deviceMemory || 8) <= 4 || navigatorInfo.connection?.saveData;
-        // Both .ksplat files are served with a one-year immutable cache (netlify.toml).
-        // Bump v= whenever an asset changes, or returning visitors keep the old scene.
-        const path = `/scene/${SCENE.id}${low ? "-lo" : ""}.ksplat?v=${SCENE.version}`;
+        const { path: filePath, low } = scenePath(SCENE);
+        // 上一个场景播放时已经把这个场景读进了内存（lib/landing-preload.ts）：直接用，省掉探测与下载
+        const preloaded = await takePreloaded(filePath);
+        if (disposed) return;
+        if (preloaded) blobUrl = URL.createObjectURL(preloaded);
+        const path = blobUrl || filePath;
         // Check availability before allocating a GPU context. Missing assets must not imply 3D.
-        const asset = await fetch(path, { method: "HEAD", signal: abort.signal });
-        if (!asset.ok) throw new Error("Scene unavailable");
+        if (!blobUrl) {
+          const asset = await fetch(path, { method: "HEAD", signal: abort.signal });
+          if (!asset.ok) throw new Error("Scene unavailable");
+        }
         const [GS, THREE] = await Promise.all([import("@mkkellogg/gaussian-splats-3d"), import("three")]);
         if (disposed) return;
         patchSplatBuffer(GS);
         renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: isDesktopApp() ? "high-performance" : "low-power" });
-        // 展示页按屏幕原生分辨率渲染，不做超采样：八十多万个高斯全屏铺满，2.25 倍超采样要画 900 多万像素，客户端里明显掉帧
-        renderer.setPixelRatio(desktopProfile ? Math.min(desktopProfile.maxPixelRatio, window.devicePixelRatio || 1) : Math.min(window.devicePixelRatio || 1, low ? 1.25 : 1.5));
+        // 画质：载入与切换时先按屏幕原生分辨率渲染（切换最流畅），场景就绪、诗句写完后升到本档的完整超采样
+        // （极致档 2.25 倍）；移动镜头时平均帧时间超过 22ms（低于约 45fps）就降一级（完整 → 中间 → 原生），
+        // 停在还能流畅运行的最高一级。
+        const fullRatio = desktopProfile ? desktopProfile.maxPixelRatio : Math.min(window.devicePixelRatio || 1, low ? 1.25 : 1.5);
+        const startRatio = desktopProfile ? Math.min(fullRatio, window.devicePixelRatio || 1) : fullRatio;
+        renderer.setPixelRatio(startRatio);
         // 透明底：单张照片重建的场景在天空等远处偶有稀疏的空洞，透出下面同一张原图，而不是黑底
         renderer.setClearColor(0x171710, 0);
         renderer.setSize(mount.clientWidth, mount.clientHeight);
@@ -237,9 +242,16 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
         viewer.start();
         sceneReady = true;
         onStatus("ready");
-        const tick = () => {
+        const ladder = fullRatio > startRatio + .01 ? [fullRatio, +((fullRatio + startRatio) / 2).toFixed(2), startRatio] : [startRatio];
+        let rung = -1, lastTick = 0;
+        const slow: number[] = [];
+        const setRung = (next: number) => { rung = next; slow.length = 0; renderer.setPixelRatio(ladder[rung]); measure(); };
+        if (ladder.length > 1) upgradeTimer = setTimeout(() => { if (!disposed) setRung(0); }, 4500);
+        const tick = (now: number) => {
           if (disposed) return;
           frame = requestAnimationFrame(tick);
+          const delta = lastTick ? now - lastTick : 0;
+          lastTick = now;
           if (document.hidden) return;
           const reduced = reducedRef.current;
           // Single-photo reconstruction has a finite view cone. Keep the camera inside it.
@@ -258,6 +270,12 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
           viewer.camera.fov = 2 * Math.atan(fieldOfViewTangent * (.95 - excursion * .045)) * 180 / Math.PI;
           viewer.camera.updateProjectionMatrix();
           viewer.forceRenderNextFrame?.();
+          // 超采样后镜头移动时持续掉帧：降一级（这个场景内不再升回去）
+          if (rung >= 0 && rung < ladder.length - 1 && delta > 0 && delta < 250) {
+            slow.push(delta);
+            if (slow.length > 60) slow.shift();
+            if (slow.length === 60 && slow.reduce((a, b) => a + b, 0) / 60 > 22) setRung(rung + 1);
+          }
         };
         frame = requestAnimationFrame(tick);
       } catch {
@@ -268,6 +286,8 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
     return () => {
       disposed = true;
       abort.abort();
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      clearTimeout(upgradeTimer);
       clearTimeout(timeout);
       cancelAnimationFrame(frame);
       window.removeEventListener("pointermove", pointer);

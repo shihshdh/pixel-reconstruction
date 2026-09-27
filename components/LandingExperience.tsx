@@ -11,6 +11,7 @@ import dynamic from "next/dynamic";
 import type { LandingLoadProgress, LandingSceneStatus } from "./LandingSplat";
 import BrandMark from "./BrandMark";
 import { LANDING_SCENES, SCENE_DWELL_MS } from "@/lib/landing-scenes";
+import { preloadScene } from "@/lib/landing-preload";
 import styles from "./LandingExperience.module.css";
 
 const LandingSplat = dynamic(() => import("./LandingSplat"), { ssr: false });
@@ -37,6 +38,7 @@ export default function LandingExperience({ onEnter, onExitStart, exitDuration =
   const switched = useRef(false);
   const showScene = useCallback((index: number) => {
     switched.current = true;
+    markCopyBusy();
     setSceneIndex(index);
     setLoad({ phase: "download", percent: null });
     setStatus("loading");
@@ -55,7 +57,20 @@ export default function LandingExperience({ onEnter, onExitStart, exitDuration =
     exploringRef.current = false;
     setExploring(false);
   }, []);
+  // 标题换语言、诗句一笔一划写完之前，拖动场景不让文字隐去（镜头照常跟着拖动）；写完之后拖动才隐去。
+  // 万一诗句没有报告写完，换场 9 秒后也放开。
+  const copyBusyRef = useRef(true);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const markCopyBusy = useCallback(() => {
+    copyBusyRef.current = true;
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => { copyBusyRef.current = false; }, 9000);
+  }, []);
+  const taglineWritten = useCallback((written: boolean) => {
+    if (written) { copyBusyRef.current = false; if (copyTimer.current) clearTimeout(copyTimer.current); }
+  }, []);
   const exploreScene = useCallback(() => {
+    if (copyBusyRef.current) return;
     if (!exploringRef.current) { exploringRef.current = true; setExploring(true); }
     if (quietTimer.current) clearTimeout(quietTimer.current);
     quietTimer.current = setTimeout(restoreCopy, 1000);
@@ -64,6 +79,12 @@ export default function LandingExperience({ onEnter, onExitStart, exitDuration =
   // 标题区域的原图越亮，标题下方压得越暗（不去加重玻璃的色调）
   const dim = Math.max(0, Math.min(1, (scene.luma - .12) / .3));
   const count = LANDING_SCENES.length;
+  // 当前场景就绪、诗句写完后，把下一个场景读进内存，切过去时不用再下载
+  useEffect(() => {
+    if (status !== "ready" || LANDING_SCENES.length < 2) return;
+    const timer = setTimeout(() => preloadScene(LANDING_SCENES[(sceneIndex + 1) % LANDING_SCENES.length]), 4000);
+    return () => clearTimeout(timer);
+  }, [status, sceneIndex]);
   useEffect(() => {
     if (reduced || exploring || status !== "ready" || LANDING_SCENES.length < 2) return;
     const timer = setTimeout(() => showScene((sceneIndex + 1) % LANDING_SCENES.length), SCENE_DWELL_MS);
@@ -147,7 +168,7 @@ export default function LandingExperience({ onEnter, onExitStart, exitDuration =
           <GlassTitle lines={scene.title.lines} lang={scene.title.lang} tint={scene.tint} luma={scene.luma} />
           {/* 一句写这个地方的诗，用当地语言，一笔一划手写出来；墨色按背景深浅换 */}
           <HandwrittenTagline className={styles.tagline} data={(HANDWRITING as Record<string, Handwriting>)[scene.id]} ink={scene.ink} halo={scene.halo} delay={420}
-            hold={status === "loading"} />
+            hold={status === "loading"} onWritten={taglineWritten} />
           </div>
         </div>
 
