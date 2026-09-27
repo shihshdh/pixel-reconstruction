@@ -41,7 +41,16 @@
    individual translate/scale properties so the entrance animations and hovers keep their transforms. */
 .eyebrow{translate:0 calc(var(--reveal) * -34px)}
 .intro h1{translate:0 calc(var(--reveal) * -14px)}
-.intro p{translate:0 calc(var(--reveal) * 8px)}
+.intro p,.tagline{translate:0 calc(var(--reveal) * 8px)}
+/* 手写诗句：--hw-size 是手写体的字号，汉字的字框本身更满，取小一些 */
+.tagline{--hw-size:46px;max-width:min(82vw,760px);animation:arrive 1s .38s both}
+.tagline:lang(zh),.tagline:lang(ja){--hw-size:38px}
+/* 标题换成日文、繁体中文时用对应地区的字形 */
+.intro h1:lang(ja){font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic UI","Yu Gothic","Meiryo UI",sans-serif}
+.intro h1:lang(zh-Hant){font-family:"PingFang TC","SF Pro Display","Microsoft JhengHei UI","Microsoft JhengHei",sans-serif}
+.tagline figcaption{margin-top:14px;font-size:12px;font-weight:500;letter-spacing:.04em}
+:global(html[data-intro="play"]) .experience .tagline{animation-play-state:paused}
+@media(max-width:767px){.tagline{--hw-size:28px}.tagline:lang(zh),.tagline:lang(ja){--hw-size:24px}.tagline figcaption{font-size:10px;margin-top:10px}}
 .invitationNote{translate:0 calc((1 - var(--reveal)) * 26px)}
 .invitationSub{translate:0 calc((1 - var(--reveal)) * -12px)}
 .poster{scale:calc(1 + var(--depth) * .05)}
@@ -62,12 +71,12 @@
   backdrop-filter:blur(2px) saturate(1.8) brightness(1.12);-webkit-backdrop-filter:blur(2px) saturate(1.8) brightness(1.12)}
 .footer .sceneLabel .scenes :global(.lq-thumb[data-pressed]){box-shadow:inset 1px 1px 0 rgba(255,255,255,.95),inset -1px -1px 0 rgba(255,255,255,.4),0 12px 32px rgba(0,0,0,.14)}
 .footer .sceneLabel .scenes :global(.lq-thumb)::before,.footer .sceneLabel .scenes :global(.lq-thumb)::after{display:none}
-.footer .sceneLabel .scenes>button{padding:8px 13px 9px;font-size:12px!important;font-weight:600;letter-spacing:-.005em;text-shadow:0 1px 6px #0006}
+.footer .sceneLabel .scenes>button{padding:8px 10px 9px;font-size:11.5px!important;font-weight:600;letter-spacing:-.005em;text-shadow:0 1px 6px #0006}
 .experience .footer .scenes>button:focus-visible{outline-offset:2px}
 .sceneDot{display:none;width:6px;height:6px;border-radius:50%;background:currentColor}
 .dwell,.dwellPaused{position:absolute;left:12px;right:12px;bottom:3px;height:1.5px;border-radius:2px;background:var(--scene-tint,#fff);opacity:.9;transform-origin:left;animation-name:dwell;animation-timing-function:linear;animation-fill-mode:both}
 .dwellPaused{animation-play-state:paused;opacity:.45}
 @keyframes dwell{from{transform:scaleX(0)}to{transform:scaleX(1)}}
-@media(max-width:1180px){.sceneName{display:none}.sceneDot{display:block}.footer .sceneLabel .scenes>button{padding:9px 9px}.dwell,.dwellPaused{left:5px;right:5px;bottom:2px}}
-@media(max-width:767px){.footer .sceneLabel .scenes>button{padding:8px 6px}}
+@media(max-width:1439px){.sceneName{display:none}.sceneDot{display:block}.footer .sceneLabel .scenes>button{padding:9px 9px}.dwell,.dwellPaused{left:5px;right:5px;bottom:2px}}
+@media(max-width:767px){.footer .sceneLabel .scenes>button{padding:8px 4.5px}}
 @media(prefers-reduced-motion:reduce){.dwell,.dwellPaused{display:none}}

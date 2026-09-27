@@ -2,6 +2,8 @@
 
 import GlassTitle from "@/components/GlassTitle";
 import LiquidSegmented from "@/components/LiquidSegmented";
+import HandwrittenTagline, { type Handwriting } from "@/components/HandwrittenTagline";
+import HANDWRITING from "@/lib/handwriting.generated.json";
 import { DESKTOP_DOWNLOAD, isDesktopApp, titleBarMouseDown } from "@/lib/desktop";
 import WindowControls from "@/components/WindowControls";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
@@ -140,17 +142,17 @@ export default function LandingExperience({ onEnter, onExitStart, exitDuration =
           <span className={styles.eyebrow}><i /> 单张照片 · 三维重建</span>
           {/* 标题用场景所在地的语言，玻璃的色调取自场景的主光 */}
           <GlassTitle lines={scene.title.lines} lang={scene.title.lang} tint={scene.tint} luma={scene.luma} />
-          <p>拍下的那一刻，从此可以走进去。</p>
+          {/* 一句写这个地方的诗，用当地语言，一笔一划手写出来；墨色按背景深浅换 */}
+          <HandwrittenTagline className={styles.tagline} data={(HANDWRITING as Record<string, Handwriting>)[scene.id]} ink={scene.ink} halo={scene.halo} delay={420}
+            hold={status === "loading"} />
           </div>
         </div>
 
         <div className={styles.invitation} aria-hidden={reveal < .5}>
-          <p className={`${styles.invitationNote} ${styles.sceneCopy}`} data-scene-copy="invitation">{scene.caption}</p>
           <button className={styles.build} onClick={enter} onPointerEnter={restoreCopy} onFocus={restoreCopy} disabled={reveal < .5} tabIndex={reveal < .5 ? -1 : 0} aria-label="开始创作，进入 Pixel Reconstruction 工作室">
             <span className={styles.letters} aria-hidden="true">{"开始创作".split("").map((character, index) => <span key={character} style={{ "--letter": index } as CSSProperties}>{character}</span>)}</span>
             <span className={styles.buildArrow} aria-hidden="true">↗</span>
           </button>
-          <p className={`${styles.invitationSub} ${styles.sceneCopy}`} data-scene-copy="invitation">你的下一张照片，同样可以。</p>
         </div>
 
         <footer className={styles.footer}>

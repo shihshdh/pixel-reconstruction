@@ -242,9 +242,9 @@ export default function GlassTitle({ lines, lang, tint = "#ffffff", luma = .15, 
   const displace = layout ? -Math.round(layout.size * .9) : -60;
   // 色散：边缘处位移约 12–18px，蓝通道多走约 7%，与红通道相差约 1px
   const dispersion = [1, 1.035, 1.07];
-  // 背景越亮，玻璃提亮越少（亮背景上再提亮，字形就糊成一片白）
+  // 背景越亮，玻璃提亮越少；很亮的背景（白天的城市、阳光下的海）上变成略带烟色的玻璃，字形才从背景里分出来
   const dim = Math.max(0, Math.min(1, (luma - .12) / .3));
-  const lift = (1.4 - dim * .26).toFixed(2);
+  const lift = (1.4 - dim * .55).toFixed(2);
   const frost = (blur * .28).toFixed(1);
   const backdrop = refract
     ? `url(#gt-r-${id}) blur(calc(${frost}px + var(--gt-b) * 1px)) saturate(1.55) brightness(${lift})`
