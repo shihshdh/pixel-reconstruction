@@ -150,14 +150,18 @@ def ark_edit(image, prompt, api_key="", model=""):
                                      json={**payload, "model": name}, timeout=240)
         except requests.RequestException:
             raise HTTPException(502, "修图服务暂不可用，请稍后重试。")
-        if response.status_code in (403, 404) and index + 1 < len(candidates):
-            continue  # Model not enabled on this account: try the next one.
+        try:
+            error = {} if response.ok else response.json().get("error", {})
+        except ValueError:
+            error = {}
+        code = str(error.get("code", ""))
+        # Model not enabled, or its usage cap reached ("Safe Experience Mode"
+        # pauses the model): try the next one.
+        if (response.status_code in (403, 404) or code == "SetLimitExceeded") and index + 1 < len(candidates):
+            continue
         if not response.ok:
-            try:
-                error = response.json().get("error", {})
-            except ValueError:
-                error = {}
-            code = str(error.get("code", ""))
+            if code == "SetLimitExceeded":
+                raise HTTPException(429, f"豆包模型 {name} 已达到账号设置的用量上限（安全体验模式），请在火山方舟控制台的开通管理里调整后重试。")
             if response.status_code in (403, 404):
                 raise HTTPException(400, f"这个豆包账号没有开通模型 {name}，请在火山方舟控制台开通后重试。")
             if response.status_code == 401:
@@ -254,6 +258,7 @@ def locate_original(generated, original, box):
 
 def protected_outpaint(original, ratio, prompt, api_key="", model=""):
     """Keep original content by compositing, independently of model compliance.
+    Returns (jpeg bytes, whether the original pixels were pasted back).
 
     The model only supplies the outer canvas. We find where it actually drew
     the photo, rescale the whole result so that spot matches the original's
@@ -263,6 +268,11 @@ def protected_outpaint(original, ratio, prompt, api_key="", model=""):
 
     Because the model enlarges the photo, the canvas is padded ~15% more than
     asked and the result cropped back to the requested margin around it.
+
+    Sometimes the model re-lays out the whole scene instead (objects move).
+    No placement lines it up with the original then, and pasting duplicates
+    palms, cars, suns across the seam, so the model's own full frame, which
+    is coherent, is returned untouched.
     """
     from PIL import ImageStat
     padded = min(.6, (1.15 * (1 + 2 * ratio) - 1) / 2)
@@ -273,7 +283,12 @@ def protected_outpaint(original, ratio, prompt, api_key="", model=""):
         output = generated.convert("RGB").resize(size, Image.Resampling.LANCZOS)
     nominal = ((size[0] - original.width) / 2, (size[1] - original.height) / 2, original.width, original.height)
     found, match = locate_original(output, original, nominal)
-    x, y, w, h = found or nominal
+    if found is not None:
+        x, y, w, h = found
+        redrawn = output.crop((round(x), round(y), round(x + w), round(y + h))).resize(original.size, Image.Resampling.BILINEAR)
+    if found is None or seam_difference(redrawn, original) > 16:
+        return expanded, False
+    x, y, w, h = found
     scale = original.width / w
     if abs(scale - 1) > 1e-3:
         output = output.resize((round(size[0] * scale), round(size[1] * scale)), Image.Resampling.LANCZOS)
@@ -303,7 +318,26 @@ def protected_outpaint(original, ratio, prompt, api_key="", model=""):
     output.paste(original, (left, top), mask)
     buffer = io.BytesIO()
     output.save(buffer, "JPEG", quality=95, subsampling=0)
-    return buffer.getvalue()
+    return buffer.getvalue(), True
+
+
+def seam_difference(redrawn, original):
+    """Mean grey difference (0–255) in the outer 8% band where the seam falls.
+
+    Measured on Seedream 5.0 Pro outputs: seamless composites were ≤10,
+    ones that ghosted after pasting were ≥28.
+    """
+    from PIL import ImageChops, ImageStat
+    size = (512, max(1, round(512 * original.height / original.width)))
+    a = original.convert("L").resize(size, Image.Resampling.BILINEAR)
+    b = redrawn.convert("L").resize(size, Image.Resampling.BILINEAR)
+    difference = ImageChops.difference(a, b)
+    k = round(min(size) * .08)
+    w, h = size
+    strips = [(0, 0, w, k), (0, h - k, w, h), (0, k, k, h - k), (w - k, k, w, h - k)]
+    total = sum(ImageStat.Stat(difference.crop(s)).sum[0] for s in strips)
+    area = sum((s[2] - s[0]) * (s[3] - s[1]) for s in strips)
+    return total / area
 
 
 def create_app():
@@ -382,7 +416,7 @@ def create_app():
             if enhance:
                 admission(call_id, job_id, "edits")
                 source = "edit_" + uuid.uuid4().hex + ".jpg"
-                (directory / source).write_bytes(protected_outpaint(normalized, .25, protect_prompt(ENHANCE_PROMPT)))
+                (directory / source).write_bytes(protected_outpaint(normalized, .25, protect_prompt(ENHANCE_PROMPT))[0])
             dispatch(call_id=call_id, job_id=job_id, source=source,
                      render_video=render_video, enhanced=enhance)
         except Exception as error:
@@ -525,11 +559,11 @@ def create_app():
             incoming = original.convert("RGB")
         output = "edit_" + uuid.uuid4().hex + ".jpg"
         # User credentials remain in request memory, never in task state or files.
-        data = protected_outpaint(incoming, pad, prompt, api_key, model) if pad else ark_edit(incoming, prompt, api_key, model)
+        data, preserved = protected_outpaint(incoming, pad, prompt, api_key, model) if pad else (ark_edit(incoming, prompt, api_key, model), False)
         (directory / output).write_bytes(data)
         urls = get_urls(job_id, [output])
         return {"image": output, "file_url": urls[output], "file_urls": urls,
-                **({"subject_preserved": True} if pad else {})}
+                **({"subject_preserved": preserved} if pad else {})}
 
     @app.post("/rerender")
     def rerender(payload: dict = Body(...), job_token: str = Header(default="", alias="X-Ruhua-Token")):

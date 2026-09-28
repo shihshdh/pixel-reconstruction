@@ -4,7 +4,7 @@ const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
 const ts = require('typescript');
-const api = process.env.BEAM_API_URL || 'https://ruhua-api-aa5d4d3-v17.app.beam.cloud';
+const api = process.env.BEAM_API_URL || 'https://ruhua-api-aa5d4d3-v20.app.beam.cloud';
 const site = process.env.TEST_URL || 'https://gausssharp.netlify.app';
 const report = { requests: [] };
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');

@@ -217,7 +217,7 @@ export async function checkStatus(callId: string, base = getBase()): Promise<Sta
   return result;
 }
 export async function editImage(jobId: string, prompt: string, padRatio = 0, base = "", history: string[] = [], apiBase = getBase(), doubao?: { apiKey: string; model?: string }, strength: 'gentle' | 'balanced' = 'gentle') {
-  const result = await request<{ image: string; file_url?: string; subject_preserved?: boolean }>("/edit", { method: "POST", headers: { "Content-Type": "application/json", ...jobHeaders(jobId) }, body: JSON.stringify({ job_id: jobId, prompt, pad_ratio: padRatio, base, history, edit_strength: strength, ...(doubao?.apiKey.trim() ? { ark_api_key: doubao.apiKey.trim(), ark_model: doubao.model?.trim() || undefined } : {}) }) }, apiBase, 240000);
+  const result = await request<{ image: string; file_url?: string; subject_preserved?: boolean }>("/edit", { method: "POST", headers: { "Content-Type": "application/json", ...jobHeaders(jobId) }, body: JSON.stringify({ job_id: jobId, prompt, pad_ratio: padRatio, base, history, edit_strength: strength, ...(doubao?.apiKey.trim() ? { ark_api_key: doubao.apiKey.trim(), ark_model: doubao.model?.trim() || undefined } : {}) }) }, apiBase, 300000);
   if (result.file_url) registerJobAccess(jobId, undefined, { [result.image]: result.file_url });
   return result;
 }
