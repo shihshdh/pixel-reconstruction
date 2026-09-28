@@ -168,22 +168,22 @@
         }
       ]
     },
-    "shibuya": {
+    "yozakura": {
       "sourceSplats": 1179648,
       "compressionLevel": 1,
       "seed": 9131,
       "variants": [
         {
-          "name": "shibuya.ksplat",
+          "name": "yozakura.ksplat",
           "sampledSplats": 826039,
-          "bytes": 20138652,
+          "bytes": 19838036,
           "fraction": 0.7,
           "scale": 1.12
         },
         {
-          "name": "shibuya-lo.ksplat",
+          "name": "yozakura-lo.ksplat",
           "sampledSplats": 472688,
-          "bytes": 11595288,
+          "bytes": 11354948,
           "fraction": 0.4,
           "scale": 1.3
         }

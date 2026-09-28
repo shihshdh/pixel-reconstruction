@@ -34,8 +34,8 @@ KANJIVG_URL = "https://raw.githubusercontent.com/KanjiVG/kanjivg/master/kanji/{:
 # “/” 处换行。
 TAGLINES = {
     "victoria": ("zh-Hant", "我帶著離開的決心，只為更輝煌的歸來", ""),
-    # 芭蕉在江户（今东京）深川的草庵所作：花云如海，钟声是上野来的还是浅草来的
-    "shibuya": ("ja", "花の雲 鐘は上野か 浅草か", "松尾芭蕉"),
+    # 良宽（1758–1831）的辞世句：飘落的樱花，枝头仍在的樱花，也终将是飘落的樱花
+    "yozakura": ("ja", "散る桜 残る桜も 散る桜", "良寛"),
     "kelingking": ("id", "Aku mau hidup seribu tahun lagi", "Chairil Anwar · Aku"),
     "london": ("en-GB", "Earth has not anything to show more fair", "William Wordsworth · Composed upon Westminster Bridge"),
     "louvre": ("fr", "Là, tout n'est qu'ordre et beauté,/Luxe, calme et volupté.", "Charles Baudelaire · L'Invitation au voyage"),

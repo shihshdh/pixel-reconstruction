@@ -38,12 +38,13 @@ export const LANDING_SCENES: LandingScene[] = [
     ink: "#f6f9ff", halo: DARK_HALO,
   },
   {
-    // 玻璃色调取樱色：诗句是芭蕉写江户（东京）的“花の雲”
-    id: "shibuya", name: "涩谷", place: "日本 · 东京",
-    alt: "从涩谷高处俯瞰东京：代代木公园的森林、体育馆与远处的新宿高楼",
-    ...WIDE, reach: 7, focus: 60, version: "shibuya-1",
-    title: { lang: "ja", lines: ["一枚の写真、", "ひとつの世界。"] }, tint: "#ffb3c7", luma: .34,
-    ink: "#fff5f8", halo: DARK_HALO,
+    // 雨夜寺院前的一棵樱花，诗句是良宽的“散る桜 残る桜も 散る桜”。玻璃色调取花冠中间调的暖樱色
+    // （过曝的花心偏白，不取）；照片与精灵坠崖同为 1586×992、无 EXIF，内参相同
+    id: "yozakura", name: "夜樱", place: "日本 · 寺前夜樱",
+    alt: "雨夜里寺院前的一棵樱花树，灯光照亮满树花朵，湿漉漉的地面落满花瓣，屋檐下亮着自动售货机",
+    width: 1586, height: 992, fy: 1297.0862, reach: 1.3, focus: 7, version: "yozakura-1",
+    title: { lang: "ja", lines: ["一枚の写真、", "ひとつの世界。"] }, tint: "#f7a99c", luma: .131,
+    ink: "#fff1ec", halo: DARK_HALO,
   },
   {
     id: "kelingking", name: "精灵坠崖", place: "印尼 · 佩尼达岛",
