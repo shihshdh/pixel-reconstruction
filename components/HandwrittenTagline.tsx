@@ -136,7 +136,8 @@ export default function HandwrittenTagline({ data, ink, halo, hold = false, dela
         </g>)}
       </g>
     </svg>
-    <figcaption style={{ color, opacity: written ? .88 : 0, translate: written ? "0 0" : "0 4px", transition: "opacity .7s ease, translate .7s cubic-bezier(.16,1,.3,1)",
-      textShadow: `0 0 2px ${glow}, 0 1px 8px ${glow}` }}>{d.source}</figcaption>
+    {/* 没有出处的句子（香港那句是作者自己写的）不留空白的署名行 */}
+    {d.source && <figcaption style={{ color, opacity: written ? .88 : 0, translate: written ? "0 0" : "0 4px", transition: "opacity .7s ease, translate .7s cubic-bezier(.16,1,.3,1)",
+      textShadow: `0 0 2px ${glow}, 0 1px 8px ${glow}` }}>{d.source}</figcaption>}
   </figure>;
 }

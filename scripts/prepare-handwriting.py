@@ -30,9 +30,10 @@ HANZI_URL = "https://cdn.jsdelivr.net/npm/hanzi-writer-data@2.0/{}.json"
 KANJIVG_URL = "https://raw.githubusercontent.com/KanjiVG/kanjivg/master/kanji/{:05x}.svg"
 
 # 与 lib/landing-scenes.ts 的场景 id 对应。每个场景一句写这个地方的诗，用当地语言；不知道在哪的场景用英文。
-# 都是公有领域的作品（作者去世超过 70 年、或 1929 年前发表）。“/” 处换行。
+# 都是公有领域的作品（作者去世超过 70 年、或 1929 年前发表）；香港一句是作者自己写的，不署名（来源留空）。
+# “/” 处换行。
 TAGLINES = {
-    "victoria": ("zh-Hant", "會當凌絕頂，一覽眾山小。", "杜甫〈望嶽〉"),
+    "victoria": ("zh-Hant", "我帶著離開的決心，只為更輝煌的歸來", ""),
     # 芭蕉在江户（今东京）深川的草庵所作：花云如海，钟声是上野来的还是浅草来的
     "shibuya": ("ja", "花の雲 鐘は上野か 浅草か", "松尾芭蕉"),
     "kelingking": ("id", "Aku mau hidup seribu tahun lagi", "Chairil Anwar · Aku"),

@@ -1566,7 +1566,24 @@ export default function App() {
   // 放在开屏时和展示页抢显卡，实测展示页帧率减半。离开展示页之后才用得到它；
   // 这期间提交的照片会等它启动（见 CreatePage），不会悄悄改交云端。
   const [engineWanted, setEngineWanted] = useState(false);
-  useEffect(() => { if (splashDone) setEngineWanted(true); }, [splashDone]);
+  // 进入主界面后错峰唤醒：转场（约 1 秒）结束、画面静下来之后，在浏览器空闲时先唤醒鲸鱼娘
+  // （Live2D 模型解析、纹理解码与上传，实测首帧约 80ms），再晚一点启动本机引擎（起 Python、读权重）。
+  // 原来这些都在转场结束的同一刻开始，主界面刚出现就连着卡几帧。
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    if (!splashDone) { setSettled(false); return; }
+    let idle = 0;
+    const timer = setTimeout(() => {
+      const done = () => setSettled(true);
+      if ("requestIdleCallback" in window) idle = requestIdleCallback(done, { timeout: 1500 }); else done();
+    }, 700);
+    return () => { clearTimeout(timer); if (idle) cancelIdleCallback(idle); };
+  }, [splashDone]);
+  useEffect(() => {
+    if (!settled) return;
+    const timer = setTimeout(() => setEngineWanted(true), 1200);
+    return () => clearTimeout(timer);
+  }, [settled]);
   useEffect(() => engineWanted ? watchLocalEngine(setEngine) : undefined, [engineWanted]);
   // 大窗口、全屏时界面整体等比放大（见 lib/ui-scale.ts）
   useEffect(() => {
@@ -1713,7 +1730,7 @@ export default function App() {
         {page === "gallery" && <GalleryPage setPage={navigate} onOpen={openGallery} onDelete={id => { if (result?.gallery_id === id) setResult(null); }} />}
       </div>
     </div>
-    {assist && <WhaleCompanion page={page} active={splashDone} visionEnabled={assistVision} onNavigate={navigate} />}
+    {assist && <WhaleCompanion page={page} active={splashDone && settled} visionEnabled={assistVision} onNavigate={navigate} />}
   </div>;
 }
 

@@ -68,7 +68,31 @@ export function gpuName(): string {
   return cachedGpu;
 }
 
+/**
+ * 按机器特调的构建：NEXT_PUBLIC_DEVICE_PROFILE 在构建时写入，公开发布的版本里为空。
+ * "yaoshi-275hx-5070ti"：机械革命耀世（Core Ultra 9 275HX + RTX 5070 Ti 笔记本，2560×1600 300Hz），
+ * 独显、核显（集显模式）都固定用极致档。
+ */
+export const DEVICE_PROFILE = process.env.NEXT_PUBLIC_DEVICE_PROFILE || "";
+export const PERSONAL_BUILD = DEVICE_PROFILE === "yaoshi-275hx-5070ti";
+
+/** 正在用核显渲染（Intel 核显、AMD 核显）。Intel Arc 独显不算。 */
+export function integratedGpu(): boolean {
+  const gpu = gpuName().toLowerCase();
+  if (!gpu || hasDiscreteGpu()) return false;
+  return /intel|radeon\(tm\) graphics|radeon graphics|\d{3}m\b/.test(gpu);
+}
+
+/**
+ * 核显上跑极致档：画质不降，改用“渐进式精修”——镜头移动的那几帧按原生分辨率画，一停下就按满档
+ * 超采样补画一帧；光追背景保留满档超采样、帧率降到 30fps。静止时的画面与独显完全一样。
+ */
+export function progressiveUltra(profile: PerfProfile = perfProfile()): boolean {
+  return profile.tier === "ultra" && integratedGpu();
+}
+
 export function detectTier(): PerfTier {
+  if (PERSONAL_BUILD) return "ultra";
   const gpu = gpuName().toLowerCase();
   const cores = navigator.hardwareConcurrency || 4;
   const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory || 8;

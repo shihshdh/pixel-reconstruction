@@ -10,7 +10,7 @@
 // 性能与体验：帧率跟随屏幕刷新率（最高 120fps）；持续掉帧依次关超采样、降到 30fps、降分辨率，仍不够就停在静帧。
 // 页面隐藏、进入 3D 工作室（active=false）时停止，让显卡专心渲染场景；减少动态效果时只画一帧。
 import { useEffect, useRef } from "react";
-import { measureRefreshRate } from "@/lib/perf";
+import { integratedGpu, measureRefreshRate, PERSONAL_BUILD, progressiveUltra } from "@/lib/perf";
 
 const VERTEX = `
 attribute vec2 a;
@@ -198,11 +198,18 @@ export default function RayTracedBackdrop({ theme, active }: { theme: string; ac
     // 帧间隔均匀不抖。画质阶梯：满像素比 4× 超采样 → 1× → 降到 30fps → 0.6 倍像素比 → 静帧。
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     let divisor = 2, fastFps = 30;
-    const ladder = [{ scale: dpr, ss: 4, fast: true }, { scale: dpr, ss: 1, fast: true }, { scale: dpr, ss: 1, fast: false }, { scale: dpr * .6, ss: 1, fast: false }];
+    // 核显上的极致档：先保住 4× 超采样、帧率降到 30fps（缓慢流动的环境背景，30fps 看不出差别），
+    // 实在不够再降超采样。独显照旧先保帧率。
+    const ladder = progressiveUltra()
+      ? [{ scale: dpr, ss: 4, fast: false }, { scale: dpr, ss: 1, fast: false }, { scale: dpr * .6, ss: 1, fast: false }]
+      : [{ scale: dpr, ss: 4, fast: true }, { scale: dpr, ss: 1, fast: true }, { scale: dpr, ss: 1, fast: false }, { scale: dpr * .6, ss: 1, fast: false }];
     let level = 0, scale = ladder[0].scale, ticks = 0;
     const fps = () => ladder[level].fast ? fastFps : 30;
     let raf = 0, last = 0, slowSince = 0, frozen = false, disposed = false;
-    void measureRefreshRate().then(hz => { divisor = Math.max(1, Math.ceil(hz / 120)); fastFps = hz / divisor; canvas.dataset.fps = String(Math.round(fastFps)); });
+    // 特调版（lib/perf.ts PERSONAL_BUILD）在独显上上限放到 150fps：300Hz 屏正好二分频
+    const cap = PERSONAL_BUILD && !integratedGpu() ? 150 : 120;
+    // 实测刷新率会有一点点偏差（300Hz 屏量出 303）：分频留 5% 容差，否则 303 / 150 向上取整成了三分频
+    void measureRefreshRate().then(hz => { divisor = Math.max(1, Math.ceil(hz / cap - .05)); fastFps = hz / divisor; canvas.dataset.fps = String(Math.round(fastFps)); });
     const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
     const started = performance.now();
     const frameTimes: number[] = [];
@@ -212,11 +219,15 @@ export default function RayTracedBackdrop({ theme, active }: { theme: string; ac
       if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
       gl.viewport(0, 0, w, h);
     };
+    // 背景色只随主题变：缓存起来，主题切换时（下面的 MutationObserver）再读。原来每帧 getComputedStyle，
+    // 页面上别的样式一变就逼浏览器同步重算样式。
+    let bg = [1, 1, 1];
+    const readBackground = () => { bg = parseColor(getComputedStyle(canvas.parentElement || document.body).getPropertyValue("--bg") || "#ffffff"); };
+    readBackground();
     const draw = (now: number) => {
       resize();
       pointer.x += (pointer.tx - pointer.x) * .04;
       pointer.y += (pointer.ty - pointer.y) * .04;
-      const bg = parseColor(getComputedStyle(canvas.parentElement || document.body).getPropertyValue("--bg") || "#ffffff");
       gl.uniform2f(uR, canvas.width, canvas.height);
       gl.uniform1f(uSS, ladder[level].ss);
       gl.uniform1f(uT, reduced ? 4 : (now - started) / 1000);
@@ -260,12 +271,17 @@ export default function RayTracedBackdrop({ theme, active }: { theme: string; ac
     addEventListener("pointermove", onMove, { passive: true });
     addEventListener("resize", onResize);
     document.addEventListener("visibilitychange", onVisible);
-    const themeObserver = new MutationObserver(() => { if (reduced || frozen) draw(performance.now()); });
+    const themeObserver = new MutationObserver(() => { readBackground(); if (reduced || frozen) draw(performance.now()); });
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     const onLost = (event: Event) => { event.preventDefault(); frozen = true; canvas.style.display = "none"; };
     canvas.addEventListener("webglcontextlost", onLost);
     wake();
+    // 着色器预热：驱动在第一次真正绘制时才编译（实测等显卡十几毫秒）。还没显示时（展示页、透明）先在空闲时
+    // 画一帧，进入主界面、背景淡入的那一刻就不再卡这一下。
+    const warm = () => { if (!disposed && !activeRef.current) { draw(performance.now()); gl.finish(); } };
+    const idle = "requestIdleCallback" in window ? requestIdleCallback(warm, { timeout: 5000 }) : setTimeout(warm, 2000);
     return () => {
+      if ("cancelIdleCallback" in window) cancelIdleCallback(idle as number); else clearTimeout(idle as ReturnType<typeof setTimeout>);
       disposed = true; cancelAnimationFrame(raf);
       removeEventListener("pointermove", onMove); removeEventListener("resize", onResize);
       document.removeEventListener("visibilitychange", onVisible);

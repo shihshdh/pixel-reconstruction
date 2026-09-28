@@ -51,8 +51,12 @@ let injected = false;
 const LIGHT_AZIMUTH = 235, LIGHT_SWING = 28;
 const EXIT_MS = 120, GAP_MS = 60, EXIT_BLUR = 6, EXIT_SCALE = .96;
 
-export default function GlassTitle({ lines, lang, tint = "#ffffff", luma = .15, className, style, label }: {
+export default function GlassTitle({ lines, lang, tint = "#ffffff", luma = .15, className, style, label, lite = false }: {
   lines: string[]; lang?: string; tint?: string; luma?: number; className?: string; style?: CSSProperties; label?: string;
+  /** 背后的画面正在每帧变化、又看不清细节的时候：所在页面转场离开（整页缩放、旋转、淡出，约 0.6 秒），
+      或核显上镜头正在移动。折射照旧，色散暂时合成一次位移——三次位移再合并是整条链里最贵的一段，
+      背景一动就要每帧重算；不到 1px 的色散在这时看不出来。停下后恢复完整色散（只算一次）。 */
+  lite?: boolean;
 }) {
   const id = useId().replace(/[^a-zA-Z0-9]/g, "");
   const rootRef = useRef<HTMLHeadingElement>(null);
@@ -147,11 +151,16 @@ export default function GlassTitle({ lines, lang, tint = "#ffffff", luma = .15, 
     const c = color.current, root = rootRef.current;
     if (!root) return;
     const rgb = c.from.map((v, i) => v + (c.to[i] - v) * c.mix.value);
-    // 玻璃的色调：白色里掺 45% 场景主光，整体 14% 不透明——看得出颜色，又不像彩色塑料
-    const glass = rgb.map(v => Math.round(v * .45 + 255 * .55));
-    if (glassRef.current) glassRef.current.style.backgroundColor = `rgba(${glass.join(",")},.14)`;
-    // 背光面的暗部也带一点同样的颜色，字身就有了“有色玻璃”的体积
-    shadeRef.current?.setAttribute("lighting-color", `rgb(${rgb.map(v => Math.round(v * .5 + 255 * .5)).join(",")})`);
+    const mix = (k: number) => rgb.map(v => Math.round(v * k + 255 * (1 - k))).join(",");
+    // 玻璃的色调：场景主光占 85%，整体 28% 不透明——每个场景的标题是一块明显的有色玻璃，换场景时
+    // 整个标题跟着变色（原来 45%、14% 太淡，九个场景几乎一个颜色）
+    if (glassRef.current) glassRef.current.style.backgroundColor = `rgba(${mix(.9)},.42)`;
+    // 背光面的暗部带同样的颜色，字身就有了“有色玻璃”的体积
+    shadeRef.current?.setAttribute("lighting-color", `rgb(${mix(.8)})`);
+    // 镜面边缘光、字身高光也带近一半环境色，换场景时光跟着变色
+    const rim = `rgb(${mix(.45)})`;
+    lights.current.key?.parentElement?.setAttribute("lighting-color", rim);
+    lights.current.body?.parentElement?.setAttribute("lighting-color", rim);
     root.style.setProperty("--gt-tint", rgb.map(Math.round).join(","));
   };
   useEffect(() => {
@@ -243,6 +252,9 @@ export default function GlassTitle({ lines, lang, tint = "#ffffff", luma = .15, 
     `<svg xmlns="http://www.w3.org/2000/svg" width="${layout.w}" height="${layout.h}"><rect width="100%" height="100%" fill="black"/>` +
     layout.lines.map(l => `<text x="${l.x}" y="${l.y}" fill="white" style="font-family:${layout.font.replace(/"/g, "'")};font-size:${layout.size}px;font-weight:${layout.weight};letter-spacing:${layout.spacing};white-space:pre">${escapeXml(l.text)}</text>`).join("") + "</svg>") : "";
   const blur = layout ? Math.max(3, layout.size * .06) : 4;
+  // 折射用的法线图只取决于字形：排版确定后在画布上算一次（与滤镜同样的模糊与 Sobel），
+  // 滤镜里直接引用。原来整条链（栅格化字形 → 模糊 → 两次卷积）每一帧随背景重算，实测展示页只有约 27fps。
+  const normal = useNormalMap(refract ? shape : "", layout?.w || 0, layout?.h || 0, blur);
   const bevel = layout ? Math.max(1.5, layout.size * .028) : 2;
   const displace = layout ? -Math.round(layout.size * .9) : -60;
   // 色散：边缘处位移约 12–18px，蓝通道多走约 7%，与红通道相差约 1px
@@ -253,9 +265,9 @@ export default function GlassTitle({ lines, lang, tint = "#ffffff", luma = .15, 
   const frost = (blur * .28).toFixed(1);
   const backdrop = !refract
     ? `blur(calc(6px + var(--gt-b) * 1px)) saturate(1.6) brightness(${lift})`
-    : swapping
+    : swapping || !normal
     ? `blur(calc(${frost}px + var(--gt-b) * 1px)) saturate(1.55) brightness(${lift})`
-    : `url(#gt-r-${id}) blur(calc(${frost}px + var(--gt-b) * 1px)) saturate(1.55) brightness(${lift})`;
+    : `url(#gt-r${lite ? "1" : ""}-${id}) blur(calc(${frost}px + var(--gt-b) * 1px)) saturate(1.55) brightness(${lift})`;
   const glyphs = shown.lines.map((line, i) => <span key={i}>{line}{i < shown.lines.length - 1 && <br />}</span>);
 
   return <h1 ref={rootRef} className={`gt ${className || ""}`} style={style} lang={shown.lang} data-refract={refract || undefined}
@@ -269,14 +281,8 @@ export default function GlassTitle({ lines, lang, tint = "#ffffff", luma = .15, 
       <defs>
         <clipPath id={`gt-c-${id}`} clipPathUnits="userSpaceOnUse">{text("#000")}</clipPath>
         <filter id={`gt-r-${id}`} x="0" y="0" width={layout.w} height={layout.h} filterUnits="userSpaceOnUse" primitiveUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
-          <feImage href={shape} x="0" y="0" width={layout.w} height={layout.h} preserveAspectRatio="none" result="shape" />
-          <feGaussianBlur in="shape" stdDeviation={blur} result="height" />
-          {/* Sobel 梯度，0.5 为零点 */}
-          <feConvolveMatrix in="height" order="3" kernelMatrix="-1 0 1 -2 0 2 -1 0 1" divisor="1" bias="0.5" edgeMode="duplicate" preserveAlpha="true" result="dx" />
-          <feConvolveMatrix in="height" order="3" kernelMatrix="-1 -2 -1 0 0 0 1 2 1" divisor="1" bias="0.5" edgeMode="duplicate" preserveAlpha="true" result="dy" />
-          <feColorMatrix in="dx" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0 1" result="rx" />
-          <feColorMatrix in="dy" type="matrix" values="0 0 0 0 0  1 0 0 0 0  0 0 0 0 0  0 0 0 0 1" result="gy" />
-          <feComposite in="rx" in2="gy" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" result="normal" />
+          {/* 法线图（R = x 梯度，G = y 梯度，0.5 为零点），见 useNormalMap */}
+          {normal && <feImage href={normal} x="0" y="0" width={layout.w} height={layout.h} preserveAspectRatio="none" result="normal" />}
           {/* 三个通道各折射一次，位移量略有差别，边缘出现不超过约 1px 的色散 */}
           {dispersion.map((k, i) => <feDisplacementMap key={i} in="SourceGraphic" in2="normal" scale={Math.round(displace * k)} xChannelSelector="R" yChannelSelector="G" result={`d${i}`} />)}
           <feColorMatrix in="d0" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="cr" />
@@ -284,6 +290,11 @@ export default function GlassTitle({ lines, lang, tint = "#ffffff", luma = .15, 
           <feColorMatrix in="d2" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 0 0" result="cb" />
           <feComposite in="cr" in2="cg" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" result="crg" />
           <feComposite in="crg" in2="cb" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" />
+        </filter>
+        {/* 转场飞出时用：同一张法线图，只取中间通道的位移量折射一次 */}
+        <filter id={`gt-r1-${id}`} x="0" y="0" width={layout.w} height={layout.h} filterUnits="userSpaceOnUse" primitiveUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+          {normal && <feImage href={normal} x="0" y="0" width={layout.w} height={layout.h} preserveAspectRatio="none" result="normal" />}
+          <feDisplacementMap in="SourceGraphic" in2="normal" scale={Math.round(displace * dispersion[1])} xChannelSelector="R" yChannelSelector="G" />
         </filter>
         {/* 接触投影：0 10 30 的柔和阴影，只保留字形外面的部分 */}
         <filter id={`gt-sh-${id}`} x="-10%" y="-10%" width="120%" height="140%" colorInterpolationFilters="sRGB">
@@ -329,6 +340,62 @@ export default function GlassTitle({ lines, lang, tint = "#ffffff", luma = .15, 
       </defs>
     </svg>}
   </h1>;
+}
+
+// 法线图由 Chromium 自己用原来那条滤镜链算：字形（白字黑底）→ 高斯模糊 → Sobel 求 x、y 梯度（0.5 为零点），
+// 放进 R、G 通道。在画布上按设备像素跑一次（ctx.filter 引用同样的 SVG 滤镜，模糊半径乘以像素比），
+// 和逐帧在 backdrop-filter 里算的结果逐像素一致（实测与原版截图最大差 5/255，同一版本两次截图也有 4）。
+// 算好之前返回空串，折射暂时退成普通磨砂（换语言时本来就是磨砂，看不出来）。
+const SVG_NS = "http://www.w3.org/2000/svg";
+function useNormalMap(shape: string, w: number, h: number, blur: number) {
+  const [url, setUrl] = useState("");
+  useEffect(() => {
+    if (!shape || !w || !h) { setUrl(""); return; }
+    let cancelled = false;
+    setUrl("");
+    const image = new Image();
+    image.src = shape;
+    image.decode().then(() => {
+      if (cancelled) return;
+      const dpr = window.devicePixelRatio || 1;
+      const W = Math.max(1, Math.round(w * dpr)), H = Math.max(1, Math.round(h * dpr));
+      const id = "gt-normal-" + Math.random().toString(36).slice(2);
+      const svg = document.createElementNS(SVG_NS, "svg");
+      svg.setAttribute("width", "0"); svg.setAttribute("height", "0"); svg.setAttribute("aria-hidden", "true");
+      svg.style.position = "absolute";
+      const node = (tag: string, attrs: Record<string, string | number>) => {
+        const el = document.createElementNS(SVG_NS, tag);
+        for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
+        return el;
+      };
+      const filter = node("filter", { id, x: 0, y: 0, width: W, height: H, filterUnits: "userSpaceOnUse", primitiveUnits: "userSpaceOnUse", "color-interpolation-filters": "sRGB" });
+      filter.append(
+        node("feGaussianBlur", { in: "SourceGraphic", stdDeviation: blur * dpr, result: "height" }),
+        node("feConvolveMatrix", { in: "height", order: 3, kernelMatrix: "-1 0 1 -2 0 2 -1 0 1", divisor: 1, bias: .5, edgeMode: "duplicate", preserveAlpha: "true", result: "dx" }),
+        node("feConvolveMatrix", { in: "height", order: 3, kernelMatrix: "-1 -2 -1 0 0 0 1 2 1", divisor: 1, bias: .5, edgeMode: "duplicate", preserveAlpha: "true", result: "dy" }),
+        node("feColorMatrix", { in: "dx", type: "matrix", values: "1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0 1", result: "rx" }),
+        node("feColorMatrix", { in: "dy", type: "matrix", values: "0 0 0 0 0  1 0 0 0 0  0 0 0 0 0  0 0 0 0 1", result: "gy" }),
+        node("feComposite", { in: "rx", in2: "gy", operator: "arithmetic", k1: 0, k2: 1, k3: 1, k4: 0 }),
+      );
+      svg.append(filter);
+      document.body.append(svg);
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = W; canvas.height = H;
+        const g = canvas.getContext("2d")!;
+        g.filter = `url(#${id})`;
+        g.drawImage(image, 0, 0, W, H);
+        g.filter = "none";
+        setUrl(canvas.toDataURL("image/png"));
+      } catch {
+        // 画布不支持引用 SVG 滤镜：保持普通磨砂
+      } finally {
+        svg.remove();
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [shape, w, h, blur]);
+  return url;
 }
 
 type RGB = [number, number, number];

@@ -36,10 +36,14 @@ export default function LandingExperience({ onEnter, onExitStart, exitDuration =
   const scene = LANDING_SCENES[sceneIndex];
   // 第一次之后的场景切换：新场景晚一点开始载入，先让标题换语言的动画流畅跑完
   const switched = useRef(false);
+  // 核显极致档：镜头移动期间标题玻璃省掉色散（见 GlassTitle 的 lite），停下后恢复
+  const [sceneMoving, setSceneMoving] = useState(false);
+  const sceneMotion = useCallback((moving: boolean) => setSceneMoving(moving), []);
   const showScene = useCallback((index: number) => {
     switched.current = true;
     markCopyBusy();
     setSceneIndex(index);
+    setSceneMoving(false);
     setLoad({ phase: "download", percent: null });
     setStatus("loading");
   }, []);
@@ -145,7 +149,7 @@ export default function LandingExperience({ onEnter, onExitStart, exitDuration =
               className={`${styles.poster} ${index !== sceneIndex ? styles.posterHidden : ""}`}
               src={`/scene/${item.id}.jpg`} alt={index === sceneIndex ? item.alt : ""} aria-hidden={index !== sceneIndex} fetchPriority={index === sceneIndex ? "high" : "low"} />;
           })}
-          <div className={`${styles.splats} ${status === "ready" ? styles.splatsReady : ""}`}><LandingSplat key={`${scene.id}-${sceneAttempt}`} startDelay={switched.current ? 480 : 0} scene={scene} depth={depth} reducedMotion={reduced} onStatus={sceneStatus} onInteraction={exploreScene} onProgress={sceneProgress} /></div>
+          <div className={`${styles.splats} ${status === "ready" ? styles.splatsReady : ""}`}><LandingSplat key={`${scene.id}-${sceneAttempt}`} startDelay={switched.current ? 480 : 0} scene={scene} depth={depth} reducedMotion={reduced} onStatus={sceneStatus} onInteraction={exploreScene} onProgress={sceneProgress} onMotion={sceneMotion} /></div>
         </div>
         <div className={styles.shade} aria-hidden="true" />
 
@@ -165,7 +169,7 @@ export default function LandingExperience({ onEnter, onExitStart, exitDuration =
           <div className={styles.sceneCopy} data-scene-copy="intro">
           <span className={styles.eyebrow}><i /> 单张照片 · 三维重建</span>
           {/* 标题用场景所在地的语言，玻璃的色调取自场景的主光 */}
-          <GlassTitle lines={scene.title.lines} lang={scene.title.lang} tint={scene.tint} luma={scene.luma} />
+          <GlassTitle lines={scene.title.lines} lang={scene.title.lang} tint={scene.tint} luma={scene.luma} lite={leaving || sceneMoving} />
           {/* 一句写这个地方的诗，用当地语言，一笔一划手写出来；墨色按背景深浅换 */}
           <HandwrittenTagline className={styles.tagline} data={(HANDWRITING as Record<string, Handwriting>)[scene.id]} ink={scene.ink} halo={scene.halo} delay={420}
             hold={status === "loading"} onWritten={taglineWritten} />

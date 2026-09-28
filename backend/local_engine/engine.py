@@ -43,7 +43,7 @@ ALLOWED_ORIGINS = {
     "http://localhost:3000", "http://127.0.0.1:3000",
 }
 CHECKPOINT_NAME = "sharp_2572gikvuh.pt"
-# 实测 RTX 5070 Ti 笔记本（12GB）推理时显存占用约 3.6GB（含 PyTorch 缓存），留出余量。
+# 推理显存见 vram.py：权重分段上显卡，缓存池峰值约 5.7GB，8GB 显卡也够用。
 MIN_MEMORY_GB = 6
 CHECKPOINT_URL = "https://ml-site.cdn-apple.com/models/sharp/" + CHECKPOINT_NAME
 
@@ -77,6 +77,7 @@ class Engine:
         self.memory_gb = 0.0
         self.load_seconds = 0.0
         self.predictor = None
+        self.vram_mode = ""
         threading.Thread(target=self._run, name="gpu-worker", daemon=True).start()
 
     # ---- 模型 ----
@@ -115,7 +116,13 @@ class Engine:
         predictor = self.predict.create_predictor(self.predict.PredictorParams())
         predictor.load_state_dict(state)
         del state
-        self.predictor = predictor.eval().to("cuda")
+        # 显存管理见 vram.py：权重分段上显卡，大模块之间归还缓存池的空块。
+        # PIXEL_VRAM_MODE=staged/resident 可以强制指定（测试用）。
+        import vram
+        forced = os.environ.get("PIXEL_VRAM_MODE", "")
+        self.predictor = predictor.eval()
+        self.vram_mode = vram.place(self.predictor, torch, self.memory_gb,
+                                    staged={"staged": True, "resident": False}.get(forced))
         # 预热：第一次推理要载入 CUDA 内核、选卷积算法，实测多花约 15–30 秒。
         # 在后台用一张空白图先跑一遍，用户的第一张照片就是正常速度。预热期间提交的任务照常排队。
         self.message = "正在预热显卡"
@@ -164,6 +171,7 @@ class Engine:
         started = time.time()
         directory = job_path(job_id)
         seconds = {}
+        torch.cuda.reset_peak_memory_stats()
 
         def stage(phase, label):
             write_state(call_id, "running", job_id=job_id, phase=phase, stage=label, timings=dict(seconds))
@@ -225,7 +233,8 @@ class Engine:
                       predict_seconds=round(predict_seconds, 1), total_seconds=round(time.time() - started, 1),
                       timings=seconds, compute="local",
                       runtime={"device": self.device, "vectorized_ply": self.vectorized_ply,
-                               "torch_version": torch.__version__})
+                               "torch_version": torch.__version__, "vram_mode": self.vram_mode,
+                               "vram_peak_gb": round(torch.cuda.max_memory_reserved() / 2 ** 30, 2)})
         if viewer_name:
             result.update(viewer_file=viewer_name, **preview_stats)
         if warning:

@@ -1,7 +1,7 @@
 "use client";
 
 import { isDesktopApp } from "@/lib/desktop";
-import { perfProfile } from "@/lib/perf";
+import { perfProfile, progressiveUltra } from "@/lib/perf";
 import { useEffect, useRef } from "react";
 import { INTRO_SCENE_START } from "@/lib/intro";
 import { patchSplatBuffer } from "@/lib/splat-perf";
@@ -21,8 +21,10 @@ const PROCESS_MS = 45000; // after download: time allowed for parsing and the fi
 const LOADER_PROCESSING = 1;
 
 /** A real SHARP scene. The photograph remains visible if WebGL or its asset fails. */
-export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onStatus, onInteraction, onProgress, startDelay = 0 }: {
+export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onStatus, onInteraction, onProgress, onMotion, startDelay = 0 }: {
   scene: LandingScene;
+  /** 渐进式精修时（核显极致档）镜头开始、停止移动：标题玻璃据此在移动中临时省掉色散 */
+  onMotion?: (moving: boolean) => void;
   /** 切换场景时先让标题的换场动画（约 0.45 秒）跑完，再开始占主线程的载入 */
   startDelay?: number;
   depth: number;
@@ -36,6 +38,8 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
   const reducedRef = useRef(reducedMotion);
   const interactionRef = useRef(onInteraction);
   const progressRef = useRef(onProgress);
+  const motionRef = useRef(onMotion);
+  motionRef.current = onMotion;
   depthRef.current = depth;
   reducedRef.current = reducedMotion;
   interactionRef.current = onInteraction;
@@ -50,6 +54,7 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
     let frame = 0;
     let viewer: any;
     let renderer: any;
+    const size = { w: mount.offsetWidth || 1, h: mount.offsetHeight || 1 };
     let resize: ResizeObserver | undefined;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let blobUrl = "";
@@ -198,6 +203,10 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
         });
         // 展示页不需要八叉树（只用于拾取与视锥剔除，这里镜头始终看着整个场景）：不建，排序时直接全排。
         // 建树要在主线程上逐个读出八十多万个高斯的中心，客户端里实测卡住主线程 7 秒。
+        // 渲染尺寸：库里每帧好几次读 rootElement.offsetWidth/offsetHeight，标题和诗句每帧都在改样式，
+        // 每读一次都逼浏览器同步重算样式和布局（实测展示页 6 秒累计约 80ms）。改读下面 measure 缓存的
+        // 同一组数值（ResizeObserver 在尺寸变化时更新）。
+        viewer.getRenderDimensions = (out: { x: number; y: number }) => { out.x = size.w; out.y = size.h; };
         const skipSplatTree = () => { if (viewer?.splatMesh) viewer.splatMesh.buildSplatTree = () => Promise.resolve(); };
         skipSplatTree();
         const createSplatMesh = viewer.createSplatMesh?.bind(viewer);
@@ -205,6 +214,7 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
         const measure = () => {
           if (!viewer?.camera || disposed) return;
           const w = mount.clientWidth, h = mount.clientHeight;
+          size.w = mount.offsetWidth; size.h = mount.offsetHeight;
           renderer.setSize(w, h);
           viewer.camera.aspect = w / h;
           // Original SHARP intrinsics of the showcase photo. Preserve more of
@@ -246,7 +256,20 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
         let rung = -1, lastTick = 0;
         const slow: number[] = [];
         const setRung = (next: number) => { rung = next; slow.length = 0; renderer.setPixelRatio(ladder[rung]); measure(); };
-        if (ladder.length > 1) upgradeTimer = setTimeout(() => { if (!disposed) setRung(0); }, 4500);
+        // 核显上的极致档（lib/perf.ts progressiveUltra）：渐进式精修。镜头移动时按原生分辨率画，停下 150ms
+        // 就按满档超采样补画一帧——场景只在变化时才渲染，静止时不花算力，画面与独显完全一样；不再整场景降级。
+        // 改分辨率会清空画布，所以改完立刻在同一帧里画好，不会闪出一帧空白。
+        const progressive = !!desktopProfile && ladder.length > 1 && progressiveUltra(desktopProfile);
+        let sharp = false, sharpAllowed = false, moving = false, lastMove = 0;
+        const setSharp = (next: boolean) => {
+          if (sharp === next) return;
+          sharp = next;
+          renderer.setPixelRatio(next ? fullRatio : startRatio);
+          measure();
+          viewer.update(); viewer.render();
+        };
+        if (progressive) upgradeTimer = setTimeout(() => { sharpAllowed = true; if (!disposed && !moving) setSharp(true); }, 4500);
+        else if (ladder.length > 1) upgradeTimer = setTimeout(() => { if (!disposed) setRung(0); }, 4500);
         const tick = (now: number) => {
           if (disposed) return;
           frame = requestAnimationFrame(tick);
@@ -259,7 +282,18 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
           const x = Math.max(-.68 * r, Math.min(.68 * r, (drag.x * .58 + (reduced ? 0 : -desired.x * .10)) * r));
           const y = Math.max(-.345 * r, Math.min(.345 * r, (drag.y * .30 + (reduced ? 0 : desired.y * .045)) * r));
           const z = reduced ? 0 : depthRef.current * 0.50 * r;
-          if (Math.abs(x - current.x) + Math.abs(y - current.y) + Math.abs(z - current.z) < .00005) return;
+          if (Math.abs(x - current.x) + Math.abs(y - current.y) + Math.abs(z - current.z) < .00005) {
+            if (progressive && moving && now - lastMove > 150) {
+              moving = false;
+              motionRef.current?.(false);
+              if (sharpAllowed) setSharp(true);
+            }
+            return;
+          }
+          if (progressive) {
+            lastMove = now;
+            if (!moving) { moving = true; motionRef.current?.(true); setSharp(false); }
+          }
           current.x += (x - current.x) * 0.065;
           current.y += (y - current.y) * 0.065;
           current.z += (z - current.z) * 0.065;
@@ -271,7 +305,7 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
           viewer.camera.updateProjectionMatrix();
           viewer.forceRenderNextFrame?.();
           // 超采样后镜头移动时持续掉帧：降一级（这个场景内不再升回去）
-          if (rung >= 0 && rung < ladder.length - 1 && delta > 0 && delta < 250) {
+          if (!progressive && rung >= 0 && rung < ladder.length - 1 && delta > 0 && delta < 250) {
             slow.push(delta);
             if (slow.length > 60) slow.shift();
             if (slow.length === 60 && slow.reduce((a, b) => a + b, 0) / 60 > 22) setRung(rung + 1);
@@ -298,11 +332,16 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
       document.documentElement.removeEventListener("pointerleave", reset);
       resize?.disconnect();
       renderer?.domElement.removeEventListener("webglcontextlost", fail);
-      // Viewer disposal is asynchronous; external renderers are owned by this component.
-      Promise.resolve(viewer?.dispose?.()).catch(() => {}).finally(() => {
-        renderer?.dispose();
-        renderer?.domElement.remove();
-      });
+      // 立刻停止渲染、撤下画布；客户端里释放显卡资源（删纹理、缓冲，会同步等显卡）放到空闲时做——
+      // 离开展示页、换场景时正好有动画在跑，当场释放实测卡一帧 30 多毫秒。网页（含手机）显存小，
+      // 新旧两个场景不能同时留着，仍然立即释放。
+      viewer?.stop?.();
+      renderer?.domElement.remove();
+      const release = () => {
+        // Viewer disposal is asynchronous; external renderers are owned by this component.
+        Promise.resolve(viewer?.dispose?.()).catch(() => {}).finally(() => renderer?.dispose());
+      };
+      if (isDesktopApp() && "requestIdleCallback" in window) requestIdleCallback(release, { timeout: 4000 }); else release();
     };
   // 每个场景各自挂载一次（父组件用 key 区分），这里不随场景对象重建
   // eslint-disable-next-line react-hooks/exhaustive-deps
