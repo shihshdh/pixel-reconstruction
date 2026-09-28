@@ -1,5 +1,5 @@
 // Fixed, owned CPU gateway. Never forward arbitrary URLs or cloud credentials.
-const GATEWAY = 'https://ruhua-api-aa5d4d3-v16.app.beam.cloud';
+const GATEWAY = 'https://ruhua-api-aa5d4d3-v17.app.beam.cloud';
 const FILE = /^(original\.jpg|edit_[a-f0-9]{32}\.jpg|scene_[a-f0-9]{32}(?:\.ply|(?:_mobile)?\.splat)|camera_[a-f0-9]{32}\.mp4)$/;
 const PACKED = 'application/vnd.pixel-reconstruction.splat+gzip';
 const PRIVATE_HEADERS = {

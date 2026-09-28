@@ -84,72 +84,223 @@ def private_job(job_id, job_token):
     return get_job(job_id)
 
 
+# Seedream 5.0 Pro first; the rest only cover accounts that have not enabled it.
+# A user-supplied model is used alone, so a typo is reported instead of silently replaced.
+ARK_MODELS = ("doubao-seedream-5-0-pro-260628", "doubao-seedream-5-0-260128",
+              "doubao-seedream-4-5-251128", "doubao-seedream-4-0-250828")
+ARK_URL = "https://ark.cn-beijing.volces.com/api/v3/images/generations"
+# About 2K output (2048² ≈ 4.19M px): inside every listed model's pixel range,
+# including 5.0 Pro's 4.62M ceiling and 4.5's 3.69M floor.
+ARK_OUTPUT_PIXELS = 2048 * 2048
+ARK_INPUT_EDGE = 3072
+_working_model = {}
+
+
 def pad_canvas(image, ratio):
+    """Original centred on a flat neutral canvas.
+
+    A blurred copy of the photo reads to the model as existing content, so it
+    only sharpened the blur and the result looked like a framed picture. Flat
+    grey is unmistakably empty and the prompt names it as the area to fill.
+    """
     width, height = image.size
-    size = (int(width * (1 + 2 * ratio)), int(height * (1 + 2 * ratio)))
-    background = image.resize(size).filter(ImageFilter.GaussianBlur(40))
-    background.paste(image, ((size[0] - width) // 2, (size[1] - height) // 2))
-    return background
+    size = (round(width * (1 + 2 * ratio)), round(height * (1 + 2 * ratio)))
+    canvas = Image.new("RGB", size, (128, 128, 128))
+    canvas.paste(image, ((size[0] - width) // 2, (size[1] - height) // 2))
+    return canvas
+
+
+def output_size(width, height, pixels=ARK_OUTPUT_PIXELS):
+    """Same aspect ratio at about `pixels`, both sides multiples of 16."""
+    scale = (pixels / (width * height)) ** .5
+    return round(width * scale / 16) * 16, round(height * scale / 16) * 16
+
+
+def model_candidates(model):
+    if model:
+        return [model]
+    preferred = os.environ.get("ARK_MODEL", "").strip()
+    return [preferred] + [m for m in ARK_MODELS if m != preferred] if preferred else list(ARK_MODELS)
 
 
 def ark_edit(image, prompt, api_key="", model=""):
     key = api_key or os.environ.get("ARK_API_KEY", "")
     if not key:
         raise HTTPException(503, "修图服务尚未配置。")
-    image.thumbnail((2048, 2048))
-    buffer = io.BytesIO()
-    image.save(buffer, "JPEG", quality=92)
-    payload = {
-        "model": model or os.environ.get("ARK_MODEL", "doubao-seedream-4-0-250828"),
-        "prompt": prompt, "image": "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode(),
-        "size": "2048x2048", "response_format": "b64_json",
-        "sequential_image_generation": "disabled", "watermark": False,
-    }
-    # Keep the source aspect ratio; square sizing would distort portrait inputs.
     width, height = image.size
     if not 1 / 3 <= width / height <= 3:
         raise HTTPException(400, "修图支持的图片宽高比为 1:3 至 3:1，请先裁剪图片。")
-    # A common scale preserves aspect ratio. Round both sides up to 16px,
-    # ensuring the minimum pixel area also survives quantization.
-    import math
-    scale = max(1, (1024 * 1024 / (width * height)) ** .5)
-    output_width = math.ceil(width * scale / 16) * 16
-    output_height = math.ceil(height * scale / 16) * 16
-    payload["size"] = f"{output_width}x{output_height}"
-    try:
-        response = requests.post("https://ark.cn-beijing.volces.com/api/v3/images/generations",
-                                 headers={"Authorization": "Bearer " + key}, json=payload, timeout=180)
-        response.raise_for_status()
-        entry = response.json()["data"][0]
-        if entry.get("b64_json"):
-            data = base64.b64decode(entry["b64_json"], validate=True)
-        else:
-            # Response URL is supplied only by the trusted image provider.
-            download = requests.get(entry["url"], timeout=60)
-            download.raise_for_status()
-            data = download.content
-        with Image.open(io.BytesIO(data)) as edited:
-            result = io.BytesIO()
-            edited.convert("RGB").save(result, "JPEG", quality=94)
-            return result.getvalue()
-    except (requests.RequestException, ValueError, KeyError, IndexError, OSError):
-        raise HTTPException(502, "修图服务暂不可用，请稍后重试。")
+    source = image.copy()
+    source.thumbnail((ARK_INPUT_EDGE, ARK_INPUT_EDGE), Image.Resampling.LANCZOS)
+    buffer = io.BytesIO()
+    source.save(buffer, "JPEG", quality=94)
+    payload = {
+        "prompt": prompt, "image": "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode(),
+        "size": "%dx%d" % output_size(width, height), "response_format": "b64_json", "watermark": False,
+    }
+    candidates = model_candidates(model)
+    # Remember which model works per key, by hash: user keys never outlive the request.
+    import hashlib
+    cache = (hashlib.sha256(key.encode()).hexdigest(), tuple(candidates))
+    if cache in _working_model:
+        candidates = [_working_model[cache]] + [m for m in candidates if m != _working_model[cache]]
+    for index, name in enumerate(candidates):
+        try:
+            response = requests.post(ARK_URL, headers={"Authorization": "Bearer " + key},
+                                     json={**payload, "model": name}, timeout=240)
+        except requests.RequestException:
+            raise HTTPException(502, "修图服务暂不可用，请稍后重试。")
+        if response.status_code in (403, 404) and index + 1 < len(candidates):
+            continue  # Model not enabled on this account: try the next one.
+        if not response.ok:
+            try:
+                error = response.json().get("error", {})
+            except ValueError:
+                error = {}
+            code = str(error.get("code", ""))
+            if response.status_code in (403, 404):
+                raise HTTPException(400, f"这个豆包账号没有开通模型 {name}，请在火山方舟控制台开通后重试。")
+            if response.status_code == 401:
+                raise HTTPException(400, "豆包 API Key 无效或已过期。")
+            if code.startswith("OutputImageSensitiveContent") or code.startswith("InputImageSensitiveContent") or "Sensitive" in code:
+                raise HTTPException(400, "豆包拒绝了这张图片或这条要求（内容审核），请换个说法再试。")
+            if response.status_code == 429:
+                raise HTTPException(429, "豆包修图请求过于频繁，请稍后再试。")
+            raise HTTPException(502, "修图服务暂不可用，请稍后重试。")
+        _working_model[cache] = name
+        try:
+            entry = response.json()["data"][0]
+            if entry.get("b64_json"):
+                data = base64.b64decode(entry["b64_json"], validate=True)
+            else:
+                # Response URL is supplied only by the trusted image provider.
+                download = requests.get(entry["url"], timeout=60)
+                download.raise_for_status()
+                data = download.content
+            with Image.open(io.BytesIO(data)) as edited:
+                result = io.BytesIO()
+                edited.convert("RGB").save(result, "JPEG", quality=95, subsampling=0)
+                return result.getvalue()
+        except (requests.RequestException, ValueError, KeyError, IndexError, OSError):
+            raise HTTPException(502, "修图服务暂不可用，请稍后重试。")
+    raise HTTPException(502, "修图服务暂不可用，请稍后重试。")
+
+
+def outpaint_prompt(ratio, prompt):
+    factor = 1 + 2 * ratio
+    return (
+        f"扩图（outpainting）：输入图中央是原照片，四周纯灰色（RGB 128,128,128）区域是空白画布，不是画面内容。"
+        f"把灰色区域全部画成与原照片连续的真实场景，四边各向外延伸原图宽高的 {round(ratio * 100)}%。"
+        f"相当于在同一机位、同一高度、同一俯仰角换用更广的镜头：视角放大 {factor:.2f} 倍"
+        f"（例如原图等效 35mm，扩图后约 {35 / factor:.0f}mm），消失点、地平线与透视线沿原图延长，"
+        f"光圈与景深、ISO 噪点颗粒、曝光、白平衡、色彩分级与原图完全一致。"
+        f"中央原照片逐像素保持不变，不缩放、不平移、不重绘；接缝处的物体、纹理和光影连续，"
+        f"最终画面不能出现灰色、边框、黑边、模糊外圈、画中画或拼贴感。\n" + prompt
+    )
+
+
+def _gray(image, width):
+    return image.convert("L").resize((width, max(1, round(width * image.height / image.width))), Image.Resampling.BILINEAR)
+
+
+def _correlation(a, b):
+    """Normalised cross-correlation of two same-size greyscale images (-1..1)."""
+    from PIL import ImageChops, ImageStat
+    sa, sb = ImageStat.Stat(a), ImageStat.Stat(b)
+    product = ImageStat.Stat(ImageChops.multiply(a, b)).mean[0] * 255
+    spread = sa.stddev[0] * sb.stddev[0]
+    return (product - sa.mean[0] * sb.mean[0]) / spread if spread > 1 else 0
+
+
+def _search(generated, probe, box, scales, shifts):
+    left, top, width, height = box
+    best = (-2, box)
+    for scale in scales:
+        w, h = width * scale, height * scale
+        for dx in shifts:
+            for dy in shifts:
+                x = left + (width - w) / 2 + dx * width
+                y = top + (height - h) / 2 + dy * height
+                if x < -1 or y < -1 or x + w > generated.width + 1 or y + h > generated.height + 1:
+                    continue
+                crop = generated.crop((round(x), round(y), round(x + w), round(y + h))).resize(probe.size, Image.Resampling.BILINEAR)
+                score = _correlation(crop, probe)
+                if score > best[0]:
+                    best = (score, (x, y, w, h))
+    return best
+
+
+def locate_original(generated, original, box):
+    """Where the model actually drew the original inside `generated`.
+
+    Seedream keeps the photo but usually redraws it 5–20% larger, sometimes
+    off-centre; pasting at the nominal box then ghosts and leaves a frame.
+    Correlation rather than pixel difference, because a difference score
+    locks onto repetitive texture (sea, sky) at the wrong scale. Coarse
+    search on a thumbnail, then refine at higher resolution.
+    Returns (box in `generated` pixels, correlation), box None if no match.
+    """
+    frange = lambda a, b, step: [a + i * step for i in range(int(round((b - a) / step)) + 1)]
+    coarse = 400 / generated.width
+    nominal = tuple(v * coarse for v in box)
+    score, found = _search(_gray(generated, 400), _gray(original, 120), nominal,
+                           frange(.8, 1.3, .025), frange(-.15, .15, .015))
+    fine = 1024 / generated.width
+    guess = tuple(v / coarse * fine for v in found)
+    score, found = _search(_gray(generated, 1024), _gray(original, 240), guess,
+                           frange(.985, 1.015, .005), frange(-.012, .012, .003))
+    return (tuple(v / fine for v in found) if score > .5 else None), score
 
 
 def protected_outpaint(original, ratio, prompt, api_key="", model=""):
     """Keep original content by compositing, independently of model compliance.
 
-    The model only supplies the outer canvas. Output uses the pre-thumbnail
-    canvas dimensions, so original pixels occupy their exact center location.
-    JPEG encoding may alter pixel values slightly; the central content is never
-    replaced by generated faces/bodies. No feathering crosses the original area.
+    The model only supplies the outer canvas. We find where it actually drew
+    the photo, rescale the whole result so that spot matches the original's
+    pixels 1:1 (no black edges, no ghosting), colour-match on the overlap, and
+    blend the original in with a feather inside its own edge, so there is
+    neither a hard seam nor a regenerated subject.
+
+    Because the model enlarges the photo, the canvas is padded ~15% more than
+    asked and the result cropped back to the requested margin around it.
     """
-    canvas = pad_canvas(original, ratio)
-    size = canvas.size  # ark_edit thumbnails its input; save geometry first.
-    expanded = ark_edit(canvas, "仅补全原图外侧新增画布，中心原图不得修改。\n" + prompt, api_key, model)
+    from PIL import ImageStat
+    padded = min(.6, (1.15 * (1 + 2 * ratio) - 1) / 2)
+    canvas = pad_canvas(original, padded)
+    size = canvas.size
+    expanded = ark_edit(canvas, outpaint_prompt(ratio, prompt), api_key, model)
     with Image.open(io.BytesIO(expanded)) as generated:
         output = generated.convert("RGB").resize(size, Image.Resampling.LANCZOS)
-    output.paste(original, ((size[0] - original.width) // 2, (size[1] - original.height) // 2))
+    nominal = ((size[0] - original.width) / 2, (size[1] - original.height) / 2, original.width, original.height)
+    found, match = locate_original(output, original, nominal)
+    x, y, w, h = found or nominal
+    scale = original.width / w
+    if abs(scale - 1) > 1e-3:
+        output = output.resize((round(size[0] * scale), round(size[1] * scale)), Image.Resampling.LANCZOS)
+    left, top = round(x * scale), round(y * scale)
+    left = min(max(left, 0), output.width - original.width)
+    top = min(max(top, 0), output.height - original.height)
+    # Crop to the requested margin, centred on the original where possible.
+    target = (round(original.width * (1 + 2 * ratio)), round(original.height * (1 + 2 * ratio)))
+    crop_w, crop_h = min(target[0], output.width), min(target[1], output.height)
+    cx = min(max(left + original.width // 2 - crop_w // 2, 0), output.width - crop_w)
+    cy = min(max(top + original.height // 2 - crop_h // 2, 0), output.height - crop_h)
+    output = output.crop((cx, cy, cx + crop_w, cy + crop_h))
+    left, top = left - cx, top - cy
+    # Colour-match the generated ring to the original on the overlapping area.
+    region = (left, top, left + original.width, top + original.height)
+    generated_mean = ImageStat.Stat(output.crop(region)).mean
+    original_mean = ImageStat.Stat(original).mean
+    gains = [min(1.12, max(.88, (o + 1) / (g + 1))) for o, g in zip(original_mean, generated_mean)]
+    output = Image.merge("RGB", [band.point(lambda v, k=k: min(255, round(v * k)))
+                                 for band, k in zip(output.split(), gains)])
+    # Feather the outermost part of the original into the generated ring;
+    # wider when the model's redraw of the photo differs more from it.
+    feather = max(4, round(min(original.size) * (.025 if match > .93 else .06)))
+    mask = Image.new("L", original.size, 0)
+    mask.paste(255, (feather, feather, original.width - feather, original.height - feather))
+    mask = mask.filter(ImageFilter.GaussianBlur(feather / 2))
+    output.paste(original, (left, top), mask)
     buffer = io.BytesIO()
     output.save(buffer, "JPEG", quality=95, subsampling=0)
     return buffer.getvalue()

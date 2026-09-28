@@ -45,7 +45,7 @@ MAX_MB = 20
 # 绝对不要把 key 写进代码、传进 git 或发给别人。
 # ---------------------------------------------------------------
 ARK_API_KEY = os.environ.get("ARK_API_KEY", "")
-ARK_MODEL = os.environ.get("ARK_MODEL", "doubao-seedream-4-0-250828")
+ARK_MODEL = os.environ.get("ARK_MODEL", "doubao-seedream-5-0-pro-260628")
 ARK_URL = "https://ark.cn-beijing.volces.com/api/v3/images/generations"
 
 def _ark_i2i(img, prompt: str) -> bytes:
@@ -71,7 +71,6 @@ def _ark_i2i(img, prompt: str) -> bytes:
             "prompt": prompt,
             "image": f"data:image/jpeg;base64,{b64}",
             "size": f"{tw}x{th}",
-            "sequential_image_generation": "disabled",
             "response_format": "url",
             "watermark": False,
         },
