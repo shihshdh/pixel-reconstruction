@@ -234,6 +234,28 @@ type PreviewMode =
   | { kind: "solo"; preset: Preset; start: number }
   | { kind: "seq"; tl: Timeline; start: number };
 
+// 画面效果：粒子大小改的是着色器里的高斯尺度（实时，不重载场景）；曝光、对比、饱和是画面后期，
+// 预览用 CSS 滤镜，导出视频时对每帧用同一个滤镜重绘，所见即所得。设置按设备记住。
+type Look = { size: number; exposure: number; contrast: number; saturation: number };
+const LOOK_DEFAULT: Look = { size: 1, exposure: 0, contrast: 1, saturation: 1 };
+const LOOK_KEY = "ruhua-studio-look-v1";
+const LOOK_SLIDERS: { key: keyof Look; label: string; min: number; max: number; step: number; show: (v: number) => string; hint: string }[] = [
+  { key: "size", label: "粒子大小", min: .6, max: 2.2, step: .05, show: v => `${v.toFixed(2)}×`, hint: "调大让粒子更饱满、填上缝隙；调小更锐利，但会更稀疏" },
+  { key: "exposure", label: "曝光", min: -1.5, max: 1.5, step: .1, show: v => `${v > 0 ? "+" : ""}${v.toFixed(1)} EV`, hint: "整体明暗，按档位（EV）计" },
+  { key: "contrast", label: "对比", min: .6, max: 1.6, step: .02, show: v => `${Math.round(v * 100)}%`, hint: "明暗反差" },
+  { key: "saturation", label: "饱和", min: 0, max: 2, step: .05, show: v => `${Math.round(v * 100)}%`, hint: "色彩浓淡，0 为黑白" },
+];
+function readLook(): Look {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LOOK_KEY) || "{}");
+    const look = { ...LOOK_DEFAULT };
+    for (const { key, min, max } of LOOK_SLIDERS) if (typeof saved[key] === "number" && isFinite(saved[key])) look[key] = Math.min(max, Math.max(min, saved[key]));
+    return look;
+  } catch { return { ...LOOK_DEFAULT }; }
+}
+const lookFilter = (l: Look) => l.exposure === 0 && l.contrast === 1 && l.saturation === 1 ? "none"
+  : `brightness(${Math.pow(2, l.exposure).toFixed(3)}) contrast(${l.contrast.toFixed(2)}) saturate(${l.saturation.toFixed(2)})`;
+
 export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = 'ply', posterUrl, previewQuality = 'full', preparationError, onPreparationRetry, onAssetLoaded }: { plyUrl: string; jobId?: string; backendUrl?: string; sceneFormat?: 'ply' | 'splat'; posterUrl?: string; previewQuality?: 'mobile' | 'full'; preparationError?: string; onPreparationRetry?: () => void; onAssetLoaded?: (blob: Blob) => void }) {
   const mountRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<any>(null);
@@ -276,6 +298,26 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
   // 运镜面板折叠：默认收起，不挡画面；点把手展开
 
   const nameOf = (p: Preset) => PRESETS.find((x) => x.id === p)!.name;
+
+  const [look, setLookState] = useState<Look>(LOOK_DEFAULT);
+  const lookRef = useRef<Look>(LOOK_DEFAULT);
+  lookRef.current = look;
+  const lastSplatRef = useRef(1);
+  useEffect(() => { setLookState(readLook()); }, []);
+  const setLook = (change: Partial<Look>) => setLookState(current => {
+    const next = { ...current, ...change };
+    try { localStorage.setItem(LOOK_KEY, JSON.stringify(next)); } catch {}
+    return next;
+  });
+  // 效果改了（或场景刚就绪）：粒子尺度按当前运镜的基准值重算，画布滤镜跟着换
+  useEffect(() => {
+    if (!ready) return;
+    try { viewerRef.current?.splatMesh?.setSplatScale?.(lastSplatRef.current * look.size); } catch {}
+    const canvas = rendererRef.current?.domElement as HTMLCanvasElement | undefined;
+    const filter = lookFilter(look);
+    if (canvas) canvas.style.filter = filter === "none" ? "" : filter;
+    viewerRef.current?.forceRenderNextFrame?.();
+  }, [look, ready]);
 
   // ---- 画质档位：按硬件自动选，也可以手动指定；运行中按帧率微调渲染分辨率 ----
   const [perfChoice, setPerfChoice] = useState<PerfChoice>("auto");
@@ -371,8 +413,10 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
       viewer.controls.update?.();
     }
   }
+  /** v 是运镜给的基准尺度（开场从 0 长到 1）；实际尺度再乘上用户的「粒子大小」。 */
   const setSplat = (v: number) => {
-    try { viewerRef.current?.splatMesh?.setSplatScale?.(v); } catch {}
+    lastSplatRef.current = v;
+    try { viewerRef.current?.splatMesh?.setSplatScale?.(v * lookRef.current.size); } catch {}
   };
 
   function applyPose(cam: any, pose: Pose) {
@@ -868,6 +912,11 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
       // 动态模糊（高、极致档）：像电影摄影机的 180° 快门，在每帧前后各 1/4 帧的时间里渲染多张子帧再平均。
       // 快速运镜因此自然拖影，而不是一格一格地跳；镜头几乎不动的帧只渲染一次，不白白增加导出时间。
       const blurOn = profile.tier === "ultra" || profile.tier === "high";
+      // 画面效果里的曝光/对比/饱和：预览是 CSS 滤镜，编码前对每帧用同一个滤镜重绘
+      const grade = lookFilter(lookRef.current);
+      const graded = grade !== "none" ? new OffscreenCanvas(w, h) : null;
+      const gradeCtx = graded?.getContext("2d") || null;
+      if (gradeCtx) gradeCtx.filter = grade;
       const accumulator = blurOn ? new OffscreenCanvas(w, h) : null;
       const acc = accumulator?.getContext("2d") || null;
       for (let i = 0; i < total; i++) {
@@ -896,6 +945,11 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
           if (!recordingRef.current || viewerRef.current !== viewer) return;
         }
 
+        if (gradeCtx && graded) {
+          gradeCtx.clearRect(0, 0, w, h);
+          gradeCtx.drawImage(source, 0, 0, w, h);
+          source = graded;
+        }
         const timing = { timestamp: Math.round((i / fps) * 1_000_000), duration: Math.round(1_000_000 / fps) };
         const bitmap = direct || source !== canvas ? null : await createImageBitmap(canvas, { resizeWidth: w, resizeHeight: h, resizeQuality: "high" });
         const frame = new VideoFrame(bitmap || source, timing);
@@ -1022,6 +1076,26 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
             {picked.length > 0 && <button className="key ghost" onClick={() => { setPicked([]); if (preset !== "free") selectPreset("free"); }} disabled={recording}>清除勾选</button>}
             <span className="seq-hint">{picked.length > 0 ? `已勾选：${picked.map(nameOf).join(" → ")}` : "勾选一种或多种运镜"}</span>
           </div>
+        </div>
+
+        {/* 画面效果：实时调整，导出视频同样应用 */}
+        <div className="rig-card look-card">
+          <div className="rig-card-title">画面效果 <span>实时生效，导出视频也会带上</span>
+            <button className="key ghost look-reset" onClick={() => setLook(LOOK_DEFAULT)} disabled={recording || LOOK_SLIDERS.every(({ key }) => look[key] === LOOK_DEFAULT[key])}>恢复默认</button>
+          </div>
+          <div className="look-grid">
+            {LOOK_SLIDERS.map(({ key, label, min, max, step, show, hint }) => (
+              <label key={key} className="look-row" title={hint}>
+                <span className="look-name">{label}</span>
+                <input type="range" min={min} max={max} step={step} value={look[key]} disabled={!ready || recording}
+                  onChange={e => setLook({ [key]: Number(e.target.value) })}
+                  onDoubleClick={() => setLook({ [key]: LOOK_DEFAULT[key] })}
+                  style={{ ["--fill" as string]: `${((look[key] - min) / (max - min)) * 100}%` }} />
+                <output className="look-value">{show(look[key])}</output>
+              </label>
+            ))}
+          </div>
+          <p className="export-hint">粒子看着稀疏时把「粒子大小」调到 1.2–1.5×，缝隙会被填上；双击滑块回到默认值。</p>
         </div>
 
         {/* 序列 + 导出：两栏 */}

@@ -26,7 +26,7 @@ import WindowControls from "@/components/WindowControls";
 import { computeUiZoom } from "@/lib/ui-scale";
 import { engineAccepts, engineInstalling, engineWarming, pauseEngineInstall, resumeEngineInstall, watchLocalEngine, type EngineStatus } from "@/lib/local-engine";
 import LiquidSegmented, { LiquidIndicator } from "@/components/LiquidSegmented";
-import { detectTier, perfProfile, readPerfChoice, savePerfChoice, PERF_EVENT, PERF_LABELS, type PerfChoice } from "@/lib/perf";
+import { detectTier, perfProfile, readPerfChoice, savePerfChoice, PERF_EVENT, PERF_LABELS, type PerfChoice, type PerfTier } from "@/lib/perf";
 // 现有 API（lib/api.ts）——创作/工作室/修图都用它
 import {
   submitPhoto, checkStatus,
@@ -1585,9 +1585,10 @@ export default function App() {
     window.addEventListener("resize", apply);
     return () => window.removeEventListener("resize", apply);
   }, []);
-  const [rayUi, setRayUi] = useState(false);
+  // 玻璃背景：除「流畅」外每档都有，画质与流光逐档降低（见 components/RayTracedBackdrop.tsx）
+  const [rayUi, setRayUi] = useState<PerfTier | null>(null);
   useEffect(() => {
-    const update = () => { try { setRayUi(perfProfile().rayTracedUi); } catch { setRayUi(false); } };
+    const update = () => { try { const tier = perfProfile().tier; setRayUi(tier === "low" ? null : tier); } catch { setRayUi(null); } };
     update();
     window.addEventListener(PERF_EVENT, update);
     return () => window.removeEventListener(PERF_EVENT, update);
@@ -1711,7 +1712,7 @@ export default function App() {
     {!splashDone && <LandingExperience exitDuration={960} onExitStart={() => setShowcaseMotion("enter")} onEnter={() => { setSplashDone(true); setShowcaseMotion(null); window.scrollTo(0, 0); }} />}
     <ShowcaseTransition direction={showcaseMotion} />
     {/* 工作室和显影期间停下，把显卡让给场景渲染与本机推理 */}
-    {rayUi && <RayTracedBackdrop theme={theme} active={splashDone && page !== "studio" && !creating} />}
+    {rayUi && <RayTracedBackdrop key={rayUi} tier={rayUi} theme={theme} active={splashDone && page !== "studio" && !creating} shown={splashDone} />}
     <div className="showcase-workspace" inert={!splashDone} aria-hidden={!splashDone} style={{ visibility: splashDone || showcaseMotion ? "visible" : "hidden", position: "relative", zIndex: 1 }}>
       <Nav engine={engine} page={page} setPage={navigate} theme={theme} toggleTheme={() => setTheme(t => t === "dark" ? "light" : "dark")} onShowcase={() => { setShowcaseMotion("return"); setSplashDone(false); }} logoReady={splashDone || showcaseMotion === "enter"} />
       {routeTransitionId > 0 && <div key={`wipe-${routeTransitionId}`} className="route-wipe" aria-hidden="true" style={{ visibility: splashDone ? "visible" : "hidden" }} />}

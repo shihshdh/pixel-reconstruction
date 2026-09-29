@@ -356,6 +356,23 @@ button { font-family: inherit; }
 
 .rig-grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 16px; align-items: stretch; }
 
+/* —— 画面效果 —— */
+.look-card .look-reset { margin-left: auto; padding: 6px 13px; font-size: 12.5px; }
+.look-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 28px; }
+.look-row { display: grid; grid-template-columns: 4.5em minmax(0, 1fr) 4.8em; align-items: center; gap: 12px; font-size: 13.5px; color: var(--ink2); }
+.look-value { font-size: 12.5px; color: var(--ink3); text-align: right; font-variant-numeric: tabular-nums; }
+.look-row input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 22px; margin: 0; background: transparent; cursor: pointer; }
+.look-row input[type=range]:disabled { cursor: default; opacity: .45; }
+.look-row input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 4px; background: linear-gradient(to right, var(--accent) var(--fill, 50%), var(--line) var(--fill, 50%)); }
+.look-row input[type=range]::-moz-range-track { height: 4px; border-radius: 4px; background: var(--line); }
+.look-row input[type=range]::-moz-range-progress { height: 4px; border-radius: 4px; background: var(--accent); }
+.look-row input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; margin-top: -7px; border-radius: 50%; background: #fff; border: 1px solid var(--line); box-shadow: 0 1px 4px rgba(0, 0, 0, .25); transition: transform .15s; }
+.look-row input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: #fff; border: 1px solid var(--line); box-shadow: 0 1px 4px rgba(0, 0, 0, .25); }
+.look-row input[type=range]:active::-webkit-slider-thumb { transform: scale(1.12); }
+.look-row input[type=range]:focus-visible { outline: none; }
+.look-row input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent); }
+@media (max-width: 760px) { .look-grid { grid-template-columns: 1fr; } }
+
 /* 片段栏做成输入框：外框负责边框、聚焦和高度过渡，内层负责排布（FLIP 量的是内层子元素） */
 .seq-field {
   box-sizing: border-box; min-height: 52px; overflow: hidden;

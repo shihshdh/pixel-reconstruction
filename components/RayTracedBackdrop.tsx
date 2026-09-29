@@ -8,9 +8,19 @@
 //
 // 画质：按屏幕实际像素比渲染，每像素 4 次旋转网格超采样抗锯齿。
 // 性能与体验：帧率跟随屏幕刷新率（最高 120fps）；持续掉帧依次关超采样、降到 30fps、降分辨率，仍不够就停在静帧。
-// 页面隐藏、进入 3D 工作室（active=false）时停止，让显卡专心渲染场景；减少动态效果时只画一帧。
+// 页面隐藏、进入 3D 工作室（active=false）时停止动画、留一帧静止画面，让显卡专心渲染场景；减少动态效果时只画一帧。
+// 档位：极致 4× 超采样、跟刷新率、流光全开；高 2× 超采样、60fps、流光 75%；均衡 不超采样、30fps、0.8 倍分辨率、流光 50%。
+// 流畅档不显示（见 app/page.tsx）。
 import { useEffect, useRef } from "react";
-import { integratedGpu, measureRefreshRate, PERSONAL_BUILD, progressiveUltra } from "@/lib/perf";
+import { integratedGpu, measureRefreshRate, PERSONAL_BUILD, progressiveUltra, type PerfTier } from "@/lib/perf";
+
+type Rung = { scale: number; ss: number; fast: boolean };
+// 每档的画质阶梯：第一级是该档的正常画质，持续掉帧时逐级往下退
+const TIER: Record<"ultra" | "high" | "mid", { flow: number; cap: number; ladder: (dpr: number) => Rung[] }> = {
+  ultra: { flow: 1, cap: 120, ladder: dpr => [{ scale: dpr, ss: 4, fast: true }, { scale: dpr, ss: 1, fast: true }, { scale: dpr, ss: 1, fast: false }, { scale: dpr * .6, ss: 1, fast: false }] },
+  high: { flow: .75, cap: 60, ladder: dpr => [{ scale: dpr, ss: 2, fast: true }, { scale: dpr, ss: 1, fast: true }, { scale: dpr, ss: 1, fast: false }, { scale: dpr * .6, ss: 1, fast: false }] },
+  mid: { flow: .5, cap: 30, ladder: dpr => [{ scale: dpr * .8, ss: 1, fast: false }, { scale: dpr * .6, ss: 1, fast: false }] },
+};
 
 const VERTEX = `
 attribute vec2 a;
@@ -25,6 +35,7 @@ uniform float T;     // seconds
 uniform vec2 P;      // smoothed pointer, -1..1
 uniform vec3 BG;     // page background colour
 uniform float DARK;  // 1 in dark theme (black & gold)
+uniform float FLOW;  // strength of the flowing light along the glass edges (per quality tier)
 
 float A;             // aspect ratio; scene coordinates: x in [0, A], y in [0, 1] (up)
 float PX;            // one pixel in scene units
@@ -45,7 +56,7 @@ vec4 edgeFlow(vec2 p, vec2 c, float speed, float phase){
 }
 // 深色主题：流光是发光叠加；浅色主题：白底上叠光看不见，改为按强度染上流光的颜色
 vec3 applyFlow(vec3 col, vec4 flow, float amount){
-  float k = clamp(flow.a * amount, 0., 1.);
+  float k = clamp(flow.a * amount * FLOW, 0., 1.);
   return DARK > .5 ? col + flow.rgb * k * 1.3 : mix(col, flow.rgb * .85 + .08, k * .85);
 }
 
@@ -153,13 +164,16 @@ function parseColor(value: string): [number, number, number] {
   return [1, 1, 1];
 }
 
-export default function RayTracedBackdrop({ theme, active }: { theme: string; active: boolean }) {
+/** active：是否动画；shown：是否显示。工作室与显影期间只暂停动画，玻璃背景仍在。 */
+export default function RayTracedBackdrop({ theme, active, shown = active, tier = "ultra" }: { theme: string; active: boolean; shown?: boolean; tier?: PerfTier }) {
+  const setting = TIER[tier === "low" ? "mid" : tier];
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const activeRef = useRef(active);
   activeRef.current = active;
   const wakeRef = useRef<() => void>(() => {});
 
-  useEffect(() => { if (active) wakeRef.current(); }, [active]);
+  // 暂停时 wake 只画一帧静止画面，背景留在原处；恢复时继续动画
+  useEffect(() => { wakeRef.current(); }, [active]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -191,7 +205,7 @@ export default function RayTracedBackdrop({ theme, active }: { theme: string; ac
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
     const u = (name: string) => gl.getUniformLocation(program, name);
-    const uR = u("R"), uT = u("T"), uP = u("P"), uBG = u("BG"), uDark = u("DARK"), uSS = u("SS");
+    const uR = u("R"), uT = u("T"), uP = u("P"), uBG = u("BG"), uDark = u("DARK"), uSS = u("SS"), uFlow = u("FLOW");
 
     const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
     // 帧率跟随屏幕：取刷新率的整数分频、不超过 120fps（300Hz → 100fps，144Hz → 72fps，60Hz → 60fps），
@@ -200,14 +214,15 @@ export default function RayTracedBackdrop({ theme, active }: { theme: string; ac
     let divisor = 2, fastFps = 30;
     // 核显上的极致档：先保住 4× 超采样、帧率降到 30fps（缓慢流动的环境背景，30fps 看不出差别），
     // 实在不够再降超采样。独显照旧先保帧率。
-    const ladder = progressiveUltra()
+    // 高、均衡档从各自的起点开始，掉帧时沿同样的阶梯往下退
+    const ladder: Rung[] = tier === "ultra" && progressiveUltra()
       ? [{ scale: dpr, ss: 4, fast: false }, { scale: dpr, ss: 1, fast: false }, { scale: dpr * .6, ss: 1, fast: false }]
-      : [{ scale: dpr, ss: 4, fast: true }, { scale: dpr, ss: 1, fast: true }, { scale: dpr, ss: 1, fast: false }, { scale: dpr * .6, ss: 1, fast: false }];
+      : setting.ladder(dpr);
     let level = 0, scale = ladder[0].scale, ticks = 0;
     const fps = () => ladder[level].fast ? fastFps : 30;
     let raf = 0, last = 0, slowSince = 0, frozen = false, disposed = false;
     // 特调版（lib/perf.ts PERSONAL_BUILD）在独显上上限放到 150fps：300Hz 屏正好二分频
-    const cap = PERSONAL_BUILD && !integratedGpu() ? 150 : 120;
+    const cap = tier === "ultra" && PERSONAL_BUILD && !integratedGpu() ? 150 : setting.cap;
     // 实测刷新率会有一点点偏差（300Hz 屏量出 303）：分频留 5% 容差，否则 303 / 150 向上取整成了三分频
     void measureRefreshRate().then(hz => { divisor = Math.max(1, Math.ceil(hz / cap - .05)); fastFps = hz / divisor; canvas.dataset.fps = String(Math.round(fastFps)); });
     const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
@@ -230,6 +245,7 @@ export default function RayTracedBackdrop({ theme, active }: { theme: string; ac
       pointer.y += (pointer.ty - pointer.y) * .04;
       gl.uniform2f(uR, canvas.width, canvas.height);
       gl.uniform1f(uSS, ladder[level].ss);
+      gl.uniform1f(uFlow, setting.flow);
       gl.uniform1f(uT, reduced ? 4 : (now - started) / 1000);
       gl.uniform2f(uP, pointer.x, pointer.y);
       gl.uniform3f(uBG, bg[0], bg[1], bg[2]);
@@ -260,18 +276,18 @@ export default function RayTracedBackdrop({ theme, active }: { theme: string; ac
     };
     const wake = () => {
       if (disposed) return;
-      if (reduced || frozen) { draw(performance.now()); return; }
+      if (reduced || frozen || !activeRef.current) { draw(performance.now()); return; }
       last = 0;
       if (!raf) raf = requestAnimationFrame(loop);
     };
     wakeRef.current = wake;
     const onMove = (event: PointerEvent) => { pointer.tx = event.clientX / innerWidth * 2 - 1; pointer.ty = event.clientY / innerHeight * 2 - 1; };
     const onVisible = () => { if (!document.hidden) wake(); };
-    const onResize = () => { if (reduced || frozen) draw(performance.now()); };
+    const onResize = () => { if (reduced || frozen || !activeRef.current) draw(performance.now()); };
     addEventListener("pointermove", onMove, { passive: true });
     addEventListener("resize", onResize);
     document.addEventListener("visibilitychange", onVisible);
-    const themeObserver = new MutationObserver(() => { readBackground(); if (reduced || frozen) draw(performance.now()); });
+    const themeObserver = new MutationObserver(() => { readBackground(); if (reduced || frozen || !activeRef.current) draw(performance.now()); });
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     const onLost = (event: Event) => { event.preventDefault(); frozen = true; canvas.style.display = "none"; };
     canvas.addEventListener("webglcontextlost", onLost);
@@ -295,5 +311,5 @@ export default function RayTracedBackdrop({ theme, active }: { theme: string; ac
   useEffect(() => { wakeRef.current(); }, [theme]);
 
   return <canvas ref={canvasRef} className="ray-backdrop" aria-hidden="true"
-    style={{ position: "fixed", inset: 0, width: "100%", height: "100%", zIndex: 0, pointerEvents: "none", opacity: active ? 1 : 0, transition: "opacity 600ms ease" }} />;
+    style={{ position: "fixed", inset: 0, width: "100%", height: "100%", zIndex: 0, pointerEvents: "none", opacity: shown ? 1 : 0, transition: "opacity 600ms ease" }} />;
 }
