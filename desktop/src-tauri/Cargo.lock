@@ -2515,7 +2515,7 @@ dependencies = [
 
 [[package]]
 name = "pixel-reconstruction"
-version = "1.7.6"
+version = "1.7.7"
 dependencies = [
  "serde",
  "tauri",

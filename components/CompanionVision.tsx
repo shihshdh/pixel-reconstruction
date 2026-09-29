@@ -51,7 +51,7 @@ export default function CompanionVision({ enabled, busy, screen, onScreen, pageI
     if (!file) return;
     const version = ++generation.current; setError('');
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 20 * 1024 * 1024) {
-      setError('请选择 20MB 以内的 JPG、PNG 或 WebP 截图。'); return;
+      setError('请选择 20MB 以内的 JPG、PNG 或 WebP 图片。'); return;
     }
     setCapturing(true);
     const url = URL.createObjectURL(file), image = new Image();
@@ -80,7 +80,7 @@ export default function CompanionVision({ enabled, busy, screen, onScreen, pageI
       <p>{enabled ? '每条消息会自动带上页面文字和按钮名称（不含输入框、密码和图片），方便她帮你看、帮你点。图片只在你在这里附上后随消息发送。' : '图片查看等待后端更新；页面文字仍会随消息发送。'}</p>
       <div className={styles.visionActions}>
         {supported && <button type="button" disabled={!enabled || busy || capturing} onClick={() => void capture()}>{capturing ? '正在读取…' : '截取屏幕'}</button>}
-        <button type="button" disabled={!enabled || busy || capturing} onClick={() => input.current?.click()}>上传截图</button>
+        <button type="button" disabled={!enabled || busy || capturing} onClick={() => input.current?.click()}>上传图片 / 参考图</button>
         <button type="button" disabled={!enabled || busy || capturing} onClick={attachPage}>附上页面图片</button>
         <input ref={input} type="file" accept="image/jpeg,image/png,image/webp" hidden aria-label="选择截图" onChange={e => { void upload(e.target.files?.[0]); e.target.value = ''; }} />
       </div>

@@ -29,9 +29,11 @@ import LiquidSegmented, { LiquidIndicator } from "@/components/LiquidSegmented";
 import { detectTier, perfProfile, readPerfChoice, savePerfChoice, PERF_EVENT, PERF_LABELS, type PerfChoice } from "@/lib/perf";
 // 现有 API（lib/api.ts）——创作/工作室/修图都用它
 import {
-  submitPhoto, checkStatus, editImage, requestRerender,
+  submitPhoto, checkStatus,
   fileUrl, downloadJobFile, ping, getBase, getDefaultBase, saveBase, normalizeBase, registerJobAccess, refreshJobAccess,
 } from "@/lib/api";
+// 修图对话按作品保存，请求不随页面卸载而中断
+import { clearEditChat, editKey, exportEditImage, refreshEditLinks, runEdit, runRerender, setActiveEditJob, setEditDraft, useEditSession } from "@/lib/edit-session";
 // 动效地基：时长 / 缓动 / 降级判断 / FLIP
 import { prefersReduced, SPRING, installPressFeedback, useParallax } from "@/lib/motion";
 // Three.js 渲染器：禁 SSR
@@ -1132,20 +1134,30 @@ const AI_PRESETS = [
 // ============================================================
 function EnhancePage({ result, setPage, onRerenderDone, doubao, onDoubaoChange }: { result: any; setPage: (page: string) => void; onRerenderDone: (result: any) => void; doubao: DoubaoPreferences; onDoubaoChange: (value: DoubaoPreferences) => void }) {
   const companionOriginal = useScenePoster(result);
-  const [chat, setChat] = useState([]);
-  const [baseImg, setBaseImg] = useState("");   // 引用的版本作为下次基础
-  const [history, setHistory] = useState([]);
-  const [input, setInput] = useState("");
-  const [strength, setStrength] = useState<"gentle" | "balanced">("gentle");
-  const [padDraft, setPadDraft] = useState(0);
-  const [aiBusy, setAiBusy] = useState(false);
-  const [rerendering, setRerendering] = useState(false);
-  const alive = useRef(true);
-  const editBusy = useRef(false);
-  const renderBusy = useRef(false);
-  const rerenderPoll = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => { alive.current = true; return () => { alive.current = false; if (rerenderPoll.current) clearTimeout(rerenderPoll.current); }; }, []);
+  // 对话、草稿与进行中的请求都在 lib/edit-session.ts 里，按作品保存：切页面、重开作品都接得上。
+  const key = result ? editKey(result) : null;
+  const session = useEditSession(key);
+  const { chat, editing: aiBusy, rerendering, draft: input, pad: padDraft, strength, base: baseImg } = session;
+  const [, relinked] = useState(0);
+  const [sizes, setSizes] = useState<Record<string, string>>({});
+  const [saved, setSaved] = useState<Record<string, string>>({});
+  const logRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const needsKey = doubao.mode === "custom" && !doubao.apiKey.trim();
+  const setDraft = (change: Parameters<typeof setEditDraft>[1]) => { if (key) setEditDraft(key, change); };
+
+  // 以前的版本：链接签名可能已过期，重开时刷新一次。
+  useEffect(() => { if (result) void refreshEditLinks(result).then(changed => { if (changed) relinked(n => n + 1); }); }, [key]);
+  // 回到页面时对话停在最新一条。
+  useEffect(() => { const el = logRef.current; if (el) el.scrollTop = el.scrollHeight; }, [key, chat.length, aiBusy]);
+  // 鲸鱼娘刚写好提示词：把输入框带到眼前。
+  useEffect(() => {
+    if (!session.delivered || Date.now() - session.delivered > 8000) return;
+    const el = inputRef.current;
+    if (!el) return;
+    el.scrollIntoView({ behavior: prefersReduced() ? "auto" : "smooth", block: "center" });
+    el.focus({ preventScroll: true });
+  }, [session.delivered]);
 
   if (!result) {
     return (
@@ -1158,54 +1170,24 @@ function EnhancePage({ result, setPage, onRerenderDone, doubao, onDoubaoChange }
     );
   }
 
-  async function sendEdit(display, prompt, pad) {
-    if (editBusy.current || renderBusy.current || needsKey) return;
-    editBusy.current = true;
-    const ref = baseImg;
-    setChat((c) => [...c, { role: "user", text: display, ref: ref || undefined }]);
-    setAiBusy(true);
+  const send = () => {
+    const text = input.trim();
+    if (!text || aiBusy || rerendering || needsKey) return;
+    const credentials = doubao.mode === "custom" ? { apiKey: doubao.apiKey.trim(), model: doubao.model.trim() || undefined } : undefined;
+    void runEdit(result, { display: text, prompt: text, pad: padDraft, strength, credentials });
+  };
+  const exportImage = async (img: string) => {
+    setSaved(s => ({ ...s, [img]: "正在导出…" }));
     try {
-      const credentials = doubao.mode === "custom" ? { apiKey: doubao.apiKey.trim(), model: doubao.model.trim() || undefined } : undefined;
-      const r = await editImage(result.job_id, prompt, pad, ref, history, result.backend_url, credentials, strength);
-      if (!alive.current) return;
-      setChat((c) => [...c, { role: "ai", img: r.image }]);
-      setHistory((h) => [...h, display]);
-      setBaseImg("");
+      const [width, height] = (sizes[img] || "").split("×").map(Number);
+      const done = await exportEditImage(result, img, width && height ? { width, height } : undefined);
+      setSaved(s => ({ ...s, [img]: done.folder ? "已存到作品文件夹" : "已开始下载" }));
     } catch (e) {
-      setChat((c) => [...c, { role: "ai", failed: true, text: "修图失败：" + (e?.message || e) }]);
+      setSaved(s => ({ ...s, [img]: "导出失败：" + (e instanceof Error ? e.message : "请检查网络后重试") }));
     }
-    editBusy.current = false;
-    if (alive.current) setAiBusy(false);
-  }
-
-  async function doRerender(img) {
-    if (renderBusy.current || editBusy.current) return;
-    renderBusy.current = true; setRerendering(true);
-    const apiBase = result.backend_url || getBase(), started = Date.now();
-    setChat(c => [...c, { role: "ai", text: "正在用这张图重新显影 3D 场景…" }]);
-    const fail = (message: string) => {
-      renderBusy.current = false;
-      if (!alive.current) return;
-      setRerendering(false); setChat(c => [...c, { role: "ai", failed: true, text: "重新显影失败：" + message }]);
-    };
-    try {
-      const { call_id } = await requestRerender(result.job_id, img, apiBase);
-      let failures = 0;
-      const poll = async () => {
-        if (!alive.current) return;
-        if (Date.now() - started > 25 * 60 * 1000) { fail("等待超时，请稍后重试。"); return; }
-        try {
-          const st = await checkStatus(call_id, apiBase);
-          if (!alive.current) return;
-          failures = 0;
-          if (st.status === "done") { renderBusy.current = false; setRerendering(false); onRerenderDone?.({ ...st, job_token: st.job_token || result.job_token, backend_url: apiBase }); return; }
-          if (st.status === "error") { fail(st.message); return; }
-        } catch (e) { if (++failures >= 4) { fail("无法连接服务，请检查网络后重试。"); return; } }
-        rerenderPoll.current = setTimeout(poll, 3000);
-      };
-      rerenderPoll.current = setTimeout(poll, 2000);
-    } catch (e) { fail(e instanceof Error ? e.message : "请求失败"); }
-  }
+  };
+  const versions = chat.filter(m => m.img).map(m => m.img as string);
+  const versionName = (img?: string) => !img ? "" : img === "original.jpg" ? "原图" : versions.includes(img) ? `第 ${versions.indexOf(img) + 1} 版` : "上一版";
 
   const btn = { border: "1px solid var(--line)", background: "var(--card)", color: "var(--ink)", padding: "7px 15px", borderRadius: 980, fontSize: 13, textDecoration: "none", cursor: "pointer" };
 
@@ -1222,40 +1204,48 @@ function EnhancePage({ result, setPage, onRerenderDone, doubao, onDoubaoChange }
 
       <DoubaoSettings value={doubao} onChange={onDoubaoChange} disabled={aiBusy || rerendering} />
       {needsKey && <p className="field-error">请先填写你的豆包 API Key，或切回站长提供的服务。</p>}
-      <EditPromptPicker strength={strength} onStrengthChange={setStrength} disabled={aiBusy || rerendering} onSelect={(prompt, pad) => { setInput(prompt); setPadDraft(pad); }} />
+      <EditPromptPicker strength={strength} onStrengthChange={value => setDraft({ strength: value })} disabled={aiBusy || rerendering} onSelect={(prompt, pad) => setDraft({ draft: prompt, pad })} />
 
       {/* 对话流（更大留白，图片醒目）*/}
       <div style={{ border: "1px solid var(--line)", borderRadius: 26, background: "var(--bg2)", padding: 26, minHeight: 280 }}>
-        <button onClick={() => setBaseImg("original.jpg")} style={{ ...btn, marginBottom: 20 }}>引用原图</button>
-        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-          {chat.map((m, i) =>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 20 }}>
+          <button onClick={() => setDraft({ base: "original.jpg" })} style={btn}>引用原图</button>
+          {versions.length > 0 && <span style={{ fontSize: 12.5, color: "var(--ink3)" }}>这件作品共修过 {versions.length} 版，对话已自动保存</span>}
+          {chat.length > 0 && <button disabled={aiBusy || rerendering} onClick={() => { if (key) clearEditChat(key); }} style={{ ...btn, marginLeft: "auto", color: "var(--ink3)", opacity: aiBusy || rerendering ? 0.5 : 1 }}>清空对话</button>}
+        </div>
+        <div ref={logRef} style={{ display: "flex", flexDirection: "column", gap: 24, maxHeight: "min(1400px, 150vh)", overflowY: "auto", overscrollBehavior: "contain" }}>
+          {chat.map((m) =>
             m.role === "user" ? (
-              <div key={i} style={{ alignSelf: "flex-end", maxWidth: "78%", background: "var(--accent)", color: "#fff", padding: "13px 20px", borderRadius: "20px 20px 5px 20px", fontSize: 15.5, lineHeight: 1.5, boxShadow: "0 6px 18px -8px rgba(0,113,227,0.5)" }}>
-                {m.ref && <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 5 }}>↩ 基于 {m.ref === "original.jpg" ? "原图" : "上一版"}</div>}
+              <div key={m.id} style={{ alignSelf: "flex-end", maxWidth: "78%", background: "var(--accent)", color: "#fff", padding: "13px 20px", borderRadius: "20px 20px 5px 20px", fontSize: 15.5, lineHeight: 1.5, boxShadow: "0 6px 18px -8px rgba(0,113,227,0.5)", whiteSpace: "pre-line" }}>
+                {m.ref && <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 5 }}>↩ 基于 {versionName(m.ref)}</div>}
                 {m.text}
               </div>
             ) : m.img ? (
-              <div key={i} className="img-pop" style={{ alignSelf: "flex-start", maxWidth: "82%" }}>
-                <img src={fileUrl(result.job_id, m.img, result.backend_url)} alt={m.img} style={{ width: "100%", borderRadius: 18, display: "block", border: "1px solid var(--line)", boxShadow: "var(--shadow)" }} />
+              <div key={m.id} className="img-pop" style={{ alignSelf: "flex-start", maxWidth: "82%" }}>
+                <img src={fileUrl(result.job_id, m.img, result.backend_url)} alt={versionName(m.img)} loading="lazy"
+                  onLoad={e => { const t = e.currentTarget; setSizes(s => s[m.img!] ? s : { ...s, [m.img!]: `${t.naturalWidth}×${t.naturalHeight}` }); }}
+                  style={{ width: "100%", borderRadius: 18, display: "block", border: "1px solid var(--line)", boxShadow: "var(--shadow)" }} />
                 <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
-                  <a href={fileUrl(result.job_id, m.img, result.backend_url)} download style={btn}>下载</a>
-                  <button onClick={() => setBaseImg(m.img)} style={btn}>引用</button>
-                  <button disabled={rerendering} onClick={() => doRerender(m.img)} style={{ ...btn, border: 0, background: "var(--accent)", color: "#fff", opacity: rerendering ? 0.5 : 1 }}>⟳ 重新渲染成 3D</button>
+                  <span style={{ fontSize: 12.5, color: "var(--ink3)" }}>{versionName(m.img)}{sizes[m.img] ? ` · ${sizes[m.img]}` : ""}</span>
+                  <button onClick={() => void exportImage(m.img!)} style={btn}>导出图片</button>
+                  <button onClick={() => setDraft({ base: m.img })} style={btn}>引用</button>
+                  <button disabled={rerendering || aiBusy} onClick={() => void runRerender(result, m.img!, onRerenderDone)} style={{ ...btn, border: 0, background: "var(--accent)", color: "#fff", opacity: rerendering || aiBusy ? 0.5 : 1 }}>⟳ 重新渲染成 3D</button>
+                  {saved[m.img] && <span role="status" style={{ fontSize: 12.5, color: "var(--ink3)" }}>{saved[m.img]}</span>}
                 </div>
               </div>
             ) : (
-              <div key={i} role={m.failed ? "alert" : undefined} style={{ alignSelf: "flex-start", maxWidth: "78%", background: "var(--track)", color: "var(--ink2)", padding: "13px 20px", borderRadius: "20px 20px 20px 5px", fontSize: 15, lineHeight: 1.5 }}>{m.text}</div>
+              <div key={m.id} role={m.failed ? "alert" : undefined} style={{ alignSelf: "flex-start", maxWidth: "78%", background: "var(--track)", color: "var(--ink2)", padding: "13px 20px", borderRadius: "20px 20px 20px 5px", fontSize: 15, lineHeight: 1.5 }}>{m.text}</div>
             )
           )}
           {aiBusy && (
             <div style={{ alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 9, color: "var(--ink3)", fontSize: 14.5, padding: "10px 4px" }}>
               <PixelLoader size={14} style={{ color: "var(--ink2)" }} />
-              豆包正在改图…
+              豆包正在改图…可以先去别的页面，改好会留在这里
             </div>
           )}
           {chat.length === 0 && !aiBusy && (
             <div style={{ color: "var(--ink3)", fontSize: 15, textAlign: "center", padding: "30px 0" }}>
-              点上面的预设，或在下方直接描述你想怎么改 ——
+              点上面的预设，或在下方直接描述你想怎么改 —— 也可以让右下角的鲸鱼娘照你的要求或参考图写提示词
             </div>
           )}
         </div>
@@ -1264,19 +1254,20 @@ function EnhancePage({ result, setPage, onRerenderDone, doubao, onDoubaoChange }
       {/* 引用提示 + 输入（更大）*/}
       {baseImg && (
         <div style={{ display: "inline-flex", alignItems: "center", gap: 9, marginTop: 18, padding: "8px 16px", borderRadius: 980, background: "rgba(0,113,227,0.1)", color: "var(--accent)", fontSize: 14 }}>
-          引用 {baseImg === "original.jpg" ? "原图" : "上一版"} 作为下一次修改的基础
-          <button onClick={() => setBaseImg("")} style={{ border: 0, background: "none", color: "var(--accent)", fontSize: 17, lineHeight: 1, cursor: "pointer" }}>×</button>
+          引用 {versionName(baseImg)} 作为下一次修改的基础
+          <button onClick={() => setDraft({ base: "" })} style={{ border: 0, background: "none", color: "var(--accent)", fontSize: 17, lineHeight: 1, cursor: "pointer" }}>×</button>
         </div>
       )}
-      {padDraft > 0 && <p className="compute-note">这次将向四周扩展 {Math.round(padDraft * 100)}% 画布。<button onClick={() => setPadDraft(0)} style={{ border: 0, background: "none", color: "var(--accent)", fontSize: 12 }}>取消扩图</button></p>}
+      {session.delivered > 0 && input && <p className="compute-note">鲸鱼娘写好了{session.deliveredTitle ? `「${session.deliveredTitle}」` : "一条修图提示词"}，检查一下，可以直接改，满意再点发送。</p>}
+      {padDraft > 0 && <p className="compute-note">这次将向四周扩展 {Math.round(padDraft * 100)}% 画布。<button onClick={() => setDraft({ pad: 0 })} style={{ border: 0, background: "none", color: "var(--accent)", fontSize: 12 }}>取消扩图</button></p>}
       <div style={{ display: "flex", gap: 12, marginTop: 18, alignItems: "flex-end" }}>
-        <textarea rows={input.length > 80 ? 6 : 3} aria-label="修图提示词"
-          value={input} onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && input.trim() && !needsKey && !aiBusy && !rerendering) { e.preventDefault(); sendEdit(input.trim(), input.trim(), padDraft); setInput(""); setPadDraft(0); } }}
+        <textarea ref={inputRef} rows={input.length > 80 ? 8 : 3} aria-label="修图提示词"
+          value={input} onChange={(e) => setDraft({ draft: e.target.value })}
+          onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }}
           placeholder="把光线改成日落黄金时刻，暖一点"
           style={{ flex: 1, minWidth: 0, border: "1px solid var(--line)", borderRadius: 20, padding: "15px 18px", font: "inherit", fontSize: 14, lineHeight: 1.8, resize: "vertical", background: "var(--card)", color: "var(--ink)" }}
         />
-        <button disabled={aiBusy || rerendering || needsKey || !input.trim()} onClick={() => { if (input.trim()) { sendEdit(input.trim(), input.trim(), padDraft); setInput(""); setPadDraft(0); } }} style={{ border: 0, background: "var(--accent)", color: "#fff", padding: "13px 22px", borderRadius: 980, fontSize: 14, whiteSpace: "nowrap", fontWeight: 500, opacity: (aiBusy || !input.trim()) ? 0.5 : 1, cursor: (aiBusy || !input.trim()) ? "default" : "pointer" }}>发送</button>
+        <button disabled={aiBusy || rerendering || needsKey || !input.trim()} onClick={send} style={{ border: 0, background: "var(--accent)", color: "#fff", padding: "13px 22px", borderRadius: 980, fontSize: 14, whiteSpace: "nowrap", fontWeight: 500, opacity: (aiBusy || !input.trim()) ? 0.5 : 1, cursor: (aiBusy || !input.trim()) ? "default" : "pointer" }}>发送</button>
       </div>
     </main>
   );
@@ -1552,6 +1543,8 @@ export default function App() {
   const [assist, setAssist] = useState(false);
   const [assistVision, setAssistVision] = useState(false);
   const [result, setResult] = useState(null);
+  // 鲸鱼娘写修图提示词时写进这件作品的修图草稿
+  useEffect(() => { setActiveEditJob(result?.job_id ? result : null); }, [result?.job_id, result?.backend_url]);
   const [creating, setCreating] = useState(false);
   const [incoming, setIncoming] = useState<{ file: File; id: number } | null>(null);
   const takeIncoming = useCallback(() => setIncoming(null), []);

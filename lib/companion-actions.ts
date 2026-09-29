@@ -6,7 +6,9 @@
 export type PageAction =
   | { type: "navigate"; page: string; note?: string }
   | { type: "scroll"; ref?: string; direction?: "up" | "down" | "top" | "bottom"; note?: string }
-  | { type: "highlight" | "click"; ref: string; note?: string };
+  | { type: "highlight" | "click"; ref: string; note?: string }
+  /** A retouch prompt she wrote: it goes into the retouch box; the user reviews it and presses send. */
+  | { type: "edit_prompt"; prompt: string; pad: number; strength: "gentle" | "balanced"; note?: string };
 
 export const PAGE_NAMES: Record<string, string> = { home: "概览", create: "创作", studio: "工作室", enhance: "修图", gallery: "作品库" };
 

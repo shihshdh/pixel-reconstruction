@@ -16,6 +16,7 @@ import CompanionVision from './CompanionVision';
 import { collectCompanionPage } from '@/lib/companion-vision';
 import { MOMENT_EVENT, captureScene, isDevelopablePhoto, photoForVision, requestUpload, type CompanionMoment } from "@/lib/companion-moments";
 import { trapScroll } from "@/lib/scroll-trap";
+import { deliverEditPrompt, editContext } from "@/lib/edit-session";
 import styles from "./WhaleCompanion.module.css";
 
 type StageProps = { width: number; height: number; paused: boolean; reducedMotion: boolean; onReady?: () => void; onError?: (reason: string) => void };
@@ -151,7 +152,7 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
   const context = useCallback(() => {
     const now = Date.now();
     const errors = errorsRef.current.filter(e => now - e.at < ERROR_MEMORY_MS).slice(-5).map(e => e.text);
-    return { page, stage: stageTextRef.current || undefined, errors, online: navigator.onLine };
+    return { page, stage: stageTextRef.current || undefined, errors, online: navigator.onLine, edit: editContext() };
   }, [page]);
   const note = useCallback((content: string) => {
     setItems(list => [...list, { id: nextId.current++, role: "assistant", content, local: true }]);
@@ -160,7 +161,14 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
   const runActions = useCallback(async (actions: PageAction[]) => {
     const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
     let touchedPage = false;
-    for (const action of actions.slice(0, 4)) {
+    for (const action of actions.slice(0, 5)) {
+      if (action.type === "edit_prompt") {
+        // Written into the retouch box only; sending it (and spending an edit) stays the user's click.
+        if (!deliverEditPrompt(action)) { note("↪ 还没有可修的作品，先去「创作」显影一张，再让我写修图提示词。"); continue; }
+        if (page !== "enhance" && navigateRef.current) { navigateRef.current("enhance"); await wait(500); }
+        note(`↪ 已把修图提示词${action.note ? `「${action.note}」` : ""}写进修图框${action.pad ? `（含扩图 ${Math.round(action.pad * 100)}%）` : ""}，检查后点「发送」`);
+        touchedPage = true; continue;
+      }
       if (action.type === "navigate") {
         if (!navigateRef.current || !PAGE_NAMES[action.page]) continue;
         navigateRef.current(action.page); note(`↪ 已切换到「${PAGE_NAMES[action.page]}」`);
@@ -187,7 +195,7 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
       await wait(450);
     }
     return touchedPage;
-  }, [note, reduced]);
+  }, [note, reduced, page]);
   const confirmPending = (yes: boolean) => {
     const current = pending;
     setPending(null);
@@ -201,7 +209,11 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
 
   const send = useCallback(async (text: string, manual = false, look?: { screen?: string; page_image?: string }) => {
     const attachment = look ? look.screen || null : manual && visionEnabled ? screen : null;
-    const pictures = look ? (look.page_image ? { image: look.page_image, count: 1 } : null) : manual && visionEnabled ? pageImage : null;
+    let pictures = look ? (look.page_image ? { image: look.page_image, count: 1 } : null) : manual && visionEnabled ? pageImage : null;
+    // On the retouch page a reference picture is compared with the user's own photo: send both.
+    if (!look && manual && visionEnabled && attachment && !pictures && page === "enhance") {
+      try { const snap = collectCompanionPage({ images: true }); if (snap.image) pictures = { image: snap.image, count: snap.count }; } catch {}
+    }
     const content = text.trim() || (attachment || pictures ? '请看看我附上的图片，帮我解释画面内容。' : '');
     if (!content || busy || sending.current) return;
     sending.current = true;
@@ -243,7 +255,7 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
       sending.current = false;
       if (abortRef.current === controller) { abortRef.current = null; setBusy(false); }
     }
-  }, [busy, items, context, reduced, screen, pageImage, visionEnabled, runActions, compact, say, openChat]);
+  }, [busy, items, context, reduced, screen, pageImage, visionEnabled, runActions, compact, say, openChat, page]);
   const sendRef = useRef(send);
   sendRef.current = send;
 
@@ -303,7 +315,9 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
     const target = items.find(m => m.id === reveal.id);
     if (!target || reveal.count >= target.content.length) { stageRef.current?.speak(false); setReveal(null); return; }
     stageRef.current?.speak(true);
-    const timer = setTimeout(() => setReveal(r => (r ? { ...r, count: r.count + 2 } : r)), 45);
+    // Long replies type faster so the whole answer still arrives in about 15 seconds.
+    const step = Math.max(2, Math.ceil(target.content.length / 330));
+    const timer = setTimeout(() => setReveal(r => (r ? { ...r, count: r.count + step } : r)), 45);
     return () => clearTimeout(timer);
   }, [reveal, items]);
   useEffect(() => { logRef.current?.scrollTo({ top: logRef.current.scrollHeight }); }, [items, busy, reveal?.count, open, pending]);
@@ -512,6 +526,7 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
   const errorsNow = errorsRef.current.filter(e => Date.now() - e.at < ERROR_MEMORY_MS);
   const suggestions = [
     ...(errorsNow.length ? ["刚才的报错是什么意思？"] : []),
+    ...(page === "enhance" ? ["帮我写一条修图提示词"] : []),
     "带我去作品库看看", "什么样的照片效果最好？", "为什么转太大角度会穿帮？",
   ].slice(0, 3);
 
@@ -529,7 +544,7 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
         </div>
       </header>
       <div ref={logRef} className={styles.log} aria-live="polite">
-        {items.length === 0 && <p className={styles.empty}>可以问我报错是什么意思、网站怎么用，让我帮你找按钮、翻页，也可以随便聊聊。想做 3D，直接把照片拖给我就行。</p>}
+        {items.length === 0 && <p className={styles.empty}>可以问我报错是什么意思、网站怎么用，让我帮你找按钮、翻页，也可以随便聊聊。想做 3D，直接把照片拖给我就行。想修图，告诉我想要的效果或附上参考图，我帮你写好提示词放进修图框。</p>}
         {items.map(m => {
           const revealing = reveal?.id === m.id;
           const text = revealing ? m.content.slice(0, reveal.count) : m.content;

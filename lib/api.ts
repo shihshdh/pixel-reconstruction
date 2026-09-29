@@ -230,7 +230,7 @@ export type AssistMood = 'happy' | 'excited' | 'think' | 'worry' | 'sad' | 'surp
 export type AssistMessage = { role: 'user' | 'assistant'; content: string };
 export type AssistSource = { title: string; url: string; site?: string };
 /** Whale companion chat. The DeepSeek key stays in Beam Secrets; one attempt, never retried. */
-export function assistChat(messages: AssistMessage[], context: { page: string; stage?: string; errors?: string[]; online?: boolean; page_text?: string }, signal?: AbortSignal, base = getBase(), vision?: { screen?: string; page_image?: string }) {
+export function assistChat(messages: AssistMessage[], context: { page: string; stage?: string; errors?: string[]; online?: boolean; page_text?: string; edit?: { ready: boolean; draft?: string; history?: string[] } }, signal?: AbortSignal, base = getBase(), vision?: { screen?: string; page_image?: string }) {
   return request<{ reply: string; mood: AssistMood; actions?: PageAction[]; sources?: AssistSource[] }>("/assist", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages, context, ...vision }), signal }, base, 90000);
 }
 export function fileUrl(jobId: string, name: string, base = getBase()) {

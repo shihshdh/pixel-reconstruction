@@ -244,7 +244,51 @@ class AssistTests(unittest.TestCase):
         rejected = post.call_args_list[2].kwargs["json"]["messages"][-1]["content"]
         self.assertIn("编号无效", rejected)
         # No search tool offered without a Bocha key.
-        self.assertEqual([t["function"]["name"] for t in body["tools"]], ["operate_page"])
+        self.assertEqual([t["function"]["name"] for t in body["tools"]], ["operate_page", "write_edit_prompt"])
+
+    # ---- retouch prompts and long replies ----
+    def test_edit_prompt_tool_is_validated_and_returned_once(self):
+        prompt = "把照片调成参考图的暖调：\n· 白平衡 +600K：整体变暖不泛橙\n画面内容保持不变。"
+        replies = [self.tool_call("write_edit_prompt", {"prompt": prompt, "pad_ratio": 9, "strength": "wild", "title": "参考图同款"}),
+                   self.tool_call("write_edit_prompt", {"prompt": prompt}, "call_2"),
+                   deepseek_ok("<mood:happy>\n写好啦")]
+        with patch.object(assist.requests, "post", side_effect=replies) as post:
+            reply, mood, actions, sources = assist.ask_deepseek([{"role": "user", "content": "照参考图调色"}], "")
+        self.assertEqual(reply, "写好啦")
+        self.assertEqual(actions, [{"type": "edit_prompt", "prompt": prompt, "pad": 0.5, "strength": "gentle", "note": "参考图同款"}])
+        self.assertIn("已经写过", post.call_args_list[2].kwargs["json"]["messages"][-1]["content"])
+
+    def test_edit_prompt_tag_fallback_is_hidden_from_reply(self):
+        text = '<mood:happy>\n写进修图框啦～\n<edit_prompt pad="0.15" strength="balanced" title="扩一点">四周延伸 15%：\n· 地面沿消失点延长</edit_prompt>'
+        with patch.object(assist.requests, "post", side_effect=[MagicMock(status_code=400), deepseek_ok(text)]) as post:
+            reply, mood, actions, sources = assist.ask_deepseek([{"role": "user", "content": "扩图"}], "")
+        self.assertEqual(reply, "写进修图框啦～")
+        self.assertEqual((actions[0]["pad"], actions[0]["strength"], actions[0]["note"]), (0.15, "balanced", "扩一点"))
+        self.assertIn("edit_prompt", post.call_args_list[1].kwargs["json"]["messages"][0]["content"])
+
+    def test_cut_off_reply_is_continued(self):
+        first = deepseek_ok("<mood:happy>\n看到啦！天空的过渡保住了。也直说个实话：")
+        first.json.return_value["choices"][0]["finish_reason"] = "length"
+        rest = deepseek_ok("远处的桥在大角度下会露出背面，小幅环绕最好看。")
+        with patch.object(assist.requests, "post", side_effect=[first, rest]) as post:
+            reply = assist.ask_deepseek([{"role": "user", "content": "看看"}], "")[0]
+        self.assertEqual(reply, "看到啦！天空的过渡保住了。也直说个实话：远处的桥在大角度下会露出背面，小幅环绕最好看。")
+        self.assertEqual(post.call_args_list[0].kwargs["json"]["max_tokens"], assist.MAX_TOKENS)
+
+    def test_reply_still_cut_ends_at_a_sentence(self):
+        cut = deepseek_ok("<mood:think>\n第一句说完了。第二句说到一半：")
+        cut.json.return_value["choices"][0]["finish_reason"] = "length"
+        with patch.object(assist.requests, "post", return_value=cut) as post:
+            reply = assist.ask_deepseek([{"role": "user", "content": "看看"}], "")[0]
+        self.assertEqual(post.call_count, 1 + assist.MAX_CONTINUE)
+        self.assertTrue(reply.endswith("。"))
+        self.assertNotIn("mood", reply)
+
+    def test_context_carries_edit_state(self):
+        text = assist.clean_context({"page": "enhance", "edit": {"ready": True, "history": ["调暖一点"], "draft": "· 曝光 +0.3EV"}})
+        self.assertIn("已有可修的作品", text)
+        self.assertIn("调暖一点", text)
+        self.assertIn("· 曝光 +0.3EV", text)
 
     def test_tool_loop_is_bounded(self):
         with patch.object(assist.requests, "post", return_value=self.tool_call("operate_page", {"action": "scroll", "direction": "down"})) as post:

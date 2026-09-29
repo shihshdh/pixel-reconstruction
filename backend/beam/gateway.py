@@ -321,6 +321,18 @@ def protected_outpaint(original, ratio, prompt, api_key="", model=""):
     return buffer.getvalue(), True
 
 
+def match_resolution(data, size):
+    """Seedream answers at about 2K; bring a smaller result back to the source photo's pixel size
+    (Lanczos) so an exported version is never lower-resolution than what the user started from."""
+    with Image.open(io.BytesIO(data)) as edited:
+        if edited.width >= size[0] and edited.height >= size[1]:
+            return data
+        output = edited.convert("RGB").resize(size, Image.Resampling.LANCZOS)
+    buffer = io.BytesIO()
+    output.save(buffer, "JPEG", quality=95, subsampling=0)
+    return buffer.getvalue()
+
+
 def seam_difference(redrawn, original):
     """Mean grey difference (0–255) in the outer 8% band where the seam falls.
 
@@ -560,6 +572,9 @@ def create_app():
         output = "edit_" + uuid.uuid4().hex + ".jpg"
         # User credentials remain in request memory, never in task state or files.
         data, preserved = protected_outpaint(incoming, pad, prompt, api_key, model) if pad else (ark_edit(incoming, prompt, api_key, model), False)
+        # Composited outpaints are already at the original's scale; everything else is scaled back up to it.
+        if not preserved:
+            data = match_resolution(data, (round(incoming.width * (1 + 2 * pad)), round(incoming.height * (1 + 2 * pad))))
         (directory / output).write_bytes(data)
         urls = get_urls(job_id, [output])
         return {"image": output, "file_url": urls[output], "file_urls": urls,
