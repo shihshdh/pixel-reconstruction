@@ -89,9 +89,15 @@ def private_job(job_id, job_token):
 ARK_MODELS = ("doubao-seedream-5-0-pro-260628", "doubao-seedream-5-0-260128",
               "doubao-seedream-4-5-251128", "doubao-seedream-4-0-250828")
 ARK_URL = "https://ark.cn-beijing.volces.com/api/v3/images/generations"
-# About 2K output (2048² ≈ 4.19M px): inside every listed model's pixel range,
-# including 5.0 Pro's 4.62M ceiling and 4.5's 3.69M floor.
-ARK_OUTPUT_PIXELS = 2048 * 2048
+# Output size is chosen per edit (output_resolution): "1k" ≈ 1024² (default), "2k" ≈ 2048², or
+# "original" (made at 2K, then scaled to the source photo's pixel size). Always at the photo's aspect
+# ratio. Seedream 5.0 / 4.0 accept custom sizes from 1280×720 (921,600 px) up to about 4.62M px;
+# 4.5 has a 3.69M floor, so it gets its minimum instead. If a model still rejects the size, that
+# request is retried once at about 2K.
+ARK_OUTPUT_PIXELS = 1024 * 1024
+ARK_FALLBACK_PIXELS = 2048 * 2048
+OUTPUT_RESOLUTIONS = {"1k": ARK_OUTPUT_PIXELS, "2k": ARK_FALLBACK_PIXELS, "original": ARK_FALLBACK_PIXELS}
+ARK_MIN_PIXELS = {"doubao-seedream-4-5": 3_686_400}
 ARK_INPUT_EDGE = 3072
 _working_model = {}
 
@@ -116,6 +122,10 @@ def output_size(width, height, pixels=ARK_OUTPUT_PIXELS):
     return round(width * scale / 16) * 16, round(height * scale / 16) * 16
 
 
+def model_pixels(name, pixels=ARK_OUTPUT_PIXELS):
+    return max([pixels] + [floor for prefix, floor in ARK_MIN_PIXELS.items() if name.startswith(prefix)])
+
+
 def model_candidates(model):
     if model:
         return [model]
@@ -123,7 +133,7 @@ def model_candidates(model):
     return [preferred] + [m for m in ARK_MODELS if m != preferred] if preferred else list(ARK_MODELS)
 
 
-def ark_edit(image, prompt, api_key="", model=""):
+def ark_edit(image, prompt, api_key="", model="", pixels=ARK_OUTPUT_PIXELS):
     key = api_key or os.environ.get("ARK_API_KEY", "")
     if not key:
         raise HTTPException(503, "修图服务尚未配置。")
@@ -136,7 +146,7 @@ def ark_edit(image, prompt, api_key="", model=""):
     source.save(buffer, "JPEG", quality=94)
     payload = {
         "prompt": prompt, "image": "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode(),
-        "size": "%dx%d" % output_size(width, height), "response_format": "b64_json", "watermark": False,
+        "response_format": "b64_json", "watermark": False,
     }
     candidates = model_candidates(model)
     # Remember which model works per key, by hash: user keys never outlive the request.
@@ -146,8 +156,9 @@ def ark_edit(image, prompt, api_key="", model=""):
         candidates = [_working_model[cache]] + [m for m in candidates if m != _working_model[cache]]
     for index, name in enumerate(candidates):
         try:
+            size = "%dx%d" % output_size(width, height, model_pixels(name, pixels))
             response = requests.post(ARK_URL, headers={"Authorization": "Bearer " + key},
-                                     json={**payload, "model": name}, timeout=240)
+                                     json={**payload, "model": name, "size": size}, timeout=240)
         except requests.RequestException:
             raise HTTPException(502, "修图服务暂不可用，请稍后重试。")
         try:
@@ -155,6 +166,19 @@ def ark_edit(image, prompt, api_key="", model=""):
         except ValueError:
             error = {}
         code = str(error.get("code", ""))
+        if response.status_code == 400 and "size" in (code + str(error.get("message", ""))).lower():
+            # This model does not take a 1K size: ask once more at about 2K.
+            print(f"ark: {name} rejected size {size}, retrying at 2K", flush=True)
+            try:
+                response = requests.post(ARK_URL, headers={"Authorization": "Bearer " + key}, timeout=240,
+                                         json={**payload, "model": name, "size": "%dx%d" % output_size(width, height, ARK_FALLBACK_PIXELS)})
+            except requests.RequestException:
+                raise HTTPException(502, "修图服务暂不可用，请稍后重试。")
+            try:
+                error = {} if response.ok else response.json().get("error", {})
+            except ValueError:
+                error = {}
+            code = str(error.get("code", ""))
         # Model not enabled, or its usage cap reached ("Safe Experience Mode"
         # pauses the model): try the next one.
         if (response.status_code in (403, 404) or code == "SetLimitExceeded") and index + 1 < len(candidates):
@@ -256,7 +280,7 @@ def locate_original(generated, original, box):
     return (tuple(v / fine for v in found) if score > .5 else None), score
 
 
-def protected_outpaint(original, ratio, prompt, api_key="", model=""):
+def protected_outpaint(original, ratio, prompt, api_key="", model="", pixels=ARK_OUTPUT_PIXELS):
     """Keep original content by compositing, independently of model compliance.
     Returns (jpeg bytes, whether the original pixels were pasted back).
 
@@ -278,7 +302,7 @@ def protected_outpaint(original, ratio, prompt, api_key="", model=""):
     padded = min(.6, (1.15 * (1 + 2 * ratio) - 1) / 2)
     canvas = pad_canvas(original, padded)
     size = canvas.size
-    expanded = ark_edit(canvas, outpaint_prompt(ratio, prompt), api_key, model)
+    expanded = ark_edit(canvas, outpaint_prompt(ratio, prompt), api_key, model, pixels)
     with Image.open(io.BytesIO(expanded)) as generated:
         output = generated.convert("RGB").resize(size, Image.Resampling.LANCZOS)
     nominal = ((size[0] - original.width) / 2, (size[1] - original.height) / 2, original.width, original.height)
@@ -328,6 +352,17 @@ def match_resolution(data, size):
         if edited.width >= size[0] and edited.height >= size[1]:
             return data
         output = edited.convert("RGB").resize(size, Image.Resampling.LANCZOS)
+    buffer = io.BytesIO()
+    output.save(buffer, "JPEG", quality=95, subsampling=0)
+    return buffer.getvalue()
+
+
+def fit_pixels(data, pixels):
+    """Scale a result larger than the chosen output size down to it (Lanczos); smaller ones are left alone."""
+    with Image.open(io.BytesIO(data)) as edited:
+        if edited.width * edited.height <= pixels * 1.15:
+            return data
+        output = edited.convert("RGB").resize(output_size(edited.width, edited.height, pixels), Image.Resampling.LANCZOS)
     buffer = io.BytesIO()
     output.save(buffer, "JPEG", quality=95, subsampling=0)
     return buffer.getvalue()
@@ -428,7 +463,7 @@ def create_app():
             if enhance:
                 admission(call_id, job_id, "edits")
                 source = "edit_" + uuid.uuid4().hex + ".jpg"
-                (directory / source).write_bytes(protected_outpaint(normalized, .25, protect_prompt(ENHANCE_PROMPT))[0])
+                (directory / source).write_bytes(protected_outpaint(normalized, .25, protect_prompt(ENHANCE_PROMPT), pixels=ARK_FALLBACK_PIXELS)[0])
             dispatch(call_id=call_id, job_id=job_id, source=source,
                      render_video=render_video, enhanced=enhance)
         except Exception as error:
@@ -550,6 +585,10 @@ def create_app():
         prompt = str(payload.get("prompt", "")).strip()
         if not prompt or len(prompt) > 4000:
             raise HTTPException(400, "请输入 1–4000 字的修图要求。")
+        resolution = payload.get("output_resolution", "1k") or "1k"
+        if resolution not in OUTPUT_RESOLUTIONS:
+            raise HTTPException(400, "输出分辨率只能选择 1k、2k 或 original。")
+        pixels = OUTPUT_RESOLUTIONS[resolution]
         strength = payload.get("edit_strength", "gentle")
         if strength not in ("gentle", "balanced"):
             raise HTTPException(400, "修图强度只能选择 gentle 或 balanced。")
@@ -571,10 +610,14 @@ def create_app():
             incoming = original.convert("RGB")
         output = "edit_" + uuid.uuid4().hex + ".jpg"
         # User credentials remain in request memory, never in task state or files.
-        data, preserved = protected_outpaint(incoming, pad, prompt, api_key, model) if pad else (ark_edit(incoming, prompt, api_key, model), False)
-        # Composited outpaints are already at the original's scale; everything else is scaled back up to it.
-        if not preserved:
-            data = match_resolution(data, (round(incoming.width * (1 + 2 * pad)), round(incoming.height * (1 + 2 * pad))))
+        data, preserved = protected_outpaint(incoming, pad, prompt, api_key, model, pixels) if pad else (ark_edit(incoming, prompt, api_key, model, pixels), False)
+        if resolution == "original":
+            # Composited outpaints are already at the original's scale; everything else is scaled up to it.
+            if not preserved:
+                data = match_resolution(data, (round(incoming.width * (1 + 2 * pad)), round(incoming.height * (1 + 2 * pad))))
+        else:
+            # A composited outpaint comes back at the source photo's scale: bring it to the chosen size too.
+            data = fit_pixels(data, pixels)
         (directory / output).write_bytes(data)
         urls = get_urls(job_id, [output])
         return {"image": output, "file_url": urls[output], "file_urls": urls,

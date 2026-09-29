@@ -2,7 +2,7 @@
 // 请求也在这里跑，不跟着修图页的生命周期走：切到别的页面、再切回来，改图结果照样落进对话；
 // 从作品库重新打开同一件作品，以前修过的每一版都还在。鲸鱼娘写的提示词也直接写进这里的草稿。
 import { useSyncExternalStore } from "react";
-import { checkStatus, downloadJobFile, editImage, getBase, refreshJobAccess, requestRerender } from "./api";
+import { checkStatus, downloadJobFile, editImage, getBase, refreshJobAccess, requestRerender, type EditResolution } from "./api";
 import { isDesktopApp, saveWorkFile, workFolder } from "./desktop";
 
 export type EditMessage = { id: string; role: "user" | "ai"; text?: string; img?: string; ref?: string; failed?: boolean; at: number };
@@ -13,6 +13,8 @@ export type EditSession = {
   draft: string;
   pad: number;
   strength: EditStrength;
+  /** 豆包输出分辨率：1K（默认）、2K，或放大到原图尺寸。 */
+  resolution: EditResolution;
   base: string;
   editing: boolean;
   rerendering: boolean;
@@ -23,7 +25,7 @@ export type EditSession = {
 type Job = { job_id: string; backend_url?: string; job_token?: string };
 
 const PREFIX = "ruhua-edit-chat-v1::";
-const EMPTY: EditSession = { chat: [], history: [], draft: "", pad: 0, strength: "gentle", base: "", editing: false, rerendering: false, delivered: 0, deliveredTitle: "" };
+const EMPTY: EditSession = { chat: [], history: [], draft: "", pad: 0, strength: "gentle", resolution: "1k", base: "", editing: false, rerendering: false, delivered: 0, deliveredTitle: "" };
 const sessions = new Map<string, EditSession>();
 const listeners = new Set<() => void>();
 let active: { key: string; job: Job } | null = null;
@@ -44,6 +46,7 @@ function load(key: string): EditSession {
     draft: typeof saved.draft === "string" ? saved.draft : "",
     pad: typeof saved.pad === "number" && saved.pad >= 0 && saved.pad <= .5 ? saved.pad : 0,
     strength: saved.strength === "balanced" ? "balanced" : "gentle",
+    resolution: saved.resolution === "2k" || saved.resolution === "original" ? saved.resolution : "1k",
     base: typeof saved.base === "string" ? saved.base : "",
   };
   sessions.set(key, session);
@@ -57,7 +60,7 @@ function update(key: string, change: (session: EditSession) => Partial<EditSessi
   try {
     localStorage.setItem(PREFIX + key, JSON.stringify({
       chat: next.chat.slice(-300), history: next.history.slice(-40),
-      draft: next.draft.slice(0, 4000), pad: next.pad, strength: next.strength, base: next.base,
+      draft: next.draft.slice(0, 4000), pad: next.pad, strength: next.strength, resolution: next.resolution, base: next.base,
     }));
   } catch {}
   listeners.forEach(listener => listener());
@@ -69,7 +72,7 @@ export function useEditSession(key: string | null): EditSession {
   return useSyncExternalStore(subscribe, () => (key ? load(key) : EMPTY), () => EMPTY);
 }
 
-export function setEditDraft(key: string, change: Partial<Pick<EditSession, "draft" | "pad" | "strength" | "base" | "delivered">>) {
+export function setEditDraft(key: string, change: Partial<Pick<EditSession, "draft" | "pad" | "strength" | "resolution" | "base" | "delivered">>) {
   update(key, () => change);
 }
 
@@ -116,7 +119,7 @@ export async function runEdit(job: Job, request: { display: string; prompt: stri
     chat: [...s.chat, { id: newId(), at: Date.now(), role: "user", text: request.display, ref: ref || undefined }],
   }));
   try {
-    const result = await editImage(job.job_id, request.prompt, request.pad, ref, session.history, job.backend_url, request.credentials, request.strength);
+    const result = await editImage(job.job_id, request.prompt, request.pad, ref, session.history, job.backend_url, request.credentials, request.strength, session.resolution);
     update(key, s => ({
       editing: false, base: "", history: [...s.history, request.display.slice(0, 400)],
       chat: [...s.chat, { id: newId(), at: Date.now(), role: "ai", img: result.image }],

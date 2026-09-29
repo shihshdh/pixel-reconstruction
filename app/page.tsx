@@ -1204,7 +1204,7 @@ function EnhancePage({ result, setPage, onRerenderDone, doubao, onDoubaoChange }
 
       <DoubaoSettings value={doubao} onChange={onDoubaoChange} disabled={aiBusy || rerendering} />
       {needsKey && <p className="field-error">请先填写你的豆包 API Key，或切回站长提供的服务。</p>}
-      <EditPromptPicker strength={strength} onStrengthChange={value => setDraft({ strength: value })} disabled={aiBusy || rerendering} onSelect={(prompt, pad) => setDraft({ draft: prompt, pad })} />
+      <EditPromptPicker strength={strength} onStrengthChange={value => setDraft({ strength: value })} resolution={session.resolution} onResolutionChange={value => setDraft({ resolution: value })} disabled={aiBusy || rerendering} onSelect={(prompt, pad) => setDraft({ draft: prompt, pad })} />
 
       {/* 对话流（更大留白，图片醒目）*/}
       <div style={{ border: "1px solid var(--line)", borderRadius: 26, background: "var(--bg2)", padding: 26, minHeight: 280 }}>
