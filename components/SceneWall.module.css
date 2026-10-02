@@ -1,8 +1,13 @@
 .wall{max-width:1052px;margin:96px auto 24px;}
-.head{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap;margin-bottom:22px;}
+.head{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,620px);align-items:end;gap:20px;margin-bottom:22px;}
+.head>div:first-child{position:relative;z-index:1;padding-bottom:30px;}
+.head .chips{margin-top:18px;}
 .head h2{font-size:clamp(27px,3.5vw,39px);line-height:1.3;margin:0;letter-spacing:-.02em;}
 .eyebrow{margin:0 0 8px;font-size:11px;letter-spacing:.14em;color:var(--ink3);}
 .chips{display:flex;gap:6px;flex-wrap:wrap;}
+/* 从文件夹点过来的那一格闪一下 */
+.tile[data-flash]{animation:tile-flash 1.1s ease-out;}
+@keyframes tile-flash{0%,40%{box-shadow:0 0 0 3px var(--accent),0 12px 26px -22px #272d3469;}100%{box-shadow:0 0 0 0 transparent,0 12px 26px -22px #272d3469;}}
 .chips button{border:1px solid var(--line);background:none;color:var(--ink2);border-radius:980px;padding:6px 14px;font-size:12px;transition:background .2s,color .2s,border-color .2s;}
 .chips button[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:var(--bg);}
 
@@ -27,5 +32,6 @@
 
 @keyframes tile-in{from{opacity:0;transform:translate3d(0,14px,0) scale(.985);}to{opacity:1;transform:none;}}
 @media(max-width:1120px){.wall{margin-left:24px;margin-right:24px;}}
+@media(max-width:900px){.head{grid-template-columns:1fr;}}
 @media(max-width:740px){.wall{margin-top:64px;}.grid{columns:2 140px;column-gap:10px;}.tile{margin-bottom:10px;border-radius:11px;}.quote p{font-size:18px;}.tile figcaption{opacity:1;transform:none;}}
 @media(prefers-reduced-motion:reduce){.tile{animation:none;}.tile>img{transition:none;}}

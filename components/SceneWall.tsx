@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { LANDING_SCENES } from "@/lib/landing-scenes";
 import { prefersReduced } from "@/lib/motion";
+import FolderFan from "./FolderFan";
 import styles from "./SceneWall.module.css";
 
 // 照片原本都是 16:10，裁成不同比例才排得出错落的瀑布流
@@ -103,7 +104,7 @@ function PhotoTile({ id, ratio, hidden }: { id: string; ratio: string; hidden: b
   const img = useRef<HTMLImageElement>(null), canvas = useRef<HTMLCanvasElement>(null);
   usePixelGlitch(img, canvas);
   if (!scene) return null;
-  return <figure className={styles.tile} data-hidden={hidden || undefined} style={{ aspectRatio: ratio }}>
+  return <figure className={styles.tile} data-scene={id} data-hidden={hidden || undefined} style={{ aspectRatio: ratio }}>
     <img ref={img} src={`/scene/wall/${id}.webp`} alt={scene.alt} loading="lazy" decoding="async" />
     <canvas ref={canvas} className={styles.glitch} aria-hidden="true" />
     <figcaption><strong>{scene.name}</strong><span>{scene.place}</span></figcaption>
@@ -121,7 +122,7 @@ function FlipbookTile({ ratio, hidden }: { ratio: string; hidden: boolean }) {
     const preload = FRAMES.map(src => { const im = new Image(); im.src = src; return im.decode?.().catch(() => {}); });
     const io = new IntersectionObserver(([entry]) => {
       clearInterval(timer);
-      if (entry.isIntersecting) void Promise.all(preload).then(() => { clearInterval(timer); timer = window.setInterval(() => setFrame(f => (f + 1) % FRAMES.length), 260); });
+      if (entry.isIntersecting) void Promise.all(preload).then(() => { clearInterval(timer); timer = window.setInterval(() => setFrame(f => (f + 1) % FRAMES.length), 700); });
     }, { threshold: .2 });
     io.observe(el);
     return () => { io.disconnect(); clearInterval(timer); };
@@ -132,16 +133,36 @@ function FlipbookTile({ ratio, hidden }: { ratio: string; hidden: boolean }) {
   </figure>;
 }
 
+// 文件夹里插的五张：两端挂上地名标签
+const FOLDER = ["victoria", "yozakura", "louvre", "london", "kelingking"];
+
 export default function SceneWall() {
   const [filter, setFilter] = useState("all");
+  const gridRef = useRef<HTMLDivElement>(null);
+  const smooth = () => (prefersReduced() ? "instant" : "smooth") as ScrollBehavior;
+  // 点文件夹里的卡片：切回「全部」，滚到墙上那一格并让它闪一下
+  const showTile = (id: string) => {
+    setFilter("all");
+    requestAnimationFrame(() => {
+      const tile = gridRef.current?.querySelector<HTMLElement>(`[data-scene="${id}"]`);
+      if (!tile) return;
+      tile.scrollIntoView({ behavior: smooth(), block: "center" });
+      tile.removeAttribute("data-flash"); void tile.offsetWidth; tile.setAttribute("data-flash", "");
+    });
+  };
   return <section className={styles.wall} aria-labelledby="scene-wall-title">
     <header className={styles.head}>
-      <div><p className={styles.eyebrow}>场景墙 · 9 个空间</p><h2 id="scene-wall-title">走过的地方。</h2></div>
-      <div className={styles.chips} role="group" aria-label="筛选场景">
-        {FILTERS.map(f => <button key={f.id} type="button" aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>{f.label}</button>)}
+      <div>
+        <p className={styles.eyebrow}>场景墙 · 9 个空间</p><h2 id="scene-wall-title">走过的地方。</h2>
+        <div className={styles.chips} role="group" aria-label="筛选场景">
+          {FILTERS.map(f => <button key={f.id} type="button" aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>{f.label}</button>)}
+        </div>
       </div>
+      <FolderFan label="场景" note="9 个空间"
+        cards={FOLDER.map((id, i) => { const scene = LANDING_SCENES.find(s => s.id === id)!; return { key: id, title: scene.name, tag: i === 0 || i === FOLDER.length - 1 ? scene.name : undefined, thumb: <img src={`/scene/wall/${id}.webp`} alt="" loading="lazy" /> }; })}
+        onOpenCard={showTile} onOpen={() => gridRef.current?.scrollIntoView({ behavior: smooth(), block: "start" })} />
     </header>
-    <div className={styles.grid}>
+    <div ref={gridRef} className={styles.grid}>
       {LAYOUT.map(({ id, ratio, tags }) => {
         const hidden = filter !== "all" && !tags.includes(filter);
         if (id === "flipbook") return <FlipbookTile key={id} ratio={ratio} hidden={hidden} />;

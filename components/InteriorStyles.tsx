@@ -125,8 +125,6 @@ export default function InteriorStyles() {
   .develop-painting figcaption{font-family:inherit;font-size:11px!important;letter-spacing:.02em!important;}
   .status-orb{width:5px;height:5px;box-shadow:0 0 0 4px #74879d12;}
   .gallery-card{border-radius:14px;box-shadow:0 12px 26px -22px #272d3469;}
-  .gallery-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:24px;margin-bottom:24px;}
-  @media(max-width:860px){.gallery-head{grid-template-columns:1fr;}}
   .gallery-actions button:first-child{background:var(--ink);color:var(--bg);}
   .gallery-cache-label.local,.gallery-save-status.local{color:#576f8b;}
   .gallery-empty{border-radius:15px;padding:64px 24px;background:#a1b0c20a;}
