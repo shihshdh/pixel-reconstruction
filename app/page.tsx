@@ -7,9 +7,10 @@ import dynamic from "next/dynamic";
 import DevelopPainting from "@/components/DevelopPainting";
 import CompanionPageImage from "@/components/CompanionPageImage";
 import { preparePhoto, readLocalPhoto } from "@/lib/photo-prep";
+import { lookupPlace, photoCoords, photoDevice, photoSettings, readPhotoMeta, type PhotoMeta } from "@/lib/photo-meta";
 import { announceMoment, isDevelopablePhoto, UPLOAD_REQUEST_EVENT, type UploadRequest } from "@/lib/companion-moments";
 import { useScenePoster } from "@/components/ScenePoster";
-import { cacheGalleryItem, deleteGalleryItem, galleryId, isSameGalleryScene, getGalleryAsset, getGalleryScene, listGallery, setGalleryFavorite, subscribeGallery, type GalleryItem } from "@/lib/gallery-storage";
+import { cacheGalleryItem, deleteGalleryItem, galleryId, isSameGalleryScene, getGalleryAsset, getGalleryScene, listGallery, setGalleryFavorite, setGalleryPhoto, subscribeGallery, type GalleryItem } from "@/lib/gallery-storage";
 import DoubaoSettings, { type DoubaoPreferences } from "@/components/DoubaoSettings";
 import EditPromptPicker from "@/components/EditPromptPicker";
 import BrandMark from "@/components/BrandMark";
@@ -895,6 +896,8 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
   // 本机显卡处理太久（或出错、引擎退出）时，把同一张照片改交云端，不让用户干等。
   // 首次打开时模型载入约 30 秒 + 首张约 20 秒，预算留足；渲染视频更久。
   const handoffFile = useRef<{ file: File; renderVideo: boolean } | null>(null);
+  // 原照片的拍摄信息：服务端会去掉 EXIF，所以上传前先读出来，显影完成后随作品存进作品库
+  const photoMeta = useRef<PhotoMeta | null>(null);
   async function handoffToCloud(reason: string, token: number) {
     const job = handoffFile.current;
     handoffFile.current = null;
@@ -925,7 +928,7 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
         failures = 0;
         if (st.status === "done") {
           stopTimers(); busyRef.current = false; pendingRef.current = null; setPhase("done");
-          onDone?.({ ...st, backend_url: task.base }); return;
+          onDone?.({ ...st, backend_url: task.base, photo: photoMeta.current }); return;
         }
         if (st.status === "error") {
           pendingRef.current = null;
@@ -979,6 +982,8 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
         setReadStalled(stalled); setReadRatio(total ? read / total : 0);
       }, controller.signal);
       readAbort.current = null; setReadStalled(false);
+      if (token !== generation.current) return;
+      photoMeta.current = await readPhotoMeta(blob);
       if (token !== generation.current) return;
       if (blob.size > 20 * 1024 * 1024) setStage(`照片 ${mb(blob.size)} MB，正在压缩到 20MB 以内`);
       const { file } = await preparePhoto(blob, picked.name);
@@ -1384,6 +1389,36 @@ function GallerySaveStatus({ id }) {
   </div>;
 }
 
+// 光盘架资料表里的拍摄信息。新作品上传时已读好；旧作品第一次显示时读一次本地原图的 EXIF
+// （本机显卡生成的作品原图还带着 EXIF，云端的已被服务端去掉），有 GPS 时联网反查一次中文地名，结果都存回作品记录
+function PhotoFacts({ item }: { item: GalleryItem }) {
+  const photo = item.photo;
+  useEffect(() => {
+    if (photo !== undefined) return;
+    let alive = true;
+    void getGalleryAsset(item.id, "original").then(async blob => {
+      if (!alive || !blob) return;
+      const meta = await readPhotoMeta(blob);
+      if (alive) await setGalleryPhoto(item.id, meta);
+    });
+    return () => { alive = false; };
+  }, [item.id, photo]);
+  useEffect(() => {
+    if (!photo || photo.place !== undefined || photo.lat === undefined || photo.lon === undefined || !navigator.onLine) return;
+    let alive = true;
+    void lookupPlace(photo.lat, photo.lon).then(place => { if (alive && place !== undefined) void setGalleryPhoto(item.id, { ...photo, place }); });
+    return () => { alive = false; };
+  }, [item.id, photo]);
+  if (!photo) return null;
+  const rows = [
+    ["地点", photo.place || photoCoords(photo)],
+    ["拍摄时间", photo.taken],
+    ["器材", photoDevice(photo)],
+    ["参数", photoSettings(photo)],
+  ].filter(([, value]) => value);
+  return <>{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</>;
+}
+
 function GalleryThumbnail({ item }: { item: GalleryItem }) {
   const [lookup, setLookup] = useState({ id: item.id, checked: false, url: "" });
   const [failed, setFailed] = useState(false);
@@ -1470,7 +1505,7 @@ function GalleryPage({ setPage, onOpen, onDelete }) {
     {loading ? <p role="status" className="gallery-storage-note">正在读取作品…</p> : shown.length === 0 ? <div className="gallery-empty">
       <p>{filter === "fav" ? "还没有收藏的场景。" : "这里还空着。显影一张照片，它就会出现在这里。"}</p><button onClick={() => setPage("create")}>开始创作</button>
     </div> : view === "disc" ? <DiscShelf<GalleryItem> items={shown} opening={opening} status={galleryStatus}
-      renderThumb={item => <GalleryThumbnail item={item} />} onOpen={item => { void open(item); }} onToggleFav={item => { void toggleFav(item); }} />
+      renderThumb={item => <GalleryThumbnail item={item} />} facts={item => <PhotoFacts item={item} />} onOpen={item => { void open(item); }} onToggleFav={item => { void toggleFav(item); }} />
     : <div ref={gridRef} className="gallery-grid in" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 24 }}>
       {shown.map(item => <article key={item.id} className="gallery-card" data-work-id={item.id}>
         <div className="gallery-picture">

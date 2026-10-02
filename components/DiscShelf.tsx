@@ -17,12 +17,14 @@ type Props<T extends DiscItem> = {
   onOpen: (item: T) => void;
   onToggleFav: (item: T) => void;
   opening?: string;
+  /** 日期下面追加的资料行（地点、拍摄时间、器材、参数），没有就不渲染 */
+  facts?: (item: T) => ReactNode;
 };
 
 // 只挂载中央附近的光盘：缩略图从 IndexedDB 读，离得远的不必占内存
 const WINDOW = 4;
 
-export default function DiscShelf<T extends DiscItem>({ items, renderThumb, status, onOpen, onToggleFav, opening = "" }: Props<T>) {
+export default function DiscShelf<T extends DiscItem>({ items, renderThumb, status, onOpen, onToggleFav, opening = "", facts }: Props<T>) {
   const n = items.length;
   const stageRef = useRef<HTMLDivElement>(null);
   const discRefs = useRef(new Map<number, HTMLButtonElement>());
@@ -172,6 +174,7 @@ export default function DiscShelf<T extends DiscItem>({ items, renderThumb, stat
       <h2 className={styles.title}>{item.title}</h2>
       <dl className={styles.facts}>
         <div><dt>日期</dt><dd>{item.date}</dd></div>
+        {facts?.(item)}
         <div><dt>规格</dt><dd>{item.meta || "—"}</dd></div>
         <div><dt>保存</dt><dd>{status(item)}</dd></div>
       </dl>

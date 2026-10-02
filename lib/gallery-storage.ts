@@ -1,6 +1,7 @@
 // The gallery owns durable metadata and binary assets. No automatic expiry or count limit.
 import { fileUrl, registerJobAccess, downloadJobFile, prepareMobilePreview, type JobResult } from './api';
 import { isDesktopApp, saveWorkFile, workFolder } from './desktop';
+import type { PhotoMeta } from './photo-meta';
 
 const DB_NAME = 'ruhua-gallery';
 const LEGACY_KEY = 'ruhua-gallery-v1';
@@ -23,6 +24,8 @@ export type GalleryItem = JobResult & {
   mobileReady?: boolean;
   videoReady?: boolean;
   persistent?: boolean;
+  /** 原照片的拍摄信息；null 表示读过但照片里没有 */
+  photo?: PhotoMeta | null;
 };
 type GalleryInput = JobResult & Partial<GalleryItem>;
 const fallbackRecords = new Map<string, GalleryItem>();
@@ -91,6 +94,7 @@ function normalize(item: GalleryInput): GalleryItem {
     cacheState: item.cacheState || 'remote', cacheError: item.cacheError,
     originalReady: !!item.originalReady, thumbnailReady: !!item.thumbnailReady,
     plyReady: !!item.plyReady, viewerReady: !!item.viewerReady, mobileReady: !!item.mobileReady, videoReady: !!item.videoReady, persistent: !!item.persistent,
+    photo: item.photo,
   };
 }
 function readLegacy(): GalleryItem[] {
@@ -234,6 +238,8 @@ export async function cacheGalleryItem(input: GalleryInput, options: { quality?:
   item.viewerReady = !changedVersion && !!(item.viewerReady || existing?.viewerReady); item.mobileReady = !changedVersion && !!(item.mobileReady || existing?.mobileReady);
   item.plyReady = !changedVersion && !!(item.plyReady || existing?.plyReady); item.videoReady = !changedVersion && !!(item.videoReady || existing?.videoReady);
   if (!changedVersion) item.mobile_viewer_file ||= existing?.mobile_viewer_file;
+  // 重新保存（恢复完整场景、继续缓存）时输入里没有拍摄信息，沿用已存的
+  if (normalized.photo === undefined) item.photo = existing?.photo;
   const controller = new AbortController(); activeSaves.set(item.id, controller);
   let complete = () => {};
   saveCompletions.set(item.id, new Promise<void>(resolve => { complete = resolve; }));
@@ -289,6 +295,14 @@ export async function cacheGalleryItem(input: GalleryInput, options: { quality?:
     }
   } finally { if (activeSaves.get(item.id) === controller) { activeSaves.delete(item.id); saveCompletions.delete(item.id); } complete(); notify(); }
   return item;
+}
+/** 补存拍摄信息（读原图 EXIF、反查地名之后）。作品已删除时不重建记录 */
+export async function setGalleryPhoto(id: string, photo: PhotoMeta | null) {
+  await migrate();
+  try {
+    const item = await updateMetadata(id, current => current ? { ...current, photo } : undefined);
+    if (item) { fallbackRecords.delete(id); mirror(item); notify(); }
+  } catch { /* 拍摄信息只是展示用，存不下就下次再读 */ }
 }
 export async function setGalleryFavorite(id: string, fav: boolean) {
   await migrate();
