@@ -21,6 +21,9 @@ import PixelLoader from "@/components/PixelLoader";
 import { MorphIcon } from "morphicons/react";
 import { ICON } from "@/lib/icons";
 import AuthorContact from "@/components/AuthorContact";
+import DiscShelf from "@/components/DiscShelf";
+import SceneWall from "@/components/SceneWall";
+import GlassInvite from "@/components/GlassInvite";
 import { DESKTOP_DOWNLOAD, isDesktopApp, openWorksFolder, setFullscreen, titleBarMouseDown } from "@/lib/desktop";
 import WindowControls from "@/components/WindowControls";
 import { computeUiZoom } from "@/lib/ui-scale";
@@ -33,6 +36,7 @@ import {
   fileUrl, downloadJobFile, ping, getBase, getDefaultBase, saveBase, normalizeBase, registerJobAccess, refreshJobAccess,
 } from "@/lib/api";
 // 修图对话按作品保存，请求不随页面卸载而中断
+import type { EditResolution } from "@/lib/api";
 import { clearEditChat, editKey, exportEditImage, refreshEditLinks, runEdit, runRerender, setActiveEditJob, setEditDraft, useEditSession } from "@/lib/edit-session";
 // 动效地基：时长 / 缓动 / 降级判断 / FLIP
 import { prefersReduced, SPRING, installPressFeedback, useParallax } from "@/lib/motion";
@@ -1204,7 +1208,7 @@ function EnhancePage({ result, setPage, onRerenderDone, doubao, onDoubaoChange }
 
       <DoubaoSettings value={doubao} onChange={onDoubaoChange} disabled={aiBusy || rerendering} />
       {needsKey && <p className="field-error">请先填写你的豆包 API Key，或切回站长提供的服务。</p>}
-      <EditPromptPicker strength={strength} onStrengthChange={value => setDraft({ strength: value })} resolution={session.resolution} onResolutionChange={value => setDraft({ resolution: value })} disabled={aiBusy || rerendering} onSelect={(prompt, pad) => setDraft({ draft: prompt, pad })} />
+      <EditPromptPicker strength={strength} onStrengthChange={value => setDraft({ strength: value })} disabled={aiBusy || rerendering} onSelect={(prompt, pad) => setDraft({ draft: prompt, pad })} />
 
       {/* 对话流（更大留白，图片醒目）*/}
       <div style={{ border: "1px solid var(--line)", borderRadius: 26, background: "var(--bg2)", padding: 26, minHeight: 280 }}>
@@ -1259,6 +1263,17 @@ function EnhancePage({ result, setPage, onRerenderDone, doubao, onDoubaoChange }
         </div>
       )}
       {session.delivered > 0 && input && <p className="compute-note">鲸鱼娘写好了{session.deliveredTitle ? `「${session.deliveredTitle}」` : "一条修图提示词"}，检查一下，可以直接改，满意再点发送。</p>}
+      {/* 输出分辨率：用户自己切换，按作品记住 */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginTop: 18 }}>
+        <span style={{ fontSize: 13.5, color: "var(--ink2)" }}>输出分辨率</span>
+        <LiquidSegmented<EditResolution> ariaLabel="输出分辨率" value={session.resolution} disabled={aiBusy || rerendering}
+          onChange={value => setDraft({ resolution: value })} options={[
+            { value: "1k", label: "1K", title: "约 100 万像素，按原图宽高比，出图最快" },
+            { value: "2k", label: "2K", title: "约 400 万像素，细节更多" },
+            { value: "original", label: "原图尺寸", title: "按 2K 生成，再放大到原照片的像素尺寸" },
+          ]} />
+        <span style={{ fontSize: 12.5, color: "var(--ink3)" }}>{session.resolution === "1k" ? "约 100 万像素 · 最快" : session.resolution === "2k" ? "约 400 万像素 · 细节更多" : "2K 生成后放大到原照片尺寸"}</span>
+      </div>
       {padDraft > 0 && <p className="compute-note">这次将向四周扩展 {Math.round(padDraft * 100)}% 画布。<button onClick={() => setDraft({ pad: 0 })} style={{ border: 0, background: "none", color: "var(--accent)", fontSize: 12 }}>取消扩图</button></p>}
       <div style={{ display: "flex", gap: 12, marginTop: 18, alignItems: "flex-end" }}>
         <textarea ref={inputRef} rows={input.length > 80 ? 8 : 3} aria-label="修图提示词"
@@ -1409,6 +1424,10 @@ function GalleryPage({ setPage, onOpen, onDelete }) {
   useEffect(() => setDesktop(isDesktopApp()), []);
   const [list, setList] = useState<GalleryItem[]>([]);
   const [filter, setFilter] = useState("all");
+  // 光盘架（默认）或网格；网格保留缓存状态、删除等管理操作
+  const [view, setView] = useState("disc");
+  useEffect(() => { try { if (localStorage.getItem("ruhua-gallery-view") === "grid") setView("grid"); } catch {} }, []);
+  const chooseView = (next: string) => { setView(next); try { localStorage.setItem("ruhua-gallery-view", next); } catch {} };
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [opening, setOpening] = useState("");
@@ -1439,7 +1458,10 @@ function GalleryPage({ setPage, onOpen, onDelete }) {
   return <main style={{ maxWidth: 1140, margin: "0 auto", padding: "76px 24px 72px" }}>
     <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 16, marginBottom: 24 }}>
       <div><div className="eyebrow">作品库 · {list.length} 件作品</div><h1 style={{ fontSize: "clamp(32px,5vw,52px)", fontWeight: 600, letterSpacing: "-.025em" }}>你显影过的场景。</h1></div>
-      <LiquidToggle tone="light" size="md" value={filter} onChange={setFilter} options={[{ id: "all", label: "全部" }, { id: "recent", label: "最近" }, { id: "fav", label: "收藏" }]} />
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <LiquidToggle tone="light" size="md" value={view} onChange={chooseView} options={[{ id: "disc", label: "光盘" }, { id: "grid", label: "网格" }]} />
+        <LiquidToggle tone="light" size="md" value={filter} onChange={setFilter} options={[{ id: "all", label: "全部" }, { id: "recent", label: "最近" }, { id: "fav", label: "收藏" }]} />
+      </div>
     </div>
     {desktop
       ? <p className="gallery-storage-note">原图、3D 场景和导出的视频会另存一份到本机的 D:\Pixel Reconstruction\作品（没有 D 盘时放在安装目录下），卸载客户端也会保留。<button type="button" className="gallery-folder" onClick={() => void openWorksFolder()}>打开作品文件夹</button></p>
@@ -1447,7 +1469,9 @@ function GalleryPage({ setPage, onOpen, onDelete }) {
     {error && <p className="creation-error" role="alert">{error}</p>}
     {loading ? <p role="status" className="gallery-storage-note">正在读取作品…</p> : shown.length === 0 ? <div className="gallery-empty">
       <p>{filter === "fav" ? "还没有收藏的场景。" : "这里还空着。显影一张照片，它就会出现在这里。"}</p><button onClick={() => setPage("create")}>开始创作</button>
-    </div> : <div ref={gridRef} className="gallery-grid in" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 24 }}>
+    </div> : view === "disc" ? <DiscShelf<GalleryItem> items={shown} opening={opening} status={galleryStatus}
+      renderThumb={item => <GalleryThumbnail item={item} />} onOpen={item => { void open(item); }} onToggleFav={item => { void toggleFav(item); }} />
+    : <div ref={gridRef} className="gallery-grid in" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 24 }}>
       {shown.map(item => <article key={item.id} className="gallery-card" data-work-id={item.id}>
         <div className="gallery-picture">
           <button className="gallery-preview-button" aria-label={"打开" + item.title} onClick={() => open(item)}><GalleryThumbnail item={item} /></button>
@@ -1521,7 +1545,8 @@ function HomePage({ setPage, active = true, ready = true }) {
         <figure><img src="/rtx4090.png" alt="用于云端场景重建的 RTX 4090 显卡" loading="lazy" data-parallax=".05" /><figcaption>COMPUTE / BEAM SERVERLESS</figcaption></figure>
       </Reveal>
     </section>
-    <section className="overview-start"><div><h2 data-parallax=".06">现在，轮到你的照片。</h2><p>有 NVIDIA 显卡就在本机重建，没有就交给云端。无需任何配置。</p></div><button className="editorial-primary" onClick={() => setPage("create")}>上传照片 <span aria-hidden="true">↗</span></button></section>
+    <SceneWall />
+    <GlassInvite active={active} onStart={() => setPage("create")} />
     <footer className="overview-footer"><BrandMark size={21} /><span>Pixel Reconstruction</span><span>单张图片 · 三维场景 · 自由运镜</span></footer>
   </main>;
 }
