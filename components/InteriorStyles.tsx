@@ -67,7 +67,7 @@ export default function InteriorStyles() {
   .nav-cta{background:var(--ink)!important;color:var(--bg)!important;font-size:12px;padding:10px 18px;}
   .nav-theme{background:transparent!important;border-color:var(--line2)!important;}
   .ruhua-root button:not(:disabled){transition:transform 230ms cubic-bezier(.16,1,.3,1),box-shadow 240ms,background 240ms,color 240ms,opacity 200ms!important;}
-  @media(hover:hover){.ruhua-root button:not(:disabled):not(.nav-logo):not(.nav-tab):hover{transform:translateY(-3px);box-shadow:0 7px 18px -10px #212d3a8c;}.ruhua-root .nav-tab:hover{transform:translateY(-1px);}.ruhua-root .seg-btn:hover{transform:translateY(-1px)!important;box-shadow:none!important;}}
+  @media(hover:hover){.ruhua-root button:not(:disabled):not(.nav-logo):not(.nav-tab):not([data-own-motion]):hover{transform:translateY(-3px);box-shadow:0 7px 18px -10px #212d3a8c;}.ruhua-root .nav-tab:hover{transform:translateY(-1px);}.ruhua-root .seg-btn:hover{transform:translateY(-1px)!important;box-shadow:none!important;}}
   .ruhua-root button:active:not(:disabled){transform:translateY(1px) scale(.95)!important;box-shadow:inset 0 2px 4px #0000000a!important;transition-duration:90ms!important;}
   /* Press: with script, the dip and its spring return run on the scale property (lib/motion installPressFeedback), so the :active rule keeps only the 1px sink. */
   .ruhua-root[data-press] button:active:not(:disabled){transform:translateY(1px)!important;}

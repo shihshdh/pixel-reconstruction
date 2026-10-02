@@ -23,13 +23,22 @@ export default function FolderFan({ cards, label, note, word = "welcome", onOpen
     io.observe(el);
     return () => io.disconnect();
   }, []);
-  return <div ref={stageRef} className={styles.stage}>
+  // 开合由脚本判断，不靠 CSS :hover：鼠标进入文件夹（或用键盘聚焦）时展开，离开整个舞台区域 180ms 后才收起。
+  // 舞台是固定不动的大区域，盖住整个扇形；卡片自己怎么移动都不会让开合状态来回翻转（之前外侧卡片会在展开/收回间抖动）
+  const [open, setOpen] = useState(false);
+  const closeTimer = useRef(0);
+  const show = () => { clearTimeout(closeTimer.current); setOpen(true); };
+  const hide = () => { clearTimeout(closeTimer.current); closeTimer.current = window.setTimeout(() => setOpen(false), 180); };
+  useEffect(() => () => clearTimeout(closeTimer.current), []);
+  return <div ref={stageRef} className={styles.stage} data-open={open || undefined} onPointerLeave={hide}
+    onFocus={show} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) hide(); }}>
     <span className={styles.puff} data-written={written || undefined} aria-hidden="true">{word}</span>
-    <div className={styles.folder}>
+    <div className={styles.folder} onPointerEnter={show}>
       <span className={styles.back} aria-hidden="true" />
       {cards.map((card, i) => {
         const k = i - mid, edge = Math.abs(k);
-        return <button key={card.key} type="button" className={styles.card} onClick={() => onOpenCard(card.key)} aria-label={"打开 " + card.title}
+        // data-own-motion：卡片自己管位移，不吃全局“按钮悬停上浮 3px”——那条规则会盖掉展开位置，让卡片在展开与原位之间来回跳
+        return <button key={card.key} type="button" data-own-motion className={styles.card} onClick={() => onOpenCard(card.key)} aria-label={"打开 " + card.title}
           style={{
             "--rest-x": `${k * 10}px`, "--rest-r": `${k * 3}deg`,
             // 展开：越靠外越低、越斜

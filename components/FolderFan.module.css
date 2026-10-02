@@ -15,9 +15,6 @@
 :global([data-theme="dark"]) .puff{color:#2a2823;text-shadow:0 1px 0 #24221e,0 2px 0 #201f1b,0 3px 0 #1d1b18,0 4px 0 #1a1916,0 5px 0 #181714,0 6px 0 #161512,0 14px 22px #0008,0 -1px 1px #ffffff14;}
 
 .folder{position:relative;width:320px;height:222px;}
-/* 卡片展开后的扇形区域也算在文件夹里：鼠标从文件夹移向上方的卡片、经过卡片间的空隙时不会收起 */
-.folder::after{content:"";position:absolute;left:-230px;right:-230px;top:-250px;height:260px;}
-.folder:not(:hover)::after{pointer-events:none;}
 /* 后片：带左上角耳朵的青蓝色板 */
 .back{position:absolute;inset:0;border-radius:22px;background:var(--f-back);box-shadow:0 26px 50px -24px var(--f-shadow),inset 0 1px 0 var(--f-rim);}
 .back::before{content:"";position:absolute;left:18px;top:-14px;width:112px;height:34px;border-radius:14px 14px 0 0;background:var(--f-tab);}
@@ -33,7 +30,7 @@
 .photo{display:block;width:100%;height:100%;border-radius:10px;overflow:hidden;background:#dfe8f1;}
 .photo>img,.photo>div{display:block;width:100%;height:100%;object-fit:cover;}
 .tag{position:absolute;top:-12px;left:50%;transform:translateX(-50%) rotate(-4deg);max-width:110px;padding:3px 9px;border-radius:99px;background:#fff;color:var(--f-accent);font-size:9.5px;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 4px 10px -4px #1d3a5a40;font-family:SFMono-Regular,Consolas,monospace;}
-.folder:hover .card,.folder:focus-within .card{transform:translate3d(var(--open-x),var(--open-y),0) rotate(var(--open-r)) scale(1.14);}
+.stage[data-open] .card{transform:translate3d(var(--open-x),var(--open-y),0) rotate(var(--open-r)) scale(1.14);}
 /* 指到哪张，哪张的卡面抬起（感应区不动）；收起时先落回卡面，避免和展开动画打架 */
 .card:hover,.card:focus-visible{z-index:20!important;}
 .card:hover .face,.card:focus-visible .face{transform:translate3d(0,-34px,0) scale(1.09);border-color:#fff;box-shadow:0 26px 40px -16px var(--f-shadow);}
@@ -49,7 +46,7 @@
 .label{position:absolute;left:24px;bottom:18px;color:var(--f-ink);font-size:20px;font-weight:700;letter-spacing:-.01em;text-shadow:0 1px 8px var(--f-deep);display:flex;align-items:baseline;gap:8px;}
 .label small{font-size:11px;font-weight:500;opacity:.85;}
 .arrow{position:absolute;right:18px;bottom:16px;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;background:#ffffffd0;color:var(--f-accent);font-size:16px;transition:transform .3s cubic-bezier(.34,1.56,.64,1);}
-.pocket:hover .arrow{transform:translateX(3px);}
+.stage[data-open] .arrow{transform:translateX(3px);}
 
 @media(max-width:740px){.stage{height:420px;transform:scale(.72);transform-origin:50% 100%;}}
 @media(prefers-reduced-motion:reduce){.card,.face,.arrow{transition:none;}}
