@@ -23,6 +23,7 @@ import { MorphIcon } from "morphicons/react";
 import { ICON } from "@/lib/icons";
 import AuthorContact from "@/components/AuthorContact";
 import DiscShelf from "@/components/DiscShelf";
+import FolderFan from "@/components/FolderFan";
 import SceneWall from "@/components/SceneWall";
 import GlassInvite from "@/components/GlassInvite";
 import { DESKTOP_DOWNLOAD, isDesktopApp, openWorksFolder, setFullscreen, titleBarMouseDown } from "@/lib/desktop";
@@ -1491,16 +1492,24 @@ function GalleryPage({ setPage, onOpen, onDelete }) {
   };
   const shown = filter === "fav" ? list.filter(item => item.fav) : filter === "recent" ? list.slice(0, 12) : list;
   return <main style={{ maxWidth: 1140, margin: "0 auto", padding: "76px 24px 72px" }}>
-    <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 16, marginBottom: 24 }}>
-      <div><div className="eyebrow">作品库 · {list.length} 件作品</div><h1 style={{ fontSize: "clamp(32px,5vw,52px)", fontWeight: 600, letterSpacing: "-.025em" }}>你显影过的场景。</h1></div>
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <LiquidToggle tone="light" size="md" value={view} onChange={chooseView} options={[{ id: "disc", label: "光盘" }, { id: "grid", label: "网格" }]} />
-        <LiquidToggle tone="light" size="md" value={filter} onChange={setFilter} options={[{ id: "all", label: "全部" }, { id: "recent", label: "最近" }, { id: "fav", label: "收藏" }]} />
+    <div className="gallery-head">
+      <div>
+        <div className="eyebrow">作品库 · {list.length} 件作品</div><h1 style={{ fontSize: "clamp(32px,5vw,52px)", fontWeight: 600, letterSpacing: "-.025em" }}>你显影过的场景。</h1>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 22 }}>
+          <LiquidToggle tone="light" size="md" value={view} onChange={chooseView} options={[{ id: "disc", label: "光盘" }, { id: "grid", label: "网格" }]} />
+          <LiquidToggle tone="light" size="md" value={filter} onChange={setFilter} options={[{ id: "all", label: "全部" }, { id: "recent", label: "最近" }, { id: "fav", label: "收藏" }]} />
+        </div>
       </div>
+      {/* 最近的五件作品插在文件夹里：悬停扇形展开，点卡片直接打开，点前袋跳到下面的列表 */}
+      {list.length > 0 && <FolderFan count={list.length}
+        cards={list.slice(0, 5).map((item, i, all) => ({ key: item.id, title: item.title, tag: i === 0 ? "最新" : i === all.length - 1 ? item.date : undefined, thumb: <GalleryThumbnail item={item} /> }))}
+        onOpenCard={id => { const item = list.find(work => work.id === id); if (item) void open(item); }}
+        onOpen={() => document.getElementById("gallery-list")?.scrollIntoView({ behavior: prefersReduced() ? "instant" : "smooth", block: "start" })} />}
     </div>
     {desktop
       ? <p className="gallery-storage-note">原图、3D 场景和导出的视频会另存一份到本机的 D:\Pixel Reconstruction\作品（没有 D 盘时放在安装目录下），卸载客户端也会保留。<button type="button" className="gallery-folder" onClick={() => void openWorksFolder()}>打开作品文件夹</button></p>
       : <p className="gallery-storage-note">作品保存到当前浏览器，不设数量上限或自动到期时间。页面与查看器已加载后，已保存的场景可离线查看；修图仍需要云端服务。</p>}
+    <span id="gallery-list" style={{ display: "block", scrollMarginTop: 80 }} />
     {error && <p className="creation-error" role="alert">{error}</p>}
     {loading ? <p role="status" className="gallery-storage-note">正在读取作品…</p> : shown.length === 0 ? <div className="gallery-empty">
       <p>{filter === "fav" ? "还没有收藏的场景。" : "这里还空着。显影一张照片，它就会出现在这里。"}</p><button onClick={() => setPage("create")}>开始创作</button>

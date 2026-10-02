@@ -1,0 +1,45 @@
+.stage{--f-back:linear-gradient(170deg,#cfdbe8,#9fb3c9 55%,#8199b4);--f-tab:#d5e0ec;--f-pocket:linear-gradient(165deg,#eef4fac4,#b7c8dab8 58%,#97adc5c4);--f-rim:#ffffffb0;--f-deep:#3d55702e;--f-shadow:#33496666;--f-ink:#ffffff;--f-accent:#5f7896;--f-badge:radial-gradient(circle at 35% 30%,#fffbe0,#f3e3a2 55%,#dcc277);
+  position:relative;height:430px;display:grid;place-items:end center;padding-bottom:26px;overflow:visible;}
+
+/* 充气大字：一层浅色正文 + 逐像素下移的阴影叠出厚度 + 一层柔和投影 */
+.puff{position:absolute;left:12%;top:40%;transform:translate(-50%,-50%) rotate(-6deg);font:italic 700 clamp(120px,17vw,210px)/1 "Segoe Script","Brush Script MT","Snell Roundhand",cursive;letter-spacing:-.02em;color:#f3f6fa;white-space:nowrap;pointer-events:none;user-select:none;
+  text-shadow:0 1px 0 #e3ebf5,0 2px 0 #dbe5f1,0 3px 0 #d4e0ed,0 4px 0 #cddaea,0 5px 0 #c7d5e6,0 6px 0 #c2d1e3,0 14px 22px #6f8db430,0 28px 50px #5b7ca420,0 -2px 2px #ffffffcc;}
+:global([data-theme="dark"]) .stage{--f-back:linear-gradient(170deg,#3b372f,#2b2823 55%,#211f1b);--f-tab:#423d34;--f-pocket:linear-gradient(165deg,#504a3ec0,#302d27b8 58%,#25231ec4);--f-rim:#d4af6a59;--f-deep:#0006;--f-shadow:#000a;--f-ink:#f3eee4;--f-accent:#b8935a;--f-badge:radial-gradient(circle at 35% 30%,#f6e3b8,#d4af6a 55%,#a9843f);}
+:global([data-theme="dark"]) .sticker,:global([data-theme="dark"]) .tag,:global([data-theme="dark"]) .arrow{background:#f3eee4;}
+:global([data-theme="dark"]) .card{border-color:#f3eee4cc;}
+:global([data-theme="dark"]) .puff{color:#2a2823;text-shadow:0 1px 0 #24221e,0 2px 0 #201f1b,0 3px 0 #1d1b18,0 4px 0 #1a1916,0 5px 0 #181714,0 6px 0 #161512,0 14px 22px #0008,0 -1px 1px #ffffff14;}
+
+.folder{position:relative;width:300px;height:212px;}
+/* 卡片展开后的扇形区域也算在文件夹里：鼠标从文件夹移向上方的卡片、经过卡片间的空隙时不会收起 */
+.folder::after{content:"";position:absolute;left:-150px;right:-150px;top:-190px;height:200px;}
+.folder:not(:hover)::after{pointer-events:none;}
+/* 后片：带左上角耳朵的青蓝色板 */
+.back{position:absolute;inset:0;border-radius:22px;background:var(--f-back);box-shadow:0 26px 50px -24px var(--f-shadow),inset 0 1px 0 var(--f-rim);}
+.back::before{content:"";position:absolute;left:18px;top:-14px;width:112px;height:34px;border-radius:14px 14px 0 0;background:var(--f-tab);}
+
+/* 卡片：底边中点为旋转轴。静止时只露出顶边，展开后向上扇开 */
+.card{position:absolute;left:calc(50% - 58px);bottom:36px;width:116px;height:146px;padding:0;border:3px solid #ffffffd9;border-radius:13px;background:#fff;overflow:visible;cursor:pointer;transform-origin:50% 100%;
+  transform:translate3d(var(--rest-x),0,0) rotate(var(--rest-r));box-shadow:0 10px 22px -12px var(--f-shadow);
+  transition:transform .55s cubic-bezier(.34,1.56,.64,1) var(--delay),box-shadow .3s,border-color .3s;}
+.photo{display:block;width:100%;height:100%;border-radius:10px;overflow:hidden;background:#dfe8f1;}
+.photo>img,.photo>div{display:block;width:100%;height:100%;object-fit:cover;}
+.tag{position:absolute;top:-12px;left:50%;transform:translateX(-50%) rotate(-4deg);max-width:110px;padding:3px 9px;border-radius:99px;background:#fff;color:var(--f-accent);font-size:9.5px;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 4px 10px -4px #1d3a5a40;font-family:SFMono-Regular,Consolas,monospace;}
+.folder:hover .card,.folder:focus-within .card{transform:translate3d(var(--open-x),var(--open-y),0) rotate(var(--open-r)) scale(1.1);}
+/* 指到哪张，哪张再抬起；放在展开状态之后，后者覆盖前者 */
+.folder .card:hover,.folder .card:focus-visible{transform:translate3d(var(--open-x),calc(var(--open-y) - 26px),0) rotate(var(--open-r)) scale(1.17);border-color:#fff;border-width:4px;box-shadow:0 26px 40px -16px var(--f-shadow);z-index:20!important;transition-delay:0s;}
+
+/* 前袋：磨砂玻璃，卡片下半截透出来 */
+.pocket{position:absolute;left:0;right:0;bottom:0;height:150px;z-index:30;padding:0;border:0;border-radius:22px;cursor:pointer;text-align:left;
+  background:var(--f-pocket);-webkit-backdrop-filter:blur(12px) saturate(1.3);backdrop-filter:blur(12px) saturate(1.3);
+  box-shadow:inset 0 1.5px 0 var(--f-rim),inset 0 -10px 24px var(--f-deep),0 18px 30px -18px var(--f-shadow);}
+.badge{position:absolute;left:30px;top:24px;width:58px;height:58px;border-radius:50%;background:var(--f-badge);box-shadow:0 0 0 4px #fff,0 8px 14px -6px #0006;transform:rotate(-10deg);}
+.badge i{position:absolute;top:20px;width:13px;height:16px;border-radius:50%;background:#fff;box-shadow:inset 3px 2px 0 1px #222;}
+.badge i:first-child{left:15px;}.badge i:last-child{left:31px;}
+.sticker{position:absolute;right:62px;top:30px;padding:6px 9px;border-radius:9px;background:#fff;color:var(--f-accent);font:800 13px/1 SFMono-Regular,Consolas,monospace;transform:rotate(9deg);box-shadow:0 6px 12px -6px #0005;}
+.label{position:absolute;left:24px;bottom:18px;color:var(--f-ink);font-size:20px;font-weight:700;letter-spacing:-.01em;text-shadow:0 1px 8px var(--f-deep);display:flex;align-items:baseline;gap:8px;}
+.label small{font-size:11px;font-weight:500;opacity:.85;}
+.arrow{position:absolute;right:18px;bottom:16px;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;background:#ffffffd0;color:var(--f-accent);font-size:16px;transition:transform .3s cubic-bezier(.34,1.56,.64,1);}
+.pocket:hover .arrow{transform:translateX(3px);}
+
+@media(max-width:740px){.stage{height:380px;transform:scale(.86);}}
+@media(prefers-reduced-motion:reduce){.card,.arrow{transition:none;}}
