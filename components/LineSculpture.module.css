@@ -4,6 +4,9 @@
 .head h2{margin:0;font-family:"Iowan Old Style","Times New Roman",Georgia,serif;font-style:italic;font-weight:400;font-size:clamp(26px,3.3vw,38px);line-height:1.2;letter-spacing:-.01em;color:var(--ink);max-width:640px;}
 .lead{margin:12px 0 0;font-size:12px;line-height:1.8;color:var(--ink3);max-width:520px;}
 .controls{display:flex;gap:10px;flex-wrap:wrap;}
+/* 工作室全屏版：画框撑满剩余高度 */
+.overlaySection{display:flex;flex-direction:column;height:100%;padding:28px 32px 32px;box-sizing:border-box;}
+.overlaySection .stage{flex:1;height:auto;min-height:0;}
 
 /* 画框：浅色是页面的纸色，深色近黑——夜景照片在深色底上最好看，线与线之间的缝也不显白 */
 .stage{position:relative;height:clamp(380px,46vw,600px);border-radius:26px;overflow:hidden;background:var(--bg2);box-shadow:0 30px 70px -44px #1b222966,inset 0 0 0 1px var(--line);touch-action:pan-y;}

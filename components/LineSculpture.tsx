@@ -15,7 +15,7 @@ const SCENES = [{ value: "louvre", label: "卢浮宫" }, { value: "yozakura", la
 type SceneId = typeof SCENES[number]["value"];
 type ViewChoice = "0" | "1" | "2" | "free";
 
-type Meta = { lineWidth: number; width: number; height: number; strokes: number; points: number; posScale: number; bin: string;
+export type Meta = { lineWidth: number; width: number; height: number; strokes: number; points: number; posScale: number; bin: string;
   views: { position: [number, number, number]; fov: number }[] };
 
 type Api = { fly: (i: number, ms?: number) => void; scatter: () => void; load: (scene: SceneId) => Promise<void> };
@@ -25,7 +25,8 @@ function canAnimate() {
   try { return !!document.createElement("canvas").getContext("webgl2"); } catch { return false; }
 }
 
-export default function LineSculpture({ active = true }: { active?: boolean }) {
+/** custom：工作室里用户自己的作品现场生成的数据（不读 public/sculpture），配合 variant="overlay" 全屏显示 */
+export default function LineSculpture({ active = true, custom, variant = "home", title }: { active?: boolean; custom?: { meta: Meta; bin: ArrayBuffer }; variant?: "home" | "overlay"; title?: string }) {
   const rootRef = useRef<HTMLElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<Api | null>(null);
@@ -34,7 +35,11 @@ export default function LineSculpture({ active = true }: { active?: boolean }) {
   const [scene, setScene] = useState<SceneId>("louvre");
   const [view, setView] = useState<ViewChoice>("free");
   const [loading, setLoading] = useState(true);
-  useEffect(() => { setMode(canAnimate() ? "live" : "static"); }, []);
+  // 用户自己生成的线雕没有预先渲染的静态图：只要有 WebGL2 就实时显示
+  useEffect(() => {
+    let gl2 = false; try { gl2 = !!document.createElement("canvas").getContext("webgl2"); } catch {}
+    setMode(custom ? (gl2 ? "live" : "static") : canAnimate() ? "live" : "static");
+  }, [custom]);
   useEffect(() => { activeRef.current = active; }, [active]);
 
   useEffect(() => {
@@ -43,7 +48,7 @@ export default function LineSculpture({ active = true }: { active?: boolean }) {
     if (!root || !stage) return;
     let disposed = false, cleanup = () => {};
     // 离视口还有一屏时才开始加载 three 和数据
-    const near = new IntersectionObserver(([entry]) => { if (entry.isIntersecting) { near.disconnect(); void start(); } }, { rootMargin: "600px 0px" });
+    const near = new IntersectionObserver(([entry]) => { if (entry.isIntersecting) { near.disconnect(); void start(); } }, { rootMargin: custom ? "0px" : "600px 0px" });
     near.observe(root);
 
     async function start() {
@@ -143,8 +148,8 @@ export default function LineSculpture({ active = true }: { active?: boolean }) {
       const maybeIntro = () => { if (firstShow && meta && visible && seenRatio > .45) { firstShow = false; setTimeout(() => fly(0), 900); } };
       const load = async (id: SceneId) => {
         setLoading(true);
-        const m: Meta = await (await fetch(`/sculpture/${id}.json`)).json();
-        const buf = await (await fetch(`/sculpture/${m.bin}`)).arrayBuffer();
+        const m: Meta = custom ? custom.meta : await (await fetch(`/sculpture/${id}.json`)).json();
+        const buf = custom ? custom.bin : await (await fetch(`/sculpture/${m.bin}`)).arrayBuffer();
         if (disposed) return;
         const S = m.strokes, P = m.points;
         const offsets = new Uint32Array(buf, 0, S + 1);
@@ -183,7 +188,7 @@ export default function LineSculpture({ active = true }: { active?: boolean }) {
       };
     }
     return () => { disposed = true; near.disconnect(); cleanup(); };
-  }, [mode]);
+  }, [mode, custom]);
 
   // 回到首页时补画一帧（离开期间暂停了渲染）
   useEffect(() => { if (active) stageRef.current?.dispatchEvent(new Event("pointerup")); }, [active]);
@@ -191,15 +196,16 @@ export default function LineSculpture({ active = true }: { active?: boolean }) {
   const chooseScene = (id: SceneId) => { setScene(id); setView("free"); void apiRef.current?.load(id); };
   const chooseView = (v: ViewChoice) => { if (v === "free") apiRef.current?.scatter(); else apiRef.current?.fly(+v, 1600); };
 
-  return <section ref={rootRef} className={styles.section} aria-labelledby="line-sculpture-title">
+  const overlay = variant === "overlay";
+  return <section ref={rootRef} className={overlay ? styles.overlaySection : styles.section} aria-labelledby="line-sculpture-title">
     <header className={styles.head}>
       <div>
         <p className={styles.eyebrow}>线的雕塑 · 3 个视角</p>
-        <h2 id="line-sculpture-title" lang="en">Every line remembers where it came from.</h2>
-        <p className={styles.lead}>十几万根线，只在三个角度拼回照片。拖动旋转，转到对的位置，它会自己对齐。</p>
+        <h2 id="line-sculpture-title" lang="en">{overlay ? title || "Your scene, in lines." : "Every line remembers where it came from."}</h2>
+        {!overlay && <p className={styles.lead}>十几万根线，只在三个角度拼回照片。拖动旋转，转到对的位置，它会自己对齐。</p>}
       </div>
       <div className={styles.controls}>
-        <LiquidSegmented<SceneId> ariaLabel="场景" value={scene} onChange={chooseScene} options={SCENES.map(s => ({ value: s.value, label: s.label }))} />
+        {!overlay && <LiquidSegmented<SceneId> ariaLabel="场景" value={scene} onChange={chooseScene} options={SCENES.map(s => ({ value: s.value, label: s.label }))} />}
         {mode === "live" && <LiquidSegmented<ViewChoice> ariaLabel="视角" value={view} onChange={chooseView} disabled={loading}
           options={[{ value: "0", label: "视角 1" }, { value: "1", label: "视角 2" }, { value: "2", label: "视角 3" }, { value: "free", label: "散开" }]} />}
       </div>

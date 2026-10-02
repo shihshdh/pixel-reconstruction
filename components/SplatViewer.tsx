@@ -1,6 +1,8 @@
 "use client";
 
 import { patchSplatBuffer } from "@/lib/splat-perf";
+import SculptureMaker from "@/components/SculptureMaker";
+import type { SculptureImage } from "@/lib/sculpture-build";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 // 动效地基：FLIP 让序列增删时后面的片段平滑让位
 import { prefersReduced, useFlipList } from "@/lib/motion";
@@ -391,6 +393,53 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
       document.removeEventListener("visibilitychange", clear);
     };
   }, []);
+
+  /**
+   * 线雕取景：在场景里换三个机位（左、中、右，两侧略抬高）各拍一张 1024×640。
+   * 机位按场景自己的深度定：横移约为近景深度（第 10 百分位）的 0.14 倍——再大就会拍到单张照片视锥外的空洞，
+   * 注视点取第 30 百分位深度。拍之前停住运镜，拍完把相机放回原处。画面效果（曝光等滤镜）一并带上。
+   */
+  async function captureSculptureViews(): Promise<SculptureImage[]> {
+    const viewer = viewerRef.current, THREE = threeRef.current, renderer = rendererRef.current;
+    if (!viewer?.camera || !viewer.splatMesh || !THREE || !renderer) throw new Error("场景还没准备好。");
+    const cam = viewer.camera, mesh = viewer.splatMesh;
+    const count = mesh.getSplatCount(), stride = Math.max(1, Math.floor(count / 30000)), v = new THREE.Vector3(), depths: number[] = [];
+    for (let i = 0; i < count; i += stride) { mesh.getSplatCenter(i, v, true); if (v.z < 0) depths.push(-v.z); }
+    depths.sort((a, b) => a - b);
+    const q = (t: number) => depths[Math.min(depths.length - 1, Math.floor(depths.length * t))] || TARGET_Z;
+    const near = q(.1), focus = Math.max(q(.3), near * 1.2), dx = .14 * near, dy = .03 * near;
+    const saved = { pos: cam.position.clone(), quat: cam.quaternion.clone(), up: cam.up.clone(), fov: cam.fov, preview: previewRef.current, controls: viewer.controls?.enabled };
+    previewRef.current = { kind: "free" };
+    if (viewer.controls) viewer.controls.enabled = false;
+    const canvas = renderer.domElement as HTMLCanvasElement;
+    const W = 1024, H = 640, out = document.createElement("canvas");
+    out.width = W; out.height = H;
+    const ctx = out.getContext("2d", { willReadFrequently: true })!;
+    const shots: SculptureImage[] = [];
+    try {
+      for (const [x, y] of [[-dx, dy], [0, 0], [dx, dy]]) {
+        cam.position.set(x, y, 0); cam.up.set(0, 1, 0); cam.lookAt(0, 0, -focus);
+        // 用比工作室默认更窄的镜头（约等于一般照片的 35° 竖直视角）：画框边缘不会拍到照片视锥之外的空洞
+        cam.fov = Math.min(baseFovRef.current, 35); cam.updateProjectionMatrix();
+        // 等深度排序跟上新机位
+        for (let k = 0; k < 24; k++) { viewer.forceRenderNextFrame?.(); await new Promise(r => requestAnimationFrame(r)); }
+        await new Promise(r => setTimeout(r, 250));
+        viewer.update?.(); viewer.render?.();
+        // 同一任务里立刻读画布（WebGL 画布不保留绘制缓冲），按 cover 方式裁成 16:10
+        const cw = canvas.width, ch = canvas.height, s = Math.max(W / cw, H / ch);
+        ctx.filter = canvas.style.filter || "none";
+        ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+        ctx.drawImage(canvas, (W - cw * s) / 2, (H - ch * s) / 2, cw * s, ch * s);
+        shots.push({ width: W, height: H, rgba: ctx.getImageData(0, 0, W, H).data });
+      }
+    } finally {
+      cam.position.copy(saved.pos); cam.quaternion.copy(saved.quat); cam.up.copy(saved.up); cam.fov = saved.fov; cam.updateProjectionMatrix();
+      previewRef.current = saved.preview;
+      if (viewer.controls) viewer.controls.enabled = saved.controls ?? true;
+      viewer.forceRenderNextFrame?.();
+    }
+    return shots;
+  }
 
   /** 运镜播放中按下移动键：从当前机位直接接管，不跳回原点 */
   function takeOverCamera() {
@@ -1097,6 +1146,8 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
           </div>
           <p className="export-hint">粒子看着稀疏时把「粒子大小」调到 1.2–1.5×，缝隙会被填上；双击滑块回到默认值。</p>
         </div>
+
+        <SculptureMaker capture={captureSculptureViews} disabled={!ready || recording} />
 
         {/* 序列 + 导出：两栏 */}
         <div className="rig-grid">
