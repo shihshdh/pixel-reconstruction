@@ -130,10 +130,22 @@ export default function DiscShelf<T extends DiscItem>({ items, renderThumb, stat
     if (drag.current.moved) { drag.current.moved = false; return; }
     if (index === current) onOpen(items[index]); else go(index);
   };
+  // 左右方向键在整个作品库页都能翻，不必先把焦点放到光盘上；正在输入文字时不抢按键。
+  // 以弹簧的目标值为基准，按住不放时连续翻页也不会因为动画还没到位而跳回
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      const el = event.target as HTMLElement | null;
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.closest("[role=dialog]"))) return;
+      event.preventDefault();
+      go(Math.round(motion.current.target) + (event.key === "ArrowRight" ? 1 : -1));
+    };
+    window.addEventListener("keydown", keydown);
+    return () => window.removeEventListener("keydown", keydown);
+  }, [go]);
   const key = (event: React.KeyboardEvent) => {
-    if (event.key === "ArrowRight" || event.key === "ArrowDown") { event.preventDefault(); go(current + 1); }
-    else if (event.key === "ArrowLeft" || event.key === "ArrowUp") { event.preventDefault(); go(current - 1); }
-    else if (event.key === "Home") { event.preventDefault(); go(0); }
+    if (event.key === "Home") { event.preventDefault(); go(0); }
     else if (event.key === "End") { event.preventDefault(); go(n - 1); }
   };
 

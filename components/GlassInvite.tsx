@@ -1,8 +1,8 @@
 'use client';
 
-// 首页结尾的“玻璃邀请”：标题画在一块底板上，前面盖着八块厚玻璃碎片。
+// 首页结尾的“玻璃邀请”：标题画在一块底板上，前面盖着八块厚玻璃碎片。色调跟随明暗主题。
 // 玻璃是真的折射：MeshPhysicalMaterial 的 transmission + thickness + ior + dispersion，
-// 字跨过倒角边时会被错开、边缘带一点色散彩边。鼠标移动时整组玻璃朝鼠标倾斜，
+// 字跨过倒角边时会被错开、边缘带一点色散彩边。鼠标移动时玻璃朝鼠标倾斜（底板和按钮不动），
 // 一盏跟随鼠标的点光让高光在倒角上游走，鼠标下的那块微微浮起。
 // 只在进入视口、且有东西在动时渲染；低档画质、减少动态效果或触屏用静态版本。
 import { useEffect, useRef, useState } from "react";
@@ -70,8 +70,8 @@ export default function GlassInvite({ onStart, active = true }: { onStart: () =>
       const tier = perfProfile().tier, dpr = devicePixelRatio || 1;
       // 极致档超采样，与工作室一致；均衡档封顶 1.5
       renderer.setPixelRatio(tier === "ultra" ? Math.min(dpr * 1.25, 2.5) : tier === "high" ? Math.min(dpr, 2) : Math.min(dpr, 1.5));
-      renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.05;
+      // Neutral 色调映射不会把浅色主题的白底压灰
+      renderer.toneMapping = THREE.NeutralToneMapping;
 
       const scene = new THREE.Scene();
       const pmrem = new THREE.PMREMGenerator(renderer);
@@ -96,9 +96,9 @@ export default function GlassInvite({ onStart, active = true }: { onStart: () =>
         dispersion: 1.6, specularIntensity: .12, clearcoat: 1, clearcoatRoughness: .34, envMapIntensity: .38,
         attenuationColor: new THREE.Color("#a3a8b0"), attenuationDistance: 1.6,
       });
-      // 底板也放进组里：和视频一样，整页（字和玻璃）一起朝鼠标倾斜
+      // 底板不跟着倾斜：字和真按钮始终对齐、按钮不会从鼠标下滑走；只有玻璃倾斜，折射随之变化
+      scene.add(plane);
       const group = new THREE.Group();
-      group.add(plane);
       scene.add(group);
       let shards: InstanceType<typeof THREE.Mesh>[] = [];
       const lift: number[] = [];
@@ -107,26 +107,40 @@ export default function GlassInvite({ onStart, active = true }: { onStart: () =>
       const key = new THREE.PointLight(0xfff4e6, 2.4, 0, 2);
       scene.add(key);
 
+      // 两套色调。深色：Prism 式近黑底 + 烟灰玻璃 + 主题金色柔光；
+      // 浅色：比页面底色（#f7f9fc）略深一档的雾蓝灰底，玻璃几乎无色，靠更亮的环境反射勾出倒角，
+      // 柔光取页面同系的灰蓝与暖米，字用页面墨色，和周围的浅色版块不打架
+      const PALETTES = {
+        dark: { paper: "#0b0b0d", ink: "#ececef", ink3: "#8b8d94", glows: [["#d4af6a26", .34], ["#4f6f9622", .32], ["#ffffff0a", .22]],
+          glass: { attenuationColor: "#a3a8b0", attenuationDistance: 1.6, envMapIntensity: .38, specularIntensity: .12, dispersion: 1.6 }, key: 2.4, exposure: 1.05 },
+        light: { paper: "#e9eef4", ink: "#202428", ink3: "#5d6570", glows: [["#8eaed266", .36], ["#d8c4a04d", .32], ["#ffffffb0", .24]],
+          glass: { attenuationColor: "#ffffff", attenuationDistance: 8, envMapIntensity: .62, specularIntensity: .3, dispersion: 1.1 }, key: 1.2, exposure: 1.16 },
+      } as const;
+      const palette = () => PALETTES[document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light"];
+      const applyGlass = () => {
+        const p = palette();
+        glass.attenuationColor.set(p.glass.attenuationColor); glass.attenuationDistance = p.glass.attenuationDistance;
+        glass.envMapIntensity = p.glass.envMapIntensity; glass.specularIntensity = p.glass.specularIntensity; glass.dispersion = p.glass.dispersion;
+        key.intensity = p.key; renderer.toneMappingExposure = p.exposure;
+      };
+
       let W = 1, H = 1;
-      const css = (name: string, fallback: string) => getComputedStyle(root).getPropertyValue(name).trim() || fallback;
-      const paint = () => {
+          const paint = () => {
         const ratio = renderer.getPixelRatio();
         const cw = Math.round(W * PAD * ratio), ch = Math.round(H * PAD * ratio);
         paper.width = cw; paper.height = ch;
         const g = paper.getContext("2d")!;
-        // 和 Prism 一样始终是深色底：浅色主题里它是一张深色的展示卡
-        const dark = document.documentElement.getAttribute("data-theme") === "dark";
-        const ink = "#ececef", ink3 = "#8b8d94", accent = dark ? css("--accent", "#d4af6a") : "#6f8fb8";
-        g.fillStyle = "#0b0b0d"; g.fillRect(0, 0, cw, ch);
+        const { paper: base, ink, ink3, glows } = palette();
+        g.fillStyle = base; g.fillRect(0, 0, cw, ch);
         // 柔光：让玻璃有东西可折射，倒角处才看得出偏折
         const glow = (x: number, y: number, r: number, color: string) => {
           const grd = g.createRadialGradient(x * cw, y * ch, 0, x * cw, y * ch, r * cw);
           grd.addColorStop(0, color); grd.addColorStop(1, "transparent");
           g.fillStyle = grd; g.fillRect(0, 0, cw, ch);
         };
-        glow(.8, .28, .34, accent + "26");
-        glow(.18, .9, .32, "#4f6f9622");
-        glow(.56, .5, .22, "#ffffff0a");
+        glow(.8, .28, glows[0][1], glows[0][0]);
+        glow(.18, .9, glows[1][1], glows[1][0]);
+        glow(.56, .5, glows[2][1], glows[2][0]);
         // 文字的位置按 CSS 像素算，再加上 PAD 留出的边，和按钮对齐
         const s = ratio, ox = (PAD - 1) / 2 * W * s, oy = (PAD - 1) / 2 * H * s;
         const family = getComputedStyle(document.body).fontFamily;
@@ -187,20 +201,8 @@ export default function GlassInvite({ onStart, active = true }: { onStart: () =>
           if (Math.abs(goal - lift[i]) > .0004) moving = true;
         });
         renderer.render(scene, camera);
-        placeButton();
         if (moving && state.visible && activeRef.current) raf = requestAnimationFrame(loop);
         else last = 0;
-      };
-      // 按钮是真正的 HTML 按钮：把它在底板上的锚点投影到屏幕，跟着倾斜走
-      const anchor = new THREE.Vector3();
-      const placeButton = () => {
-        const cta = root.querySelector<HTMLElement>("[data-cta]");
-        if (!cta) return;
-        const size = parseFloat(root.style.getPropertyValue("--title-size")) || 52;
-        const bx = -.5 + .085, by = .5 - (.3 + (size * 2.12 + 58) / H);
-        anchor.set(bx * W / H * PAD * (dist - PLANE_Z) / dist / PAD, by * (dist - PLANE_Z) / dist, PLANE_Z);
-        anchor.applyMatrix4(group.matrixWorld).project(camera);
-        cta.style.transform = `translate3d(${(anchor.x + 1) / 2 * W}px,${(1 - anchor.y) / 2 * H}px,0)`;
       };
       const kick = () => { if (!raf && state.visible && activeRef.current) raf = requestAnimationFrame(loop); };
 
@@ -219,11 +221,12 @@ export default function GlassInvite({ onStart, active = true }: { onStart: () =>
       const ro = new ResizeObserver(resize); ro.observe(root);
       const io = new IntersectionObserver(([entry]) => { state.visible = entry.isIntersecting; kick(); }, { rootMargin: "120px" });
       io.observe(root);
-      const themeWatch = new MutationObserver(() => { paint(); kick(); });
+      const themeWatch = new MutationObserver(() => { applyGlass(); paint(); kick(); });
       themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
       root.addEventListener("pointermove", move); root.addEventListener("pointerleave", leave);
       // 字体加载完再画一遍，避免第一次落在后备字体上
       void document.fonts?.ready.then(() => { if (!disposed) { paint(); kick(); } });
+      applyGlass();
       resize();
       setTimeout(() => root.setAttribute("data-ready", ""), 60);
 
@@ -245,6 +248,6 @@ export default function GlassInvite({ onStart, active = true }: { onStart: () =>
   return <section ref={rootRef} className={styles.invite}>
     <canvas ref={canvasRef} className={styles.canvas} aria-hidden="true" />
     <div className={styles.copy}><h2>{TITLE.join("")}</h2><p>{LEAD}</p></div>
-    <button data-cta className={`editorial-primary ${styles.cta}`} onClick={onStart}>上传照片 <span aria-hidden="true">↗</span></button>
+    <button className={`editorial-primary ${styles.cta}`} onClick={onStart}>上传照片 <span aria-hidden="true">↗</span></button>
   </section>;
 }
