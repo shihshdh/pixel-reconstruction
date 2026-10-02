@@ -128,7 +128,7 @@ export default function DiscShelf<T extends DiscItem>({ items, renderThumb, stat
   };
   const clickDisc = (index: number) => {
     if (drag.current.moved) { drag.current.moved = false; return; }
-    if (index === current) onOpen(items[index]); else go(index);
+    if (index === Math.min(current, n - 1)) onOpen(items[index]); else go(index);
   };
   // 左右方向键在整个作品库页都能翻，不必先把焦点放到光盘上；正在输入文字时不抢按键。
   // 以弹簧的目标值为基准，按住不放时连续翻页也不会因为动画还没到位而跳回
@@ -149,15 +149,18 @@ export default function DiscShelf<T extends DiscItem>({ items, renderThumb, stat
     else if (event.key === "End") { event.preventDefault(); go(n - 1); }
   };
 
-  const item = items[current];
+  // 列表变短（切到「收藏」、删除）的这一帧，current 和可见范围还是旧列表的值：渲染时先按新长度截断，
+  // 下一帧 effect 会把它们收回范围内
+  const at = Math.min(current, n - 1);
+  const item = items[at];
   if (!item) return null;
   const pad = (value: number) => String(value).padStart(2, "0");
   const discs: ReactNode[] = [];
-  for (let i = visible[0]; i <= visible[1]; i++) {
+  for (let i = Math.max(0, visible[0]); i <= Math.min(visible[1], n - 1); i++) {
     const disc = items[i];
     discs.push(<button key={disc.id} type="button" className={styles.disc} tabIndex={-1}
       ref={el => { if (el) discRefs.current.set(i, el); else discRefs.current.delete(i); }}
-      aria-label={i === current ? "打开" + disc.title : "转到" + disc.title} onClick={() => clickDisc(i)}>
+      aria-label={i === at ? "打开" + disc.title : "转到" + disc.title} onClick={() => clickDisc(i)}>
       <span className={styles.face}>{renderThumb(disc)}</span>
       <span className={styles.sheen} aria-hidden="true" />
       <span className={styles.hub} aria-hidden="true" />
@@ -184,7 +187,7 @@ export default function DiscShelf<T extends DiscItem>({ items, renderThumb, stat
         <button type="button" className={styles.fav} aria-pressed={item.fav} onClick={() => onToggleFav(item)}>{item.fav ? "★ 已收藏" : "☆ 收藏"}</button>
       </div>
       <p className={styles.hint}>滚动、拖动或用方向键翻阅</p>
-      <p className={styles.counter} aria-label={`第 ${current + 1} 件，共 ${n} 件`}><strong>{pad(current + 1)}</strong><span>/ {pad(n)}</span></p>
+      <p className={styles.counter} aria-label={`第 ${at + 1} 件，共 ${n} 件`}><strong>{pad(at + 1)}</strong><span>/ {pad(n)}</span></p>
     </div>
   </section>;
 }
