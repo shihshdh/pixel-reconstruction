@@ -34,10 +34,12 @@ export default function FolderFan({ cards, label, note, word = "welcome", onOpen
             "--rest-x": `${k * 10}px`, "--rest-r": `${k * 3}deg`,
             // 展开：越靠外越低、越斜
             "--open-x": `${k * 118}px`, "--open-y": `${-158 + edge * edge * 15}px`, "--open-r": `${k * 13}deg`,
-            "--delay": `${edge * 35}ms`, zIndex: 10 - Math.round(edge),
+            "--delay": `${edge * 70}ms`, zIndex: 10 - Math.round(edge),
           } as React.CSSProperties}>
-          <span className={styles.photo}>{card.thumb}</span>
-          {card.tag && <span className={styles.tag}>{card.tag}</span>}
+          <span className={styles.face}>
+            <span className={styles.photo}>{card.thumb}</span>
+            {card.tag && <span className={styles.tag}>{card.tag}</span>}
+          </span>
         </button>;
       })}
       <button type="button" className={styles.pocket} onClick={onOpen} aria-label={label}>

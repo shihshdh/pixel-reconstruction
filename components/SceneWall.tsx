@@ -122,7 +122,7 @@ function FlipbookTile({ ratio, hidden }: { ratio: string; hidden: boolean }) {
     const preload = FRAMES.map(src => { const im = new Image(); im.src = src; return im.decode?.().catch(() => {}); });
     const io = new IntersectionObserver(([entry]) => {
       clearInterval(timer);
-      if (entry.isIntersecting) void Promise.all(preload).then(() => { clearInterval(timer); timer = window.setInterval(() => setFrame(f => (f + 1) % FRAMES.length), 700); });
+      if (entry.isIntersecting) void Promise.all(preload).then(() => { clearInterval(timer); timer = window.setInterval(() => setFrame(f => (f + 1) % FRAMES.length), 1100); });
     }, { threshold: .2 });
     io.observe(el);
     return () => { io.disconnect(); clearInterval(timer); };
