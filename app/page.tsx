@@ -24,6 +24,7 @@ import { ICON } from "@/lib/icons";
 import AuthorContact from "@/components/AuthorContact";
 import DiscShelf from "@/components/DiscShelf";
 import SceneWall from "@/components/SceneWall";
+import LineSculpture from "@/components/LineSculpture";
 import GlassInvite from "@/components/GlassInvite";
 import { DESKTOP_DOWNLOAD, isDesktopApp, openWorksFolder, setFullscreen, titleBarMouseDown } from "@/lib/desktop";
 import WindowControls from "@/components/WindowControls";
@@ -1581,6 +1582,7 @@ function HomePage({ setPage, active = true, ready = true }) {
       </Reveal>
     </section>
     <SceneWall />
+    <LineSculpture active={active} />
     <GlassInvite active={active} onStart={() => setPage("create")} />
     <footer className="overview-footer"><BrandMark size={21} /><span>Pixel Reconstruction</span><span>单张图片 · 三维场景 · 自由运镜</span></footer>
   </main>;
