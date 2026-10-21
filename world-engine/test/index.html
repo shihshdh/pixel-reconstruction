@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>漫游引擎测试</title>
+<style>html,body{margin:0;height:100%;background:#0b0c0d}#mount{position:fixed;inset:0}#log{position:fixed;left:8px;bottom:8px;color:#ddd;font:12px monospace;z-index:2}</style>
+<div id="mount"></div><div id="log"></div>
+<script type="module">
+// 用法：test/index.html?spz=<url>&glb=<url>&mode=walk|fly&q=500k
+const q = new URLSearchParams(location.search);
+const { createWorldEngine, version } = await import(q.get("engine") || "/world/engine.js");
+const log = document.getElementById("log");
+const started = performance.now();
+window.__state = { version, ready: false, progress: 0 };
+window.__engine = createWorldEngine({
+  container: document.getElementById("mount"),
+  assets: { splats: { [q.get("q") || "500k"]: q.get("spz") }, collider: q.get("glb") || undefined, coordinate: q.get("coord") || "opencv",
+    metricScale: q.get("s") ? +q.get("s") : undefined, groundOffset: q.get("g") ? +q.get("g") : undefined, format: q.get("format") || undefined },
+  quality: q.get("q") || "500k", pixelRatio: devicePixelRatio, mode: q.get("mode") || "walk",
+  bounds: q.get("r") ? { radius: +q.get("r") } : undefined,
+  onProgress: p => { window.__state.progress = p; },
+  onReady: () => { window.__state.ready = true; window.__state.loadMs = Math.round(performance.now() - started); },
+  onError: e => { window.__state.error = e.message; },
+  onStats: s => { window.__state.stats = s; log.textContent = JSON.stringify({ ...s, ...window.__engine.__debug() }); },
+});
+</script>

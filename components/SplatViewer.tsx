@@ -3,7 +3,7 @@
 import { patchSplatBuffer } from "@/lib/splat-perf";
 import SculptureMaker from "@/components/SculptureMaker";
 import type { SculptureImage } from "@/lib/sculpture-build";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 // 动效地基：FLIP 让序列增删时后面的片段平滑让位
 import { prefersReduced, useFlipList } from "@/lib/motion";
 import { downloadJobFile } from "@/lib/api";
@@ -258,7 +258,7 @@ function readLook(): Look {
 const lookFilter = (l: Look) => l.exposure === 0 && l.contrast === 1 && l.saturation === 1 ? "none"
   : `brightness(${Math.pow(2, l.exposure).toFixed(3)}) contrast(${l.contrast.toFixed(2)}) saturate(${l.saturation.toFixed(2)})`;
 
-export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = 'ply', posterUrl, previewQuality = 'full', preparationError, onPreparationRetry, onAssetLoaded }: { plyUrl: string; jobId?: string; backendUrl?: string; sceneFormat?: 'ply' | 'splat'; posterUrl?: string; previewQuality?: 'mobile' | 'full'; preparationError?: string; onPreparationRetry?: () => void; onAssetLoaded?: (blob: Blob) => void }) {
+export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = 'ply', posterUrl, previewQuality = 'full', preparationError, onPreparationRetry, onAssetLoaded, lead }: { plyUrl: string; jobId?: string; backendUrl?: string; sceneFormat?: 'ply' | 'splat'; posterUrl?: string; previewQuality?: 'mobile' | 'full'; preparationError?: string; onPreparationRetry?: () => void; onAssetLoaded?: (blob: Blob) => void; /** 工作台最上面的卡片（「走进世界」） */ lead?: ReactNode }) {
   const mountRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<any>(null);
   const rendererRef = useRef<any>(null);
@@ -1082,6 +1082,7 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
 
       {/* ===== 运镜工作台：运镜选择 / 序列编排 / 导出 ===== */}
       <div className="rig">
+        {lead}
         {/* 运镜选择 */}
         <div className="rig-card">
           <div className="rig-card-title">运镜 <span>可多选，勾上即预览</span>

@@ -154,13 +154,17 @@ async function request<T>(path: string, init: RequestInit = {}, base = getBase()
   } finally { requestSignal?.dispose(); }
 }
 
+/** 扩展接口（「走进世界」，见 lib/world.ts）复用同一套请求、重试与作品凭证 */
+export function apiRequest<T>(path: string, init: RequestInit = {}, base = getBase(), timeout = 30000) { return request<T>(path, init, base, timeout); }
+export function jobAuthHeaders(jobId: string) { return jobHeaders(jobId); }
+
 /** CPU gateway only: this probe must never allocate a GPU. */
-export async function ping(base = getBase()): Promise<{ ok: boolean; device?: string; enhance?: boolean; serverless?: boolean; assist?: boolean; assist_vision?: boolean; assist_search?: boolean }> {
+export async function ping(base = getBase()): Promise<{ ok: boolean; device?: string; enhance?: boolean; serverless?: boolean; assist?: boolean; assist_vision?: boolean; assist_search?: boolean; world?: boolean }> {
   if (!base) return { ok: false };
   try {
-    const data = await request<{ ok?: boolean; device?: string; enhance?: boolean; serverless?: boolean; assist?: boolean; assist_vision?: boolean; assist_search?: boolean }>("/healthz", {}, base, 20000);
+    const data = await request<{ ok?: boolean; device?: string; enhance?: boolean; serverless?: boolean; assist?: boolean; assist_vision?: boolean; assist_search?: boolean; world?: boolean }>("/healthz", {}, base, 20000);
     // assist: the gateway has a DeepSeek key configured, so the companion can chat.
-    return { ok: data.ok === true, device: data.device, enhance: !!data.enhance, serverless: !!data.serverless, assist: data.assist === true, assist_vision: data.assist_vision === true, assist_search: data.assist_search === true };
+    return { ok: data.ok === true, device: data.device, enhance: !!data.enhance, serverless: !!data.serverless, assist: data.assist === true, assist_vision: data.assist_vision === true, assist_search: data.assist_search === true, world: data.world === true };
   } catch { return { ok: false }; }
 }
 export type UploadProgress = { sent: number; total: number; bytesPerSecond: number };

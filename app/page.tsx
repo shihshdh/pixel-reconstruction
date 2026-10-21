@@ -30,8 +30,9 @@ import { DESKTOP_DOWNLOAD, isDesktopApp, openWorksFolder, setFullscreen, titleBa
 import WindowControls from "@/components/WindowControls";
 import { computeUiZoom } from "@/lib/ui-scale";
 import { engineAccepts, engineInstalling, engineWarming, pauseEngineInstall, resumeEngineInstall, watchLocalEngine, type EngineStatus } from "@/lib/local-engine";
-import LiquidSegmented, { LiquidIndicator } from "@/components/LiquidSegmented";
-import { detectTier, perfProfile, readPerfChoice, savePerfChoice, PERF_EVENT, PERF_LABELS, type PerfChoice, type PerfTier } from "@/lib/perf";
+import LiquidSegmented from "@/components/LiquidSegmented";
+import LiquidTabBar, { GlassSurface, type TabItem } from "@/components/LiquidTabBar";
+import { desktopClass, detectTier, perfProfile, readPerfChoice, savePerfChoice, PERF_EVENT, PERF_LABELS, type PerfChoice, type PerfTier } from "@/lib/perf";
 // 现有 API（lib/api.ts）——创作/工作室/修图都用它
 import {
   submitPhoto, checkStatus,
@@ -53,6 +54,7 @@ function LandingFallback() {
 }
 const LandingExperience = dynamic(() => import("@/components/LandingExperience"), { ssr: false, loading: LandingFallback });
 const SplatViewer = dynamic(() => import("@/components/SplatViewer"), { ssr: false });
+const WorldMaker = dynamic(() => import("@/components/WorldMaker"), { ssr: false });
 // Site companion; loads only after the landing and only when the gateway can chat.
 const WhaleCompanion = dynamic(() => import("@/components/WhaleCompanion"), { ssr: false });
 // 画质“极致”档（独立显卡）的界面光追背景；其他档位不加载。
@@ -668,13 +670,13 @@ function DesktopDownload() {
   </a>;
 }
 
-// 客户端里的全局画质：决定工作室的渲染倍率、导出分辨率，以及“极致”档的光追界面。
+// 全局画质（客户端与网页里的电脑都有）：决定工作室的渲染倍率、导出分辨率，以及“极致”档的光追界面。
 function QualityPicker() {
   const [choice, setChoice] = useState<PerfChoice>("auto");
   const [auto, setAuto] = useState("");
   const [show, setShow] = useState(false);
   useEffect(() => {
-    setShow(isDesktopApp());
+    setShow(desktopClass());
     const sync = () => { setChoice(readPerfChoice()); setAuto(PERF_LABELS[detectTier()]); };
     sync();
     window.addEventListener(PERF_EVENT, sync);
@@ -708,63 +710,57 @@ function FullscreenToggle() {
   const [show, setShow] = useState(false);
   const [full, setFull] = useState(false);
   useEffect(() => {
-    if (!isDesktopApp()) return;
+    if (isDesktopApp()) {
+      setShow(true);
+      const onKey = (event: KeyboardEvent) => {
+        if (event.key === "F11") { event.preventDefault(); void setFullscreen().then(setFull); }
+        // 其他组件（对话框、输入框）先处理过的 Esc 不抢
+        else if (event.key === "Escape" && !event.defaultPrevented) void setFullscreen(false).then(setFull);
+      };
+      window.addEventListener("keydown", onKey);
+      return () => window.removeEventListener("keydown", onKey);
+    }
+    // 网页：标准全屏接口。F11 与 Esc 由浏览器自己处理，这里只跟着状态走
+    if (!document.fullscreenEnabled || !desktopClass()) return;
     setShow(true);
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "F11") { event.preventDefault(); void setFullscreen().then(setFull); }
-      // 其他组件（对话框、输入框）先处理过的 Esc 不抢
-      else if (event.key === "Escape" && !event.defaultPrevented) void setFullscreen(false).then(setFull);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    const sync = () => setFull(!!document.fullscreenElement);
+    sync();
+    document.addEventListener("fullscreenchange", sync);
+    return () => document.removeEventListener("fullscreenchange", sync);
   }, []);
   if (!show) return null;
-  return <button className="nav-theme nav-fullscreen" onClick={() => void setFullscreen().then(setFull)} title={full ? "退出全屏（Esc）" : "全屏无边框（F11）"} aria-label={full ? "退出全屏" : "全屏无边框"} aria-pressed={full} style={{
+  const toggle = () => void setFullscreen().then(setFull);
+  return <button className="nav-theme nav-fullscreen" onClick={toggle} title={full ? "退出全屏（Esc）" : isDesktopApp() ? "全屏无边框（F11）" : "全屏"} aria-label={full ? "退出全屏" : "全屏"} aria-pressed={full} style={{
     border: "1px solid var(--line)", background: "var(--card)", borderRadius: 980, color: "var(--ink)", display: "grid", placeItems: "center",
   }}><MorphIcon icon={full ? ICON.collapse : ICON.expand} size={16} strokeWidth={1.6} spring={SPRING} reducedMotion="user" /></button>;
 }
 
+// 主导航的五个页面；手机上变成底部标签栏，用图标（24 格、圆头描边，与 lib/icons.ts 同一套画法）
+const NAV_TABS: TabItem<string>[] = [
+  { value: "home", label: "概览", icon: <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 10.6 12 4.5l7.5 6.1V18.6a1.4 1.4 0 0 1-1.4 1.4h-3.9v-5.2H9.8V20H5.9a1.4 1.4 0 0 1-1.4-1.4Z" /></svg> },
+  { value: "create", label: "创作", icon: <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.6a8.4 8.4 0 1 1 0 16.8a8.4 8.4 0 1 1 0-16.8Z M12 8.4v7.2 M8.4 12h7.2" /></svg> },
+  { value: "studio", label: "工作室", icon: <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.8 19.4 8v8L12 20.2 4.6 16V8Z M4.6 8 12 12.2 19.4 8 M12 12.2v8" /></svg> },
+  { value: "enhance", label: "修图", icon: <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19 15.4 8.6 M14.2 4.6l.7 1.7 1.7.7-1.7.7-.7 1.7-.7-1.7-1.7-.7 1.7-.7Z M18.6 10.8l.5 1.1 1.1.5-1.1.5-.5 1.1-.5-1.1-1.1-.5 1.1-.5Z" /></svg> },
+  { value: "gallery", label: "作品库", icon: <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.9 8h10.6a1.5 1.5 0 0 1 1.5 1.5v8.6a1.5 1.5 0 0 1-1.5 1.5H6.9a1.5 1.5 0 0 1-1.5-1.5V9.5A1.5 1.5 0 0 1 6.9 8Z M8.2 5h10.4A1.9 1.9 0 0 1 20.5 6.9v8.4 M5.4 16.4l3.6-3.6 2.8 2.8 1.9-1.9 4.8 4.8" /></svg> },
+];
+const NAV_TEXT_TABS = NAV_TABS.map(({ icon, ...tab }) => tab);
+
 function Nav({ page, setPage, theme, toggleTheme, onShowcase, logoReady = true, engine = { phase: "off", url: "" } as EngineStatus }) {
-  const tabsRef = useRef<HTMLDivElement>(null);
-  const [tabRect, setTabRect] = useState({ x: 0, width: 0 });
-  useEffect(() => {
-    const el = tabsRef.current;
-    if (!el) return;
-    const measure = () => {
-      const active = el.querySelector<HTMLElement>('[aria-current="page"]');
-      if (active) setTabRect({ x: active.offsetLeft - 10, width: active.offsetWidth + 20 });
-    };
-    measure();
-    const observer = new ResizeObserver(measure); observer.observe(el);
-    return () => observer.disconnect();
-  }, [page]);
-  const tabs = [
-    ["home", "概览"], ["create", "创作"], ["studio", "工作室"],
-    ["enhance", "修图"], ["gallery", "作品库"],
-  ];
   return (
-    <nav className="nav-bar" onPointerMove={followGlassPointer} onMouseDown={titleBarMouseDown} style={{
-      position: "sticky", top: 0, zIndex: 100, background: "var(--glass)",
-      WebkitBackdropFilter: "saturate(145%) blur(9px)", backdropFilter: "saturate(145%) blur(9px)",
-      borderBottom: "1px solid var(--nav-brd)", boxShadow: "inset 0 1px 0 var(--glass-brd)",
-    }}>
-      {/* id 给开屏 logo 当落点用；开屏飞行期间这里先空着，避免重影 */}
-      <button id="ruhua-nav-logo" className="nav-logo" aria-label="Pixel Reconstruction，返回三维展示" onClick={onShowcase} style={{
-        border: 0, background: "none", padding: 0, fontWeight: 600, color: "var(--ink)",
-        opacity: logoReady ? 1 : 0,
-      }}>
-        <BrandMark size={27} /><span className="brand-name">Pixel Reconstruction</span>
-      </button>
-      <div className="nav-tabs" ref={tabsRef}>
-        {tabRect.width > 0 && <LiquidIndicator className="nav-drop" left={tabRect.x} width={tabRect.width} />}
-        {tabs.map(([id, label]) => (
-          <button key={id} className="nav-tab" aria-current={page === id ? "page" : undefined} onClick={() => setPage(id)} style={{
-            border: 0, background: "none", padding: 0, letterSpacing: "0.02em",
-            color: page === id ? "var(--ink)" : "var(--ink3)", transition: "color .2s",
-          }}>{label}</button>
-        ))}
-      </div>
-      <div className="nav-right">
+    <nav className="nav-bar" onPointerMove={followGlassPointer} onMouseDown={titleBarMouseDown} style={{ position: "sticky", top: 0, zIndex: 100 }}>
+      {/* iOS 的“滚动边缘”：页面底色从上往下淡出，不磨砂——磨砂会先把胶囊背后的画面糊掉，玻璃就折射不出东西 */}
+      <span className="nav-edge" aria-hidden="true" />
+      <GlassSurface className="nav-logo-glass">
+        {/* id 给开屏 logo 当落点用；开屏飞行期间这里先空着，避免重影 */}
+        <button id="ruhua-nav-logo" className="nav-logo" aria-label="Pixel Reconstruction，返回三维展示" onClick={onShowcase} style={{
+          border: 0, background: "none", padding: 0, fontWeight: 600, color: "var(--ink)",
+          opacity: logoReady ? 1 : 0,
+        }}>
+          <BrandMark size={27} /><span className="brand-name">Pixel Reconstruction</span>
+        </button>
+      </GlassSurface>
+      <LiquidTabBar nav className="nav-tabbar" ariaLabel="主导航" items={NAV_TEXT_TABS} value={page} onChange={setPage} />
+      <GlassSurface className="nav-right">
         <DesktopDownload />
         <EngineInstallPill engine={engine} onOpen={() => setPage("create")} />
         <QualityPicker />
@@ -777,8 +773,10 @@ function Nav({ page, setPage, theme, toggleTheme, onShowcase, logoReady = true, 
         <button className="nav-cta" onClick={() => setPage("create")} style={{
           border: 0, background: "var(--accent)", color: "#fff", fontWeight: 500, borderRadius: 980,
         }}>开始创作</button>
-        <WindowControls />
-      </div>
+      </GlassSurface>
+      <WindowControls />
+      {/* 手机：标签栏挪到屏幕底部，图标在上、文字在下，像 iOS 原生应用 */}
+      <LiquidTabBar nav variant="dock" className="nav-dock" ariaLabel="主导航" items={NAV_TABS} value={page} onChange={setPage} />
     </nav>
   );
 }
@@ -1057,7 +1055,7 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
 // ============================================================
 // 工作室页：3D 场景 + 运镜（SplatViewer 自带运镜栏）+ 导出
 // ============================================================
-function StudioPage({ result, setPage, conn, device, onLoadFull }) {
+function StudioPage({ result, setPage, conn, device, onLoadFull, worldLive = false }) {
   const [tab, setTab] = useState("splat"); // splat | video
   const poster = useScenePoster(result);
 
@@ -1087,18 +1085,25 @@ function StudioPage({ result, setPage, conn, device, onLoadFull }) {
           <div style={{ fontSize: 15, color: "var(--ink3)", letterSpacing: "0.04em", marginBottom: 10 }}>工作室</div>
           <h1 style={{ fontSize: "clamp(32px,5vw,52px)", fontWeight: 600, letterSpacing: "-0.025em" }}>查看与编排场景。</h1>
         </div>
-        {result.mp4_file && (
-          <LiquidToggle
-            tone="light" size="md"
-            value={tab} onChange={setTab}
-            options={[{ id: "splat", label: "3D 实时" }, { id: "video", label: "运镜视频" }]}
-          />
-        )}
+        <div className="studio-head-actions">
+          {/* 「走进世界」卡片在工作台最上面；这里给一个直达入口 */}
+          <button className="world-jump" data-own-motion="" onClick={() => { setTab("splat"); requestAnimationFrame(() => document.getElementById("world-card")?.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" })); }}>
+            <span aria-hidden="true">✦</span> 走进世界
+          </button>
+          {result.mp4_file && (
+            <LiquidToggle
+              tone="light" size="md"
+              value={tab} onChange={setTab}
+              options={[{ id: "splat", label: "3D 实时" }, { id: "video", label: "运镜视频" }]}
+            />
+          )}
+        </div>
       </div>
 
       {/* 画面区：3D 模式由 SplatViewer 自己管布局；视频模式用深色圆角盒 */}
       {tab === "splat" ? (
-        <SplatViewer key={result.job_id} plyUrl={viewerHref} posterUrl={poster} previewQuality={isMobilePreview ? "mobile" : "full"} onAssetLoaded={blob => { if (!viewerHref.startsWith('blob:')) void cacheGalleryItem(result, { quality: "full", sceneBlob: blob }); }} sceneFormat={sceneFormat} jobId={result.job_id} backendUrl={result.backend_url} />
+        <SplatViewer key={result.job_id} plyUrl={viewerHref} posterUrl={poster} previewQuality={isMobilePreview ? "mobile" : "full"} onAssetLoaded={blob => { if (!viewerHref.startsWith('blob:')) void cacheGalleryItem(result, { quality: "full", sceneBlob: blob }); }} sceneFormat={sceneFormat} jobId={result.job_id} backendUrl={result.backend_url}
+          lead={<WorldMaker job={result} poster={poster} scene={viewerHref ? { href: viewerHref, format: sceneFormat } : undefined} live={worldLive} title={result.title} />} />
       ) : (
         <div style={{ borderRadius: 28, overflow: "hidden", border: "1px solid var(--line)", boxShadow: "var(--shadow)", background: "#04060a" }}>
           <video src={videoHref} controls autoPlay loop playsInline style={{ width: "100%", display: "block", background: "#04060a" }} />
@@ -1604,6 +1609,8 @@ export default function App() {
   // The companion appears only once the gateway says chat is configured.
   const [assist, setAssist] = useState(false);
   const [assistVision, setAssistVision] = useState(false);
+  // 后端接入了 World Labs 世界模型（/healthz 的 world）；没接入时「走进世界」走演示模式
+  const [worldLive, setWorldLive] = useState(false);
   const [result, setResult] = useState(null);
   // 鲸鱼娘写修图提示词时写进这件作品的修图草稿
   useEffect(() => { setActiveEditJob(result?.job_id ? result : null); }, [result?.job_id, result?.backend_url]);
@@ -1680,7 +1687,7 @@ export default function App() {
     setConn("checking");
     const r = await ping(base);
     if (id !== probeId.current) return;
-    setConn(r.ok ? "ok" : "fail"); setDevice(r.device || ""); setAssist(!!r.assist); setAssistVision(!!r.assist_vision);
+    setConn(r.ok ? "ok" : "fail"); setDevice(r.device || ""); setAssist(!!r.assist); setAssistVision(!!r.assist_vision); setWorldLive(!!r.world);
   }, []);
   const applyBackend = (url: string) => {
     if (!isLocalPage()) return;
@@ -1781,7 +1788,7 @@ export default function App() {
       <div className={page === "home" ? "page-enter" : ""} style={{ display: page === "home" ? "block" : "none" }}><HomePage setPage={navigate} active={page === "home" && (splashDone || showcaseMotion === "enter")} ready={splashDone || showcaseMotion === "enter"} /></div>
       {(page === "create" || creating || incoming) && <div className="page-enter" style={{ display: page === "create" ? "block" : "none" }}><CreatePage source={source} setSource={setSource} conn={conn} device={device} backend={backend} taskBase={taskBase} compute={compute} setCompute={setCompute} engine={engine} onApply={applyBackend} onReconnect={() => probe(backend)} onBusy={setCreating} onDone={keepResult} incoming={incoming} onIncomingTaken={takeIncoming} /></div>}
       <div key={`page-${page}`} className="page-enter" data-page={page}>
-        {page === "studio" && <StudioPage result={result} setPage={navigate} conn={conn} device={device} onLoadFull={loadFull} />}
+        {page === "studio" && <StudioPage result={result} setPage={navigate} conn={conn} device={device} onLoadFull={loadFull} worldLive={worldLive} />}
         {page === "enhance" && <EnhancePage result={result} setPage={navigate} doubao={doubao} onDoubaoChange={setDoubao} onRerenderDone={keepResult} />}
         {page === "gallery" && <GalleryPage setPage={navigate} onOpen={openGallery} onDelete={id => { if (result?.gallery_id === id) setResult(null); }} />}
       </div>

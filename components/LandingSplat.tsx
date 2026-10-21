@@ -1,7 +1,6 @@
 "use client";
 
-import { isDesktopApp } from "@/lib/desktop";
-import { perfProfile, progressiveUltra } from "@/lib/perf";
+import { desktopClass, perfProfile, progressiveUltra } from "@/lib/perf";
 import { useEffect, useRef } from "react";
 import { INTRO_SCENE_START } from "@/lib/intro";
 import { patchSplatBuffer } from "@/lib/splat-perf";
@@ -159,7 +158,8 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
       // The HEAD probe, library import and time to first byte are covered too.
       arm(STALL_MS);
       try {
-        const desktopProfile = isDesktopApp() ? perfProfile() : null;
+        // 客户端与网页里的电脑按画质档位渲染（极致档完整超采样）；手机、省流量走轻量路径
+        const desktopProfile = desktopClass() ? perfProfile() : null;
         const { path: filePath, low } = scenePath(SCENE);
         // 上一个场景播放时已经把这个场景读进了内存（lib/landing-preload.ts）：直接用，省掉探测与下载
         const preloaded = await takePreloaded(filePath);
@@ -174,7 +174,7 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
         const [GS, THREE] = await Promise.all([import("@mkkellogg/gaussian-splats-3d"), import("three")]);
         if (disposed) return;
         patchSplatBuffer(GS);
-        renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: isDesktopApp() ? "high-performance" : "low-power" });
+        renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: desktopProfile && desktopProfile.tier !== "low" ? "high-performance" : "low-power" });
         // 画质：载入与切换时先按屏幕原生分辨率渲染（切换最流畅），场景就绪、诗句写完后升到本档的完整超采样
         // （极致档 2.25 倍）；移动镜头时平均帧时间超过 22ms（低于约 45fps）就降一级（完整 → 中间 → 原生），
         // 停在还能流畅运行的最高一级。
@@ -332,8 +332,8 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
       document.documentElement.removeEventListener("pointerleave", reset);
       resize?.disconnect();
       renderer?.domElement.removeEventListener("webglcontextlost", fail);
-      // 立刻停止渲染、撤下画布；客户端里释放显卡资源（删纹理、缓冲，会同步等显卡）放到空闲时做——
-      // 离开展示页、换场景时正好有动画在跑，当场释放实测卡一帧 30 多毫秒。网页（含手机）显存小，
+      // 立刻停止渲染、撤下画布；电脑上（客户端或网页）释放显卡资源（删纹理、缓冲，会同步等显卡）放到空闲时做——
+      // 离开展示页、换场景时正好有动画在跑，当场释放实测卡一帧 30 多毫秒。手机显存小，
       // 新旧两个场景不能同时留着，仍然立即释放。
       viewer?.stop?.();
       renderer?.domElement.remove();
@@ -341,7 +341,7 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
         // Viewer disposal is asynchronous; external renderers are owned by this component.
         Promise.resolve(viewer?.dispose?.()).catch(() => {}).finally(() => renderer?.dispose());
       };
-      if (isDesktopApp() && "requestIdleCallback" in window) requestIdleCallback(release, { timeout: 4000 }); else release();
+      if (desktopClass() && "requestIdleCallback" in window) requestIdleCallback(release, { timeout: 4000 }); else release();
     };
   // 每个场景各自挂载一次（父组件用 key 区分），这里不随场景对象重建
   // eslint-disable-next-line react-hooks/exhaustive-deps

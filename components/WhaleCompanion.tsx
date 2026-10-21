@@ -406,7 +406,9 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
   const clampPos = useCallback((right: number, bottom: number) => {
     const box = rootRef.current?.querySelector<HTMLElement>("[data-figure]")?.getBoundingClientRect();
     const w = box?.width || stageSize.width, h = box?.height || stageSize.height;
-    return { right: Math.max(8, Math.min(window.innerWidth - w - 8, right)), bottom: Math.max(8, Math.min(window.innerHeight - h - 8, bottom)) };
+    // 手机上屏幕底部是导航标签栏（约 74px 高），站在它上面
+    const floor = matchMedia("(max-width: 740px)").matches ? 86 : 8;
+    return { right: Math.max(8, Math.min(window.innerWidth - w - 8, right)), bottom: Math.max(floor, Math.min(window.innerHeight - h - 8, bottom)) };
   }, [stageSize.width, stageSize.height]);
   useEffect(() => {
     const fit = () => setPrefs(p => ({ ...p, ...clampPos(p.right, p.bottom) }));

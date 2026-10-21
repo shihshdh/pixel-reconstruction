@@ -237,5 +237,35 @@ export default function InteriorStyles() {
   @media(max-width:740px){.nav-drop{top:13px;height:33px;}.nav-tabs{padding:0 10px;}}
   @media(prefers-reduced-motion:reduce){.nav-drop{transition:none;}.editorial-primary:hover span{transform:none;}}
   @keyframes interior-fade{from{opacity:0;}to{opacity:1;}}
+  /* —— 导航：iOS 26 式悬浮玻璃（components/LiquidTabBar.tsx）——
+     整条栏不再磨砂，改成三枚悬浮的液态玻璃胶囊：品牌、页面标签、操作；底下是“滚动边缘”的淡出。 */
+  .nav-bar{gap:12px;background:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;box-shadow:none!important;border-bottom:0!important;isolation:auto!important;}
+  .nav-bar::before{display:none;}
+  .nav-edge{position:absolute;left:0;right:0;top:0;height:calc(100% + 26px);pointer-events:none;z-index:-1;
+    background:linear-gradient(180deg,color-mix(in srgb,var(--bg) 86%,transparent) 0%,color-mix(in srgb,var(--bg) 62%,transparent) 44%,color-mix(in srgb,var(--bg) 22%,transparent) 76%,transparent 100%);}
+  .nav-logo-glass{display:flex;align-items:center;height:44px;padding:0 16px 0 12px;flex:none;}
+  .nav-logo-glass .nav-logo{margin-right:0;}
+  .nav-tabbar{margin:0 auto;flex:none;}
+  .nav-right{margin-left:0;height:44px;padding:0 5px 0 12px;gap:10px;}
+  .nav-right .nav-cta{padding:9px 16px;}
+  .nav-dock{display:none!important;}
+  @media(max-width:1180px){.nav-tabbar>button{padding:0 13px;}}
+  @media(max-width:740px){
+    .nav-bar{gap:8px;}
+    .nav-tabbar{display:none!important;}
+    .nav-logo-glass{height:40px;padding:0 10px;}
+    .nav-right{height:40px;margin-left:auto;padding:0 4px 0 8px;gap:7px;}
+    .nav-dock{display:inline-flex!important;position:fixed;left:50%;bottom:calc(12px + env(safe-area-inset-bottom));translate:-50% 0;z-index:120;}
+    .nav-dock>button{padding:0 12px;}
+    .ruhua-root main{padding-bottom:calc(100px + env(safe-area-inset-bottom))!important;}
+  }
+  @media(max-width:380px){.nav-dock>button{padding:0 8px;}}
+  /* —— 工作室：「走进世界」入口 —— */
+  .studio-head-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  .world-jump{display:inline-flex;align-items:center;gap:8px;height:48px;padding:0 22px;border-radius:999px;cursor:pointer;font:inherit;font-size:14px;font-weight:600;letter-spacing:.04em;color:var(--ink);
+    border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line));background:linear-gradient(160deg,color-mix(in srgb,var(--card) 88%,var(--accent) 12%),var(--card) 70%);
+    box-shadow:inset 0 1px 0 var(--surface-rim),0 12px 26px -16px color-mix(in srgb,var(--accent) 80%,transparent);transition:transform .5s cubic-bezier(.16,1,.3,1),box-shadow .4s!important;}
+  .world-jump>span{color:var(--accent);font-size:13px;}
+  @media(hover:hover){.world-jump:hover{transform:translateY(-2px);box-shadow:inset 0 1px 0 var(--surface-rim),0 16px 30px -16px color-mix(in srgb,var(--accent) 90%,transparent);}}
   `}</style>;
 }

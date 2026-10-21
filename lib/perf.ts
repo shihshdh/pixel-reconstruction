@@ -97,11 +97,24 @@ export function detectTier(): PerfTier {
   const cores = navigator.hardwareConcurrency || 4;
   const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory || 8;
   if (/swiftshader|llvmpipe|software|basic render|microsoft basic/.test(gpu)) return "low";
-  // 独显：客户端里默认拉到极致（网页版保持“高”，极致可手动选）；CPU 或内存偏弱的机器退一档
-  if (hasDiscreteGpu()) return cores >= 6 && memory >= 8 ? (isDesktopApp() ? "ultra" : "high") : "mid";
+  // 独显：网页与客户端同一套判断，默认拉到极致（掉帧时各处都会自适应往下降）；CPU 或内存偏弱的机器退一档
+  if (hasDiscreteGpu()) return cores >= 6 && memory >= 8 ? "ultra" : "mid";
   if (/iris xe|radeon\(tm\) graphics|radeon graphics|780m|760m|680m|apple m\d/.test(gpu)) return cores >= 8 ? "mid" : "low";
   if (/intel/.test(gpu)) return "low"; // 较老的 Intel 核显
   return cores >= 8 && memory >= 8 ? "mid" : "low";
+}
+
+/**
+ * 桌面级设备：客户端，或者网页里的电脑——不是以触屏为主、窗口不窄、没开省流量。
+ * 这些设备上首页三维场景、界面背景按画质档位走，和客户端一致；手机与省流量仍走轻量路径。
+ */
+export function desktopClass(): boolean {
+  if (isDesktopApp()) return true;
+  try {
+    const nav = navigator as Navigator & { connection?: { saveData?: boolean } };
+    if (nav.connection?.saveData) return false;
+    return window.innerWidth >= 768 && !matchMedia("(pointer: coarse)").matches;
+  } catch { return false; }
 }
 
 export function perfProfile(choice: PerfChoice = readPerfChoice()): PerfProfile {

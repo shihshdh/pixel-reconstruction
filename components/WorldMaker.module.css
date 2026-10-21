@@ -1,0 +1,87 @@
+/* 「走进世界」卡片。颜色全部取自页面主题（浅色：纸白与灰蓝；深色：炭黑与金），画面区按照片的暗底处理。 */
+.card{position:relative;display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:26px;align-items:center;padding:18px!important;overflow:hidden;isolation:isolate;
+  border-color:color-mix(in srgb,var(--accent) 22%,var(--line))!important;
+  background:linear-gradient(135deg,color-mix(in srgb,var(--card) 92%,var(--accent) 8%),var(--card) 46%)!important;}
+.card::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;border-radius:inherit;
+  background:radial-gradient(60% 90% at 0% 0%,color-mix(in srgb,var(--accent) 9%,transparent),transparent 70%);}
+
+/* ---------- 画面 ---------- */
+.visual{position:relative;aspect-ratio:16/10;border-radius:13px;overflow:hidden;background:#0f1113;--p:0;
+  box-shadow:inset 0 0 0 1px #ffffff14,0 18px 40px -26px #10203080;}
+.surround,.focus,.photo,.thumb{position:absolute;}
+/* 四周：同一张照片放大、模糊、压暗，代表“还没被生成的世界” */
+.surround{inset:-12%;background:var(--poster) center/cover;filter:blur(22px) saturate(1.15) brightness(.62);transform:scale(1.18);}
+/* 从照片向外一圈圈变清晰：清晰区的半径跟着进度长大 */
+.focus{inset:0;background:var(--poster) center/cover;filter:saturate(1.05);transform:scale(1.36);opacity:.92;
+  -webkit-mask:radial-gradient(ellipse calc(14% + var(--p) * 84%) calc(18% + var(--p) * 90%) at 50% 50%,#000 42%,transparent 100%);
+  mask:radial-gradient(ellipse calc(14% + var(--p) * 84%) calc(18% + var(--p) * 90%) at 50% 50%,#000 42%,transparent 100%);
+  transition:-webkit-mask .9s cubic-bezier(.2,.8,.2,1),mask .9s cubic-bezier(.2,.8,.2,1);}
+.photo{left:50%;top:50%;height:46%;aspect-ratio:var(--ar,1.5);max-width:62%;translate:-50% -50%;background:var(--poster) center/cover;border-radius:5px;
+  box-shadow:0 0 0 1px #ffffffb0,0 14px 34px -10px #000c;transition:opacity 1.2s,scale 1.2s cubic-bezier(.2,.8,.2,1);}
+.card[data-state="pending"] .photo{animation:breathe 4.8s ease-in-out infinite;}
+.card[data-state="done"] .photo{opacity:0;scale:1.6;}
+@keyframes breathe{0%,100%{box-shadow:0 0 0 1px #ffffffb0,0 14px 34px -10px #000c;}50%{box-shadow:0 0 0 1px #ffffffe6,0 0 36px -4px color-mix(in srgb,var(--accent) 60%,transparent),0 14px 34px -10px #000c;}}
+.thumb{inset:0;width:100%;height:100%;object-fit:cover;animation:drift 18s ease-in-out infinite alternate;}
+@keyframes drift{from{transform:scale(1.04) translate3d(-1%,0,0);}to{transform:scale(1.1) translate3d(1.2%,-1%,0);}}
+.visual::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,transparent 55%,#0008);}
+
+/* 斜放的轨道：已走过的一段随进度点亮；光点沿轨道慢慢绕 */
+.orbit{position:absolute;inset:6% 4%;width:92%;height:88%;overflow:visible;pointer-events:none;z-index:1;}
+.orbit ellipse{fill:none;stroke:#ffffff2e;stroke-width:.6;vector-effect:non-scaling-stroke;}
+.orbit .orbitRun{stroke:color-mix(in srgb,var(--accent) 70%,#fff);stroke-width:1.4;stroke-linecap:round;transition:stroke-dasharray 1s cubic-bezier(.2,.8,.2,1);
+  filter:drop-shadow(0 0 4px color-mix(in srgb,var(--accent) 80%,transparent));}
+/* 光点沿轨道走：横向、纵向各一段正弦往返，相位差四分之一周，合起来正好是轨道那个椭圆
+   （轨道中心 50% / 52.9%，半轴 40.5% / 22%，与上面的 SVG 换算一致） */
+.walker{position:absolute;left:50%;top:52.9%;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;z-index:2;background:#fff;
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 45%,transparent),0 0 14px 2px color-mix(in srgb,var(--accent) 70%,transparent);
+  animation:walk-x 7s cubic-bezier(.37,0,.63,1) -3.5s infinite alternate,walk-y 7s cubic-bezier(.37,0,.63,1) 0s infinite alternate;}
+@keyframes walk-x{from{left:9.5%;}to{left:90.5%;}}
+@keyframes walk-y{from{top:30.9%;}to{top:74.9%;}}
+.percent{position:absolute;right:12px;bottom:10px;z-index:2;color:#f4f1ea;font:500 12px/1 SFMono-Regular,Consolas,monospace;letter-spacing:.06em;font-variant-numeric:tabular-nums;}
+.enter{position:absolute;left:50%;bottom:16px;translate:-50% 0;z-index:3;display:inline-flex;align-items:center;gap:8px;padding:11px 20px;border-radius:999px;cursor:pointer;
+  border:1px solid #ffffff4d;color:#fff;font:inherit;font-size:13.5px;font-weight:600;letter-spacing:.04em;
+  background:linear-gradient(160deg,#ffffff3a,#ffffff10 55%,#ffffff22);-webkit-backdrop-filter:blur(12px) saturate(1.6);backdrop-filter:blur(12px) saturate(1.6);
+  box-shadow:inset 0 1px 0 #ffffff70,0 10px 26px -10px #000a;transition:background .3s,translate .5s cubic-bezier(.2,.8,.2,1);}
+.enter:hover{background:linear-gradient(160deg,#ffffff4d,#ffffff18 55%,#ffffff2e);translate:-50% -2px;}
+
+/* ---------- 文字 ---------- */
+.body{min-width:0;padding:6px 8px 6px 0;}
+.eyebrow{display:flex;align-items:center;gap:10px;font-size:11.5px;font-weight:600;letter-spacing:.06em;color:var(--ink3);margin-bottom:12px;}
+.demo{padding:3px 9px;border-radius:999px;font-size:10.5px;font-weight:500;letter-spacing:.04em;color:var(--ink2);border:1px dashed var(--line2);cursor:help;}
+.title{margin:0 0 10px;font-size:clamp(22px,2.4vw,28px);font-weight:600;letter-spacing:-.015em;line-height:1.15;color:var(--ink);}
+.lede{margin:0 0 18px;font-size:13.5px;line-height:1.75;color:var(--ink2);max-width:34em;}
+.controls{display:flex;flex-direction:column;gap:12px;margin-bottom:16px;}
+.controls>:first-child{width:100%;}
+.prompt{display:flex;flex-direction:column;gap:6px;font-size:11.5px;color:var(--ink3);}
+.prompt input{font:inherit;font-size:13.5px;color:var(--ink);padding:11px 14px;border-radius:12px;border:1px solid var(--line);background:var(--bg2);outline:none;transition:border-color .18s,box-shadow .18s;}
+.prompt input:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent);}
+.prompt input::placeholder{color:var(--ink3);opacity:.75;}
+.actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px 12px;}
+.actions a{text-decoration:none;}
+
+.dots::after{content:"";display:inline-block;width:1.2em;text-align:left;animation:dots 1.8s steps(4) infinite;}
+@keyframes dots{0%{content:"";}25%{content:"·";}50%{content:"··";}75%{content:"···";}}
+.stages{list-style:none;margin:4px 0 16px;padding:0;display:grid;gap:9px;}
+.stages li{display:grid;grid-template-columns:16px auto 1fr;align-items:baseline;gap:10px;font-size:13px;color:var(--ink3);transition:color .6s;}
+.stages li small{font-size:11.5px;color:var(--ink3);opacity:.8;}
+.stages li i{position:relative;top:2px;width:10px;height:10px;border-radius:50%;border:1.5px solid var(--line2);transition:background .6s,border-color .6s;}
+.stages li[data-state="done"]{color:var(--ink2);}
+.stages li[data-state="done"] i{background:var(--accent);border-color:var(--accent);}
+.stages li[data-state="now"]{color:var(--ink);font-weight:600;}
+.stages li[data-state="now"] i{border-color:var(--accent);animation:pulse 1.8s ease-in-out infinite;}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 40%,transparent);}50%{box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 0%,transparent);}}
+.meter{position:relative;height:6px;border-radius:999px;overflow:hidden;background:color-mix(in srgb,var(--track) 85%,transparent);box-shadow:inset 0 1px 2px #14325a1a;}
+.meter i{position:absolute;inset:0;transform-origin:left;border-radius:inherit;transition:transform 1s cubic-bezier(.2,.8,.2,1);
+  background:linear-gradient(90deg,color-mix(in srgb,var(--accent) 55%,#9fb3c9),var(--accent));}
+.meter i::after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 30%,#ffffff8c 50%,transparent 70%);background-size:220% 100%;animation:flow 2.4s linear infinite;}
+@keyframes flow{from{background-position:120% 0;}to{background-position:-100% 0;}}
+.row{display:flex;justify-content:space-between;gap:12px;margin-top:9px;font-size:11.5px;color:var(--ink3);font-variant-numeric:tabular-nums;}
+.note{margin:14px 0 0;font-size:12px;line-height:1.7;color:var(--ink3);}
+.caption{margin:0 0 12px;padding:2px 0 2px 14px;border-left:2px solid color-mix(in srgb,var(--accent) 55%,transparent);font-size:13px;line-height:1.7;font-style:italic;color:var(--ink2);
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+
+@media(max-width:860px){.card{grid-template-columns:1fr;gap:18px;}.body{padding:0 4px 4px;}}
+@media(prefers-reduced-motion:reduce){
+  .thumb,.walker,.card[data-state="pending"] .photo,.meter i::after,.dots::after,.stages li[data-state="now"] i{animation:none;}
+  .focus,.meter i,.orbit .orbitRun{transition:none;}
+}

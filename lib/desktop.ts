@@ -57,15 +57,17 @@ export async function startLocalEngine(): Promise<{ url: string; python: string 
   return await desktop.invoke("local_engine_start") as { url: string; python: string };
 }
 
-/** 全屏无边框模式。不传参数时切换，返回切换后的状态；网页版返回 false。
+/** 全屏无边框模式。不传参数时切换，返回切换后的状态。网页里用标准 Fullscreen API（同样有幕布遮住尺寸跳变）。
  *  窗口尺寸一变，界面缩放（lib/ui-scale.ts）和 3D 画布都会在一帧里跳到新尺寸，看上去是“闪一下”。
  *  这里用一层与页面同色的幕布遮住这一跳：120ms 淡入 → 切换、等新尺寸排好版 → 320ms 淡出。
  *  只动一层纯色的不透明度，合成器几乎不花力气（对整页做模糊反而会让切换期间掉到 27fps）。 */
 let switching = false;
 export async function setFullscreen(on?: boolean): Promise<boolean> {
   const desktop = api();
-  if (!desktop) return false;
-  const current = await desktop.invoke("plugin:window|is_fullscreen", { label: "main" }).catch(() => null) as boolean | null;
+  if (!desktop && !document.fullscreenEnabled) return false;
+  const current = desktop
+    ? await desktop.invoke("plugin:window|is_fullscreen", { label: "main" }).catch(() => null) as boolean | null
+    : !!document.fullscreenElement;
   const next = on ?? !current;
   if (current === next || switching) return !!current;
   const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -78,7 +80,9 @@ export async function setFullscreen(on?: boolean): Promise<boolean> {
       document.body.appendChild(veil);
       await veil.animate([{ opacity: 0 }, { opacity: .92 }], { duration: 120, easing: "cubic-bezier(.4,0,1,1)", fill: "forwards" }).finished.catch(() => {});
     }
-    const result = await desktop.invoke("set_fullscreen", { on: next }) as boolean;
+    const result = desktop
+      ? await desktop.invoke("set_fullscreen", { on: next }) as boolean
+      : await (next ? document.documentElement.requestFullscreen({ navigationUI: "hide" }) : document.exitFullscreen()).then(() => next, () => !!document.fullscreenElement);
     // 等窗口真的换了尺寸、页面按新尺寸排好版（最多 500ms）
     await new Promise<void>(resolve => {
       let done = false;
