@@ -5,6 +5,6 @@
 /* 标题和说明画在玻璃后面的底板里；这里保留同样的文字给读屏和搜索 */
 .copy{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;}
 /* 按钮固定在说明文字下方，与底板上的字对齐（--title-size 由脚本按宽度写入）*/
-.cta{position:absolute!important;left:8.5%;top:calc(30% + var(--title-size,52px) * 2.12 + 58px);z-index:2;}
+.cta{position:absolute!important;left:8.5%;top:calc(30% + var(--title-size,52px) * 2.12 + 58px + (var(--lead-lines,1) - 1) * 22px);z-index:2;}
 :global([data-theme="dark"]) .cta{background:#ececef;color:#111;}
 @media(max-width:1120px){.invite{margin-left:24px;margin-right:24px;}}

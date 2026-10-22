@@ -26,7 +26,7 @@ const ICON = {
 
 function defaultQuality(): WorldQuality {
   try {
-    if (matchMedia("(pointer: coarse)").matches && innerWidth < 900) return "100k";
+    // 手机也跟画质档（默认极致 → 精细）；卡的话底栏随时切到流畅
     const tier = perfProfile().tier;
     return tier === "ultra" ? "full_res" : tier === "low" ? "100k" : "500k";
   } catch { return "500k"; }

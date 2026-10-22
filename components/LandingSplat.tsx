@@ -1,6 +1,6 @@
 "use client";
 
-import { desktopClass, perfProfile, progressiveUltra } from "@/lib/perf";
+import { desktopClass, perfProfile, progressiveUltra, tieredDevice } from "@/lib/perf";
 import { useEffect, useRef } from "react";
 import { INTRO_SCENE_START } from "@/lib/intro";
 import { patchSplatBuffer } from "@/lib/splat-perf";
@@ -158,8 +158,8 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
       // The HEAD probe, library import and time to first byte are covered too.
       arm(STALL_MS);
       try {
-        // 客户端与网页里的电脑按画质档位渲染（极致档完整超采样）；手机、省流量走轻量路径
-        const desktopProfile = desktopClass() ? perfProfile() : null;
+        // 客户端、网页里的电脑和手机都按画质档位渲染（极致档完整超采样）；省流量走轻量路径
+        const tieredProfile = tieredDevice() ? perfProfile() : null;
         const { path: filePath, low } = scenePath(SCENE);
         // 上一个场景播放时已经把这个场景读进了内存（lib/landing-preload.ts）：直接用，省掉探测与下载
         const preloaded = await takePreloaded(filePath);
@@ -174,12 +174,12 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
         const [GS, THREE] = await Promise.all([import("@mkkellogg/gaussian-splats-3d"), import("three")]);
         if (disposed) return;
         patchSplatBuffer(GS);
-        renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: desktopProfile && desktopProfile.tier !== "low" ? "high-performance" : "low-power" });
+        renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: tieredProfile && tieredProfile.tier !== "low" ? "high-performance" : "low-power" });
         // 画质：载入与切换时先按屏幕原生分辨率渲染（切换最流畅），场景就绪、诗句写完后升到本档的完整超采样
         // （极致档 2.25 倍）；移动镜头时平均帧时间超过 22ms（低于约 45fps）就降一级（完整 → 中间 → 原生），
         // 停在还能流畅运行的最高一级。
-        const fullRatio = desktopProfile ? desktopProfile.maxPixelRatio : Math.min(window.devicePixelRatio || 1, low ? 1.25 : 1.5);
-        const startRatio = desktopProfile ? Math.min(fullRatio, window.devicePixelRatio || 1) : fullRatio;
+        const fullRatio = tieredProfile ? tieredProfile.maxPixelRatio : Math.min(window.devicePixelRatio || 1, low ? 1.25 : 1.5);
+        const startRatio = tieredProfile ? Math.min(fullRatio, window.devicePixelRatio || 1) : fullRatio;
         renderer.setPixelRatio(startRatio);
         // 透明底：单张照片重建的场景在天空等远处偶有稀疏的空洞，透出下面同一张原图，而不是黑底
         renderer.setClearColor(0x171710, 0);
@@ -259,7 +259,7 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
         // 核显上的极致档（lib/perf.ts progressiveUltra）：渐进式精修。镜头移动时按原生分辨率画，停下 150ms
         // 就按满档超采样补画一帧——场景只在变化时才渲染，静止时不花算力，画面与独显完全一样；不再整场景降级。
         // 改分辨率会清空画布，所以改完立刻在同一帧里画好，不会闪出一帧空白。
-        const progressive = !!desktopProfile && ladder.length > 1 && progressiveUltra(desktopProfile);
+        const progressive = !!tieredProfile && ladder.length > 1 && progressiveUltra(tieredProfile);
         let sharp = false, sharpAllowed = false, moving = false, lastMove = 0;
         const setSharp = (next: boolean) => {
           if (sharp === next) return;

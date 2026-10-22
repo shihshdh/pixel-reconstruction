@@ -76,8 +76,18 @@ export function gpuName(): string {
 export const DEVICE_PROFILE = process.env.NEXT_PUBLIC_DEVICE_PROFILE || "";
 export const PERSONAL_BUILD = DEVICE_PROFILE === "yaoshi-275hx-5070ti";
 
-/** 正在用核显渲染（Intel 核显、AMD 核显）。Intel Arc 独显不算。 */
+/** 手机与平板（按 UA 判断；iPadOS 的 Safari 自称 Mac，靠多点触控认出来） */
+export function mobileDevice(): boolean {
+  try {
+    if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) return true;
+    return /Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1;
+  } catch { return false; }
+}
+
+/** 正在用核显渲染（Intel 核显、AMD 核显，以及手机的 GPU）。Intel Arc 独显不算。 */
 export function integratedGpu(): boolean {
+  // 手机 GPU 按核显的办法跑极致档（渐进式精修、背景 30fps），见 progressiveUltra
+  if (mobileDevice()) return true;
   const gpu = gpuName().toLowerCase();
   if (!gpu || hasDiscreteGpu()) return false;
   return /intel|radeon\(tm\) graphics|radeon graphics|\d{3}m\b/.test(gpu);
@@ -97,6 +107,8 @@ export function detectTier(): PerfTier {
   const cores = navigator.hardwareConcurrency || 4;
   const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory || 8;
   if (/swiftshader|llvmpipe|software|basic render|microsoft basic/.test(gpu)) return "low";
+  // 手机也默认极致（站长要求，2026-10-22）：画质不降，靠渐进式精修与各处的掉帧自适应保流畅
+  if (mobileDevice()) return "ultra";
   // 独显：网页与客户端同一套判断，默认拉到极致（掉帧时各处都会自适应往下降）；CPU 或内存偏弱的机器退一档
   if (hasDiscreteGpu()) return cores >= 6 && memory >= 8 ? "ultra" : "mid";
   if (/iris xe|radeon\(tm\) graphics|radeon graphics|780m|760m|680m|apple m\d/.test(gpu)) return cores >= 8 ? "mid" : "low";
@@ -115,6 +127,12 @@ export function desktopClass(): boolean {
     if (nav.connection?.saveData) return false;
     return window.innerWidth >= 768 && !matchMedia("(pointer: coarse)").matches;
   } catch { return false; }
+}
+
+/** 按画质档位走完整路径的设备：电脑（desktopClass），以及手机——手机也要极致画质。只有开了省流量的仍走轻量路径 */
+export function tieredDevice(): boolean {
+  if (desktopClass()) return true;
+  try { return mobileDevice() && !(navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData; } catch { return false; }
 }
 
 export function perfProfile(choice: PerfChoice = readPerfChoice()): PerfProfile {

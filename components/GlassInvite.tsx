@@ -4,7 +4,7 @@
 // 玻璃是真的折射：MeshPhysicalMaterial 的 transmission + thickness + ior + dispersion，
 // 字跨过倒角边时会被错开、边缘带一点色散彩边。鼠标移动时玻璃朝鼠标倾斜（底板和按钮不动），
 // 一盏跟随鼠标的点光让高光在倒角上游走，鼠标下的那块微微浮起。
-// 只在进入视口、且有东西在动时渲染；低档画质、减少动态效果或触屏用静态版本。
+// 只在进入视口、且有东西在动时渲染；低档画质或减少动态效果用静态版本。
 import { useEffect, useRef, useState } from "react";
 import { prefersReduced } from "@/lib/motion";
 import { perfProfile } from "@/lib/perf";
@@ -12,6 +12,7 @@ import styles from "./GlassInvite.module.css";
 
 const TITLE = ["现在，", "轮到你的照片。"];
 const LEAD = "有 NVIDIA 显卡就在本机重建，没有就交给云端。无需任何配置。";
+const LEAD_LINE = 22; // 说明文字折行时的行高（CSS 像素），与 .cta 的 --lead-lines 一致
 
 // 碎片顶点（u, v ∈ [-1, 1]），相邻碎片共用顶点，再各自向内收一圈留出缝
 const P = {
@@ -42,7 +43,8 @@ function insetPolygon(points: [number, number][], inset: number): [number, numbe
 }
 
 function canUseGlass() {
-  if (prefersReduced() || matchMedia("(pointer: coarse)").matches) return false;
+  // 手机上也是真折射（手指划过时玻璃跟着倾斜）；只有减少动态效果时用静态版
+  if (prefersReduced()) return false;
   if (perfProfile().tier === "low") return false;
   try { return !!document.createElement("canvas").getContext("webgl2"); } catch { return false; }
 }
@@ -154,10 +156,19 @@ export default function GlassInvite({ onStart, active = true }: { onStart: () =>
         TITLE.forEach((line, i) => g.fillText(line, left, top + size * s * (1 + i * 1.12)));
         g.fillStyle = ink3; g.font = `400 ${13.5 * s}px ${family}`;
         if ("letterSpacing" in g) (g as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = "0px";
-        g.fillText(LEAD, left, top + size * s * 2.12 + 30 * s);
-        // 右下角的小字，像 Prism 角落里的材质名
+        // 窄屏（手机）一行放不下就折行：英文单词不拆开；按钮按行数往下让（--lead-lines）
+        const room = W * (1 - .085 * 2) * s, lines = [""];
+        for (const token of LEAD.match(/[A-Za-z0-9]+|\s+|./gu) || []) {
+          const next = lines[lines.length - 1] + token;
+          if (g.measureText(next).width <= room || !lines[lines.length - 1]) lines[lines.length - 1] = next;
+          else lines.push(token.trimStart());
+        }
+        lines.forEach((line, i) => g.fillText(line, left, top + size * s * 2.12 + 30 * s + i * LEAD_LINE * s));
+        root.style.setProperty("--lead-lines", String(lines.length));
+        // 右下角的小字，像 Prism 角落里的材质名；窄屏上往左收，不出边
         g.font = `400 ${9.5 * s}px SFMono-Regular,Consolas,monospace`; g.fillStyle = ink3; g.globalAlpha = .7;
-        g.fillText("TRANSMISSION · IOR 1.46 · DISPERSION", ox + W * .7 * s, oy + H * .93 * s); g.globalAlpha = 1;
+        const label = "TRANSMISSION · IOR 1.46 · DISPERSION";
+        g.fillText(label, Math.min(ox + W * .7 * s, ox + W * .93 * s - g.measureText(label).width), oy + H * .93 * s); g.globalAlpha = 1;
         texture.needsUpdate = true;
       };
 

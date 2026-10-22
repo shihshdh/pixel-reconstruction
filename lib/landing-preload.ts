@@ -2,16 +2,16 @@
 // 切换时 LandingSplat 直接用内存里的数据（blob: 地址），省掉可用性探测与下载，只剩解析和上传显卡。
 // 只留一个预载的场景（约 20MB）；省流量模式下不预载。
 import { isDesktopApp } from "@/lib/desktop";
-import { desktopClass, perfProfile } from "@/lib/perf";
+import { perfProfile, tieredDevice } from "@/lib/perf";
 import type { LandingScene } from "@/lib/landing-scenes";
 
 type Nav = Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };
 
-/** 这台设备该用的场景文件（与 LandingSplat 的选择一致：低档硬件与手机用轻量版） */
+/** 这台设备该用的场景文件（与 LandingSplat 的选择一致：低档硬件、小内存与省流量用轻量版） */
 export function scenePath(scene: LandingScene) {
   const nav = navigator as Nav;
-  // 电脑（客户端或网页）只有低档硬件才用轻量版首页场景；网页上内存很小的电脑也用轻量版。手机、省流量一律轻量版
-  const profile = desktopClass() ? perfProfile() : null;
+  // 电脑与手机只有低档画质才用轻量版首页场景；网页上内存很小的设备（≤4GB）也用轻量版。省流量一律轻量版
+  const profile = tieredDevice() ? perfProfile() : null;
   const low = profile ? profile.tier === "low" || (!isDesktopApp() && (nav.deviceMemory || 8) <= 4) : true;
   // .ksplat 以一年的不可变缓存下发（netlify.toml）；换文件时改 version，否则回访用户会一直用旧场景
   return { path: `/scene/${scene.id}${low ? "-lo" : ""}.ksplat?v=${scene.version}`, low };
