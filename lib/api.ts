@@ -116,7 +116,8 @@ async function apiError(res: Response) {
       detail = typeof parsed.detail === "string" ? parsed.detail : typeof parsed.message === "string" ? parsed.message : "";
     } catch { if (!/<[a-z][\s\S]*>/i.test(body)) detail = body.slice(0, 240); }
   } catch {}
-  return new Error(detail || (res.status === 401 || res.status === 403 ? "后端拒绝访问，请检查服务端的访问设置。" : res.status === 413 ? "图片太大，请选择 20MB 以内的照片。" : res.status === 429 ? "当前任务较多，请稍后重试。" : "服务请求失败（" + res.status + "），请稍后重试。"));
+  // status：调用方据此区分“服务明确拒绝”与“断网 / 超时、结果未知”（见 lib/world.ts 的提交找回）
+  return Object.assign(new Error(detail || (res.status === 401 || res.status === 403 ? "后端拒绝访问，请检查服务端的访问设置。" : res.status === 413 ? "图片太大，请选择 20MB 以内的照片。" : res.status === 429 ? "当前任务较多，请稍后重试。" : "服务请求失败（" + res.status + "），请稍后重试。")), { status: res.status });
 }
 async function request<T>(path: string, init: RequestInit = {}, base = getBase(), timeout = 30000): Promise<T> {
   const url = endpoint(path, base);

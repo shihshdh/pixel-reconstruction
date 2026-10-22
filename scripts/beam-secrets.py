@@ -50,6 +50,15 @@ if bocha_file.is_file():
     else:
         raise SystemExit('.beam-tools/bocha.env must contain one line: BOCHA_API_KEY=sk-...')
 
+# 「走进世界」: the site owner's World Labs key, same rules as above.
+world_file = root / '.beam-tools/worldlabs.env'
+if world_file.is_file():
+    text = world_file.read_text(encoding='utf-8-sig')
+    match = re.search(r'(?im)^\s*WORLDLABS_API_KEY\s*=\s*([^\s"\r\n]+)', text)
+    if not match or not re.fullmatch(r'[A-Za-z0-9_-]{24,}', match.group(1)):
+        raise SystemExit('.beam-tools/worldlabs.env must contain one line: WORLDLABS_API_KEY=...')
+    values['WORLDLABS_API_KEY'] = match.group(1)
+
 config = ConfigContext(token=token, gateway_host='gateway.beam.cloud', gateway_port=443)
 with ServiceClient(config=config) as client:
     listed = client.secret.list_secrets(ListSecretsRequest())
@@ -73,3 +82,7 @@ if 'BOCHA_API_KEY' in values or 'BOCHA_API_KEY' in existing:
     (root / '.beam-tools/search-enabled').write_text('1')
 else:
     print('No BOCHA server secret is configured; the companion answers without web search.')
+if 'WORLDLABS_API_KEY' in values or 'WORLDLABS_API_KEY' in existing:
+    (root / '.beam-tools/world-enabled').write_text('1')
+else:
+    print('No WORLDLABS server secret is configured; 走进世界 stays in demo mode.')

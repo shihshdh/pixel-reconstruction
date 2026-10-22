@@ -1055,7 +1055,7 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
 // ============================================================
 // 工作室页：3D 场景 + 运镜（SplatViewer 自带运镜栏）+ 导出
 // ============================================================
-function StudioPage({ result, setPage, conn, device, onLoadFull, worldLive = false }) {
+function StudioPage({ result, setPage, conn, device, onLoadFull, worldLive }) {
   const [tab, setTab] = useState("splat"); // splat | video
   const poster = useScenePoster(result);
 
@@ -1609,8 +1609,8 @@ export default function App() {
   // The companion appears only once the gateway says chat is configured.
   const [assist, setAssist] = useState(false);
   const [assistVision, setAssistVision] = useState(false);
-  // 后端接入了 World Labs 世界模型（/healthz 的 world）；没接入时「走进世界」走演示模式
-  const [worldLive, setWorldLive] = useState(false);
+  // 后端接入了 World Labs 世界模型（/healthz 的 world）；没接入时「走进世界」走演示模式；undefined 是还没问到
+  const [worldLive, setWorldLive] = useState<boolean | undefined>(undefined);
   const [result, setResult] = useState(null);
   // 鲸鱼娘写修图提示词时写进这件作品的修图草稿
   useEffect(() => { setActiveEditJob(result?.job_id ? result : null); }, [result?.job_id, result?.backend_url]);
@@ -1683,7 +1683,7 @@ export default function App() {
   const probe = useCallback(async (base: string) => {
     const id = ++probeId.current;
     setDevice("");
-    if (!base) { setConn("unknown"); return; }
+    if (!base) { setConn("unknown"); setWorldLive(false); return; }
     setConn("checking");
     const r = await ping(base);
     if (id !== probeId.current) return;

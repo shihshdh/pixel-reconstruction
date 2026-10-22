@@ -8,10 +8,10 @@ if (fs.existsSync(backup)) {
   const match = fs.readFileSync(backup, 'utf8').match(/ARK_API_KEY\s*=\s*([^\s"\r\n]+)/i);
   if (match?.[1]?.length > 20) secrets.push(match[1]);
 }
-// The companion's DeepSeek key lives only in this git-ignored file and Beam Secrets; it must never ship.
-const deepseek = '.beam-tools/deepseek.env';
-if (fs.existsSync(deepseek)) {
-  const match = fs.readFileSync(deepseek, 'utf8').match(/DEEPSEEK_API_KEY\s*=\s*([^\s"\r\n]+)/i);
+// Server-only keys (DeepSeek, Bocha, World Labs) live only in these git-ignored files and Beam Secrets; they must never ship.
+for (const [file, name] of [['.beam-tools/deepseek.env', 'DEEPSEEK_API_KEY'], ['.beam-tools/bocha.env', 'BOCHA_API_KEY'], ['.beam-tools/worldlabs.env', 'WORLDLABS_API_KEY']]) {
+  if (!fs.existsSync(file)) continue;
+  const match = fs.readFileSync(file, 'utf8').match(new RegExp(name + '\\s*=\\s*([^\\s"\\r\\n]+)', 'i'));
   if (match?.[1]?.length > 20) secrets.push(match[1]);
 }
 let count = 0;

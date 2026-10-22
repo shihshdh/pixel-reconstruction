@@ -53,6 +53,9 @@ if os.environ.get("RUHUA_ENABLE_ASSIST") == "1":
 # Companion web search (博查 Bocha): only attach after scripts/beam-secrets.py stored it.
 if os.environ.get("RUHUA_ENABLE_SEARCH") == "1":
     API_SECRETS += ["BOCHA_API_KEY"]
+# 「走进世界」World Labs world model: only attach after scripts/beam-secrets.py stored it.
+if os.environ.get("RUHUA_ENABLE_WORLD") == "1":
+    API_SECRETS += ["WORLDLABS_API_KEY"]
 
 
 # Sites allowed to call the API from a browser. scripts/beam-cli.py adds the current Netlify site
@@ -73,6 +76,7 @@ for _origin in os.environ.get("RUHUA_EXTRA_ORIGINS", "").split(","):
     autoscaler=QueueDepthAutoscaler(min_containers=0, max_containers=1, tasks_per_container=8),
     volumes=[DATA_VOLUME], secrets=API_SECRETS,
     env={"RUHUA_DATA": DATA_PATH, "RUHUA_DAILY_JOBS": "30", "RUHUA_DAILY_EDITS": "30", "RUHUA_DAILY_CHATS": "300", "RUHUA_DAILY_SEARCHES": "200",
+         "RUHUA_DAILY_WORLDS": "6",
          "RUHUA_MAX_PENDING": "3", "RUHUA_ALLOWED_ORIGINS": ",".join(ALLOWED_ORIGINS)},
 )
 def api():

@@ -2,12 +2,13 @@
 //
 // World API 的 key 只放在后端（Beam Secrets），前端只认我们自己网关的这几个接口（完整约定见 docs/world-api.md）：
 //   GET  /healthz                     返回 world: true 表示已接入
-//   POST /world/generate              { job_id, model, text_prompt?, image? } → { operation_id }
+//   POST /world/generate              { job_id, model, text_prompt?, image?, request_id } → { operation_id }
+//   GET  /world/requests/{request_id} 提交中途断网或关页面时，凭提交编号找回 { operation_id }
 //   GET  /world/operations/{id}       World API 的 operation 原样转发即可（done / metadata.progress / response / error）
 //   GET  /world/worlds/{id}           World API 的 world 原样转发即可（资源地址过期时重新取）
 // 没接入时是演示模式：流程、等待、界面完全一样（等待缩短到十几秒），最后走进的是这件作品自己的三维场景。
 //
-// 生成标准世界约 5 分钟，所以任务按作品记在 localStorage 里：离开工作室、刷新页面、重开客户端，回来都能接着等。
+// 生成标准世界约 5 分钟（速写约半分钟），所以任务按作品记在 localStorage 里：离开工作室、刷新页面、重开客户端，回来都能接着等。
 import { useSyncExternalStore } from "react";
 import { apiRequest, getBase, jobAuthHeaders } from "./api";
 import type { WorldAssets, WorldEngineModule, WorldQuality } from "./world-engine-types";
@@ -49,7 +50,10 @@ export type WorldTask = {
   jobId: string;
   /** 发起时用的后端；轮询与刷新都回到它 */
   base: string;
+  /** World Labs 的任务编号；提交还没确认时为空，轮询凭 requestId 向后端找回 */
   operationId: string;
+  /** 本次提交的编号（前端生成）：提交要等二三十秒，页面中途关掉或断网时据此找回任务 */
+  requestId?: string;
   model: WorldModel;
   prompt?: string;
   started: number;
@@ -148,16 +152,38 @@ export async function createWorld(job: { job_id: string; backend_url?: string },
     put(task);
     return task;
   }
-  const result = await apiRequest<{ operation_id?: string; id?: string }>("/world/generate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...jobAuthHeaders(job.job_id) },
-    body: JSON.stringify({ job_id: job.job_id, model: options.model, text_prompt: prompt, image: options.image || "original.jpg" }),
-  }, base, 120000);
-  const operationId = result.operation_id || result.id;
-  if (!operationId) throw new Error("后端没有返回生成任务编号。");
-  const task: WorldTask = { jobId: job.job_id, base, operationId, model: options.model, prompt, started: Date.now(), status: "pending" };
+  // 先记成“生成中”：界面立刻进入等待，页面在提交途中关掉也不会丢（额度在服务端已经花了）
+  const requestId = "req_" + Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join("");
+  const task: WorldTask = { jobId: job.job_id, base, operationId: "", requestId, model: options.model, prompt, started: Date.now(), status: "pending" };
   put(task);
-  return task;
+  submitting.add(requestId);
+  try {
+    const result = await apiRequest<{ operation_id?: string; id?: string }>("/world/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...jobAuthHeaders(job.job_id) },
+      body: JSON.stringify({ job_id: job.job_id, model: options.model, text_prompt: prompt, image: options.image || "original.jpg", request_id: requestId }),
+    }, base, 120000);
+    const operationId = result.operation_id || result.id;
+    if (!operationId) throw Object.assign(new Error("后端没有返回生成任务编号。"), { status: 502 });
+    return confirm(job.job_id, requestId, operationId) || task;
+  } catch (error) {
+    // 断网或超时：结果未知，界面继续等，轮询凭 requestId 找回
+    if (typeof (error as { status?: unknown })?.status !== "number") return getWorldTask(job.job_id) || task;
+    // 服务明确拒绝（额度、校验、每日次数）：撤掉这条任务，回到发起前并显示原因
+    if (getWorldTask(job.job_id)?.requestId === requestId) forgetWorld(job.job_id);
+    throw error;
+  } finally {
+    submitting.delete(requestId);
+  }
+}
+
+/** 提交得到确认：补上任务编号（期间任务若已被换掉就不动） */
+function confirm(jobId: string, requestId: string, operationId: string) {
+  const current = getWorldTask(jobId);
+  if (current?.requestId !== requestId || current.operationId) return current;
+  const next = { ...current, operationId };
+  put(next);
+  return next;
 }
 
 async function fetchWorld(task: WorldTask, worldId: string) {
@@ -169,6 +195,18 @@ async function check(task: WorldTask) {
   if (task.demo) {
     if (Date.now() - task.started < DEMO_SECONDS * 1000) return;
     put({ ...task, status: "done", world: { id: task.operationId, model: task.model, splats: {}, demo: true, caption: task.prompt } });
+    return;
+  }
+  if (!task.operationId) {
+    // 提交还没确认（页面中途关过，或断网）：凭提交编号向后端找回；本页还在提交时不打扰
+    if (!task.requestId || submitting.has(task.requestId)) return;
+    try {
+      const found = await apiRequest<{ operation_id?: string }>("/world/requests/" + encodeURIComponent(task.requestId) + "?job_id=" + encodeURIComponent(task.jobId), { headers: jobAuthHeaders(task.jobId) }, task.base, 30000);
+      if (found.operation_id) confirm(task.jobId, task.requestId, found.operation_id);
+    } catch (error) {
+      // 服务端一直没有这次提交（请求没送到）：五分钟后算失败，额度没有花
+      if ((error as { status?: unknown })?.status === 404 && Date.now() - task.started > 5 * 60000) put({ ...task, status: "failed", error: "提交没有送达，请重新生成。" });
+    }
     return;
   }
   const raw = await apiRequest<any>("/world/operations/" + encodeURIComponent(task.operationId) + "?job_id=" + encodeURIComponent(task.jobId), { headers: jobAuthHeaders(task.jobId) }, task.base, 30000);
@@ -199,6 +237,8 @@ export async function refreshWorld(task: WorldTask): Promise<WorldTask> {
 // ---------------- 轮询 ----------------
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 const inFlight = new Set<string>();
+/** 本页正在提交的 requestId（提交返回前轮询不去找回） */
+const submitting = new Set<string>();
 function ensurePolling() {
   if (pollTimer || typeof window === "undefined") return;
   const tick = async () => {

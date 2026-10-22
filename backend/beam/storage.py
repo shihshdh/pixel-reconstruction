@@ -87,7 +87,8 @@ def reserve(call_id, job_id, kind="jobs"):
         day = time.strftime("%Y-%m-%d", time.gmtime(now))
         ledger_path = ROOT / "limits" / (day + ".json")
         ledger = read_json(ledger_path, {"jobs": 0, "edits": 0})
-        limit = int(os.environ.get("RUHUA_DAILY_" + kind.upper(), "30"))
+        # 世界生成按次花 World Labs 的额度，默认每天最多 6 次；其余默认 30
+        limit = int(os.environ.get("RUHUA_DAILY_" + kind.upper(), "6" if kind == "worlds" else "30"))
         if ledger.get(kind, 0) >= limit:
             raise CapacityError("今日体验额度已用完，请明天再试。")
         if kind == "jobs":

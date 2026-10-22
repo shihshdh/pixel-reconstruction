@@ -23,8 +23,8 @@ export default function WorldMaker({ job, poster, scene, live, title }: {
   poster?: string;
   /** 这件作品自己的三维场景：演示模式走进的就是它 */
   scene?: { href: string; format: "ply" | "splat" };
-  /** 后端已接入 World Labs；否则走演示模式 */
-  live: boolean;
+  /** 后端已接入 World Labs；false 走演示模式；undefined 是还在问网关（冷启动要十几秒），这时先不让发起，免得误做成演示 */
+  live?: boolean;
   title?: string;
 }) {
   const task = useWorldTask(job.job_id);
@@ -69,7 +69,8 @@ export default function WorldMaker({ job, poster, scene, live, title }: {
   const stage = stageIndex(progress);
   const waited = task ? Math.max(0, (now - task.started) / 1000) : 0;
   const expected = task ? expectedSeconds(task) : 0;
-  const demo = task ? !!task.demo : !live;
+  const checking = !task && live === undefined;
+  const demo = task ? !!task.demo : live === false;
   const visualStyle = useMemo(() => ({
     ["--poster" as string]: poster ? `url("${poster.replace(/"/g, "%22")}")` : "none",
     ["--ar" as string]: String(ratio),
@@ -110,12 +111,12 @@ export default function WorldMaker({ job, poster, scene, live, title }: {
             <label className={styles.prompt}>
               <span>补充描述（可选）</span>
               <input value={prompt} maxLength={300} onChange={e => setPrompt(e.target.value)} disabled={busy}
-                placeholder="例如：黄昏，街道一直延伸到远处的海边" onKeyDown={e => { if (e.key === "Enter" && !busy) void start(); }} />
+                placeholder="例如：黄昏，街道一直延伸到远处的海边" onKeyDown={e => { if (e.key === "Enter" && !busy && !checking) void start(); }} />
             </label>
           </div>
           <div className={styles.actions}>
-            <button className="key primary" onClick={() => void start()} disabled={busy}>{busy ? "正在提交…" : "✦ 创建场景"}</button>
-            <span className="seq-hint">{task?.status === "failed" ? `上次没有成功：${task.error}` : error || (demo ? "演示：约 15 秒走完整个流程。" : "照片会发送给 World Labs 生成世界。")}</span>
+            <button className="key primary" onClick={() => void start()} disabled={busy || checking}>{busy ? "正在提交…" : "✦ 创建场景"}</button>
+            <span className="seq-hint">{task?.status === "failed" ? `上次没有成功：${task.error}` : error || (checking ? "正在连接服务…" : demo ? "演示：约 15 秒走完整个流程。" : "照片会发送给 World Labs 生成世界。")}</span>
           </div>
         </>}
 

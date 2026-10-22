@@ -15,6 +15,7 @@ from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
 
 from storage import (CapacityError, IMAGE_PATTERN, job_path, read_state,
                      reserve, valid_id, write_state)
+import world as world_api
 from security import (AccessDenied, FILE_PATTERN, SigningUnavailable, allow_upload,
                       authorize, authorize_file, create_access, get_urls)
 
@@ -418,7 +419,9 @@ def create_app():
                 "assist": bool(os.environ.get("DEEPSEEK_API_KEY")),
                 "assist_vision": bool(os.environ.get("DEEPSEEK_API_KEY")),
                 "assist_actions": bool(os.environ.get("DEEPSEEK_API_KEY")),
-                "assist_search": bool(os.environ.get("DEEPSEEK_API_KEY") and os.environ.get("BOCHA_API_KEY"))}
+                "assist_search": bool(os.environ.get("DEEPSEEK_API_KEY") and os.environ.get("BOCHA_API_KEY")),
+                # 「走进世界」：World Labs 世界模型已配置（前端据此从演示模式切到正式生成）
+                "world": world_api.configured()}
 
     @app.post("/assist")
     async def assist_chat(request: Request):
@@ -622,6 +625,25 @@ def create_app():
         urls = get_urls(job_id, [output])
         return {"image": output, "file_url": urls[output], "file_urls": urls,
                 **({"subject_preserved": preserved} if pad else {})}
+
+    # ---- 「走进世界」：World Labs 世界模型（见 world.py 与 docs/world-api.md）----
+    @app.post("/world/generate")
+    def world_generate(payload: dict = Body(...), job_token: str = Header(default="", alias="X-Ruhua-Token")):
+        job_id = str(payload.get("job_id", ""))
+        directory = private_job(job_id, job_token)
+        return world_api.generate(directory, job_id, payload, lambda: admission(uuid.uuid4().hex, job_id, "worlds"))
+
+    @app.get("/world/requests/{request_id}")
+    def world_lookup(request_id: str, job_id: str = "", job_token: str = Header(default="", alias="X-Ruhua-Token")):
+        return world_api.lookup(private_job(job_id, job_token), request_id)
+
+    @app.get("/world/operations/{operation_id}")
+    def world_operation(operation_id: str, job_id: str = "", job_token: str = Header(default="", alias="X-Ruhua-Token")):
+        return world_api.operation(private_job(job_id, job_token), operation_id)
+
+    @app.get("/world/worlds/{world_id}")
+    def world_get(world_id: str, job_id: str = "", job_token: str = Header(default="", alias="X-Ruhua-Token")):
+        return world_api.world(private_job(job_id, job_token), world_id)
 
     @app.post("/rerender")
     def rerender(payload: dict = Body(...), job_token: str = Header(default="", alias="X-Ruhua-Token")):

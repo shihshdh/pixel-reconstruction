@@ -76,6 +76,9 @@ for attempt in range(6):
         time.sleep(15)
 if not health or health.get("ok") is not True or health.get("assist") is not True:
     finish("failed", step="healthz", new_version=new_version, health=health)
+# 「走进世界」: once scripts/beam-secrets.py stored the World Labs key, the new version must carry it.
+if (root / ".beam-tools/world-enabled").is_file() and health.get("world") is not True:
+    finish("failed", step="healthz-world", new_version=new_version, health=health)
 
 print(f"[3/3] Switching the site from v{old_version} to v{new_version} ...", flush=True)
 changed = []
