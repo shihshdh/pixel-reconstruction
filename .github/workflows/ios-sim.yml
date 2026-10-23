@@ -31,6 +31,10 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      # Root tsconfig includes world-engine/src; install its types, do not rebuild engine.js.
+      - name: Install independent engine dependencies for root type checking
+        if: ${{ inputs.url == '' || github.event_name == 'push' }}
+        run: npm ci --prefix world-engine
       - name: Static export (bundled world engine is already checked in)
         if: ${{ inputs.url == '' || github.event_name == 'push' }}
         run: npx next build
@@ -74,3 +78,4 @@ jobs:
           name: ios-sim-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/perf/ios-sim/
           if-no-files-found: error
+
