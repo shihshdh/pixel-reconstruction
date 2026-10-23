@@ -39,7 +39,7 @@ class GPUQueueTests(unittest.TestCase):
                                     "RUHUA_DAILY_WARMS": "60", "RUHUA_MAX_PENDING": "3",
                                     "RUHUA_DAILY_JOBS": "30", "TORCH_HOME": "", "HF_HOME": "",
                                     "TORCH_EXTENSIONS_DIR": "", "SHARP_CKPT": "",
-                                    "RUHUA_STATE_MAP": ""}),
+                                    "RUHUA_STATE_MAP": "", "STUB_ID": "", "CONTAINER_ID": ""}),
             patch.object(gateway.requests, "post", side_effect=AssertionError("unexpected network POST")),
             patch.object(gateway.requests, "get", side_effect=AssertionError("unexpected network GET")),
             patch.object(gateway.time, "time", return_value=NOW),

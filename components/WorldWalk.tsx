@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import LiquidTabBar, { GlassSurface } from "@/components/LiquidTabBar";
 import { isDesktopApp, saveWorkFile, workFolder } from "@/lib/desktop";
 import { motionPixelRatio, perfProfile, progressiveUltra, setImmersive } from "@/lib/perf";
-import { loadWorldEngine, probeWorldRoute, refreshWorld, routeWorldUrl, worldAssets, type WorldTask } from "@/lib/world";
+import { loadWorldEngine, probeWorldRoute, refreshWorld, routeWorldUrl, worldAssets, worldStartQuality, type WorldTask } from "@/lib/world";
 import type { WalkMode, WorldEngine, WorldQuality, WorldQualityState } from "@/lib/world-engine-types";
 import styles from "./WorldWalk.module.css";
 
@@ -109,6 +109,7 @@ export default function WorldWalk({ task, scene, poster, title, onClose }: {
           container: mountRef.current,
           assets,
           quality: qualityRef.current,
+          startQuality: worldStartQuality(),
           autoQuality: !manualRef.current,
           // 移动时：渐进式设备（手机、核显）按 motionPixelRatio、限 60fps；独显按档位起步、掉帧时引擎自己往下降。
           // 停下来补画一帧满档超采样（stillPixelRatio），静止画面就是极致画质

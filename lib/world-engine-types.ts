@@ -41,6 +41,8 @@ export type WorldEngineOptions = {
   assets: WorldAssets;
   /** 目标画质：先用最小一档尽快进入，再在后台逐档换到这一档 */
   quality: WorldQuality;
+  /** 第一档：先载入哪一档就进入（默认最小一档）。独显电脑用 500k（约 6MB），避免一进去满屏糊点；手机、核显用 100k */
+  startQuality?: WorldQuality;
   /** 自动画质（默认开）：移动中帧率有余量就继续升到更高一档，持续掉帧退一档。setQuality 手动选档后关闭 */
   autoQuality?: boolean;
   /** 移动时的渲染像素比上限（来自 lib/perf.ts 的档位）；引擎在掉帧时可自行下调，不会超过它 */

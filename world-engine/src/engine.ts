@@ -604,9 +604,9 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
 
   (async () => {
     if (!levels.length) throw new Error("这个世界没有可用的三维文件。");
-    // 起步：最小一档；如果目标档已经在缓存里（之前走进过），直接用目标档
-    let first = 0;
-    for (let level = goal; level > 0; level--) if (await cached(assets.splats[levels[level]]!)) { first = level; break; }
+    // 起步：startQuality（默认最小一档）；如果更高的档已经在缓存里（之前走进过），直接用那一档
+    let first = Math.min(goal, options.startQuality ? levelAtMost(levels, options.startQuality) : 0);
+    for (let level = goal; level > first; level--) if (await cached(assets.splats[levels[level]]!)) { first = level; break; }
     if (!await loadLevel(first, true)) return;
     if (disposed) return;
     await Promise.race([attachCollider(), new Promise(resolve => setTimeout(resolve, 1500))]);

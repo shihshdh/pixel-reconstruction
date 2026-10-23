@@ -11,6 +11,7 @@
 // 生成标准世界约 5 分钟（速写约半分钟），所以任务按作品记在 localStorage 里：离开工作室、刷新页面、重开客户端，回来都能接着等。
 import { useSyncExternalStore } from "react";
 import { apiRequest, getBase, jobAuthHeaders } from "./api";
+import { perfProfile, progressiveUltra } from "./perf";
 import type { WorldAssets, WorldEngineModule, WorldQuality } from "./world-engine-types";
 
 export type WorldModel = "marble-1.0-draft" | "marble-1.1" | "marble-1.1-plus";
@@ -310,6 +311,10 @@ export function loadWorldEngine(): Promise<WorldEngineModule> {
  * 省流量时不预取。
  */
 const prefetched = new Set<string>();
+/** 走进世界时先载入的一档：手机、核显 100k（约 1MB，一两秒进去）；独显电脑 500k（约 6MB，一进去就是清楚的画面） */
+export function worldStartQuality(): WorldQuality {
+  try { const profile = perfProfile(); return progressiveUltra(profile) || profile.tier === "low" ? "100k" : "500k"; } catch { return "100k"; }
+}
 export async function prefetchWorld(world?: WorldRecord) {
   if (!world || world.demo || typeof window === "undefined" || prefetched.has(world.id)) return;
   try { if ((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData) return; } catch {}
@@ -319,7 +324,8 @@ export async function prefetchWorld(world?: WorldRecord) {
   try {
     await idle();
     const engine = await loadWorldEngine();
-    const first = (["100k", "500k", "full_res"] as WorldQuality[]).map(q => world.splats[q]).find(Boolean);
+    const order: WorldQuality[] = worldStartQuality() === "500k" ? ["500k", "100k", "full_res"] : ["100k", "500k", "full_res"];
+    const first = order.map(q => world.splats[q]).find(Boolean);
     await engine.prefetch?.([first, world.collider].filter((url): url is string => !!url).map(routeWorldUrl));
   } catch { prefetched.delete(world.id); }
 }
