@@ -71,19 +71,22 @@ jobs:
         timeout-minutes: 15
         run: node scripts/perf/ios-sim.mjs
       - name: Preserve simulator diagnostics
+        timeout-minutes: 1
         if: always()
         shell: bash
         run: |
           mkdir -p artifacts/perf/ios-sim
           cp "$RUNNER_TEMP/simulators.json" artifacts/perf/ios-sim/ 2>/dev/null || true
           cp "$RUNNER_TEMP/safaridriver.log" artifacts/perf/ios-sim/ 2>/dev/null || true
-          xcrun simctl list devices booted > artifacts/perf/ios-sim/booted.txt
+          printf '%s\n' "$SIMULATOR_UDID" > artifacts/perf/ios-sim/selected-simulator.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: ios-sim-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/perf/ios-sim/
           if-no-files-found: error
+
+
 
 
 

@@ -53,6 +53,8 @@ function instrument() {
   const counters = new Map(), wrapped = new WeakSet(), errors = [];
   let rafRequests = 0, rafCallbacks = 0, intervals = [], tasks = [], started, previous;
   const nativeRaf = window.requestAnimationFrame.bind(window);
+  const nativeCancel = window.cancelAnimationFrame.bind(window), pendingRaf = new Map();
+  let screenshotPaused = false, pausedAnimations = [];
   const label = c => String(c.getAttribute('aria-label') || c.className || c.parentElement?.className || 'canvas').slice(0, 100);
   const entry = c => { if (!counters.has(c)) counters.set(c, { frames: 0, draws: 0, pixels: 0, last: null }); return counters.get(c); };
   function wrap(gl, canvas) {
@@ -84,7 +86,18 @@ function instrument() {
   });
   scan();
   // Future contexts are intercepted by getContext; do not initialize newly inserted canvases.
-  window.requestAnimationFrame = callback => { rafRequests++; return nativeRaf(t => { rafCallbacks++; callback(t); }); };
+  const invokeRaf = (id, time) => {
+    const item = pendingRaf.get(id);
+    if (!item) return;
+    if (screenshotPaused) { item.held = true; return; }
+    pendingRaf.delete(id); rafCallbacks++; item.callback.call(window, time);
+  };
+  window.requestAnimationFrame = callback => {
+    rafRequests++;
+    const id = nativeRaf(time => invokeRaf(id, time));
+    pendingRaf.set(id, { callback, held: false }); return id;
+  };
+  window.cancelAnimationFrame = id => { pendingRaf.delete(id); nativeCancel(id); };
   const sample = t => { if (previous !== undefined) intervals.push(t - previous); previous = t; nativeRaf(sample); };
   nativeRaf(sample); // Excluded from application rAF counts.
   const longtaskSupported = !!window.PerformanceObserver?.supportedEntryTypes?.includes('longtask');
@@ -94,6 +107,17 @@ function instrument() {
   const quantile = (a, p) => a.length ? a[Math.min(a.length - 1, Math.floor((a.length - 1) * p))] : null;
   window.__iosPerf = {
     reset() { document.querySelectorAll('canvas').forEach(entry); for (const s of counters.values()) Object.assign(s, { frames: 0, draws: 0, pixels: 0, last: null }); rafRequests = rafCallbacks = 0; intervals = []; tasks = []; previous = undefined; started = performance.now(); },
+    pauseForScreenshot() {
+      screenshotPaused = true;
+      pausedAnimations = document.getAnimations().filter(a => a.playState === 'running');
+      for (const a of pausedAnimations) try { a.pause(); } catch {}
+    },
+    resumeAfterScreenshot() {
+      screenshotPaused = false;
+      for (const a of pausedAnimations) try { a.play(); } catch {}
+      pausedAnimations = [];
+      for (const [id, item] of pendingRaf) if (item.held) { item.held = false; nativeRaf(time => invokeRaf(id, time)); }
+    },
     snapshot() {
       const seconds = (performance.now() - started) / 1000, sorted = [...intervals].sort((a, b) => a - b);
       const visible = c => {
@@ -151,8 +175,8 @@ async function main() {
           if (attempt === 3 || error.name !== 'SessionNotCreatedError') throw error;
           console.log(`Safari session attempt ${attempt} failed; relaunching Mobile Safari`);
           const device = process.env.SIMULATOR_UDID || 'booted';
-          try { execFileSync('xcrun', ['simctl', 'terminate', device, 'com.apple.mobilesafari'], { timeout: 20000, stdio: 'inherit' }); } catch {}
-          execFileSync('xcrun', ['simctl', 'launch', device, 'com.apple.mobilesafari'], { timeout: 30000, stdio: 'inherit' });
+          try { execFileSync('xcrun', ['simctl', 'terminate', device, 'com.apple.mobilesafari'], { timeout: 20000, killSignal: 'SIGKILL', stdio: 'inherit' }); } catch {}
+          execFileSync('xcrun', ['simctl', 'launch', device, 'com.apple.mobilesafari'], { timeout: 30000, killSignal: 'SIGKILL', stdio: 'inherit' });
           await sleep(5000);
         }
       }
@@ -163,7 +187,7 @@ async function main() {
       shot = async file => {
         for (let attempt = 1; attempt <= 2; attempt++) {
           console.log(`Native screenshot ${path.basename(file)}, attempt ${attempt}`);
-          try { return execFileSync('xcrun', ['simctl', 'io', process.env.SIMULATOR_UDID || 'booted', 'screenshot', file], { stdio: 'inherit', timeout: 120000 }); }
+          try { return execFileSync('xcrun', ['simctl', 'io', process.env.SIMULATOR_UDID || 'booted', 'screenshot', file], { stdio: 'inherit', timeout: 120000, killSignal: 'SIGKILL' }); }
           catch (error) { if (attempt === 2) throw error; console.warn('simctl screenshot delayed; retrying:', error.code); await sleep(3000); }
         }
       };
@@ -189,8 +213,12 @@ async function main() {
       if (name.startsWith('world-')) result.world = await evaluate(() => window.__worldTest);
       result.screenshot = `${name}.png`;
       report.results.push(result); await save();
-      try { await shot(path.join(output, result.screenshot)); }
-      catch (error) { result.screenshotError = String(error); report.errors.push({ scenario: name, screenshotError: String(error) }); await save(); }
+      result.screenshotWithApplicationAnimationsPaused = true;
+      try {
+        await evaluate(() => window.__iosPerf.pauseForScreenshot()); await sleep(250);
+        await shot(path.join(output, result.screenshot));
+      } catch (error) { result.screenshotError = String(error); report.errors.push({ scenario: name, screenshotError: String(error) }); await save(); }
+      finally { await evaluate(() => window.__iosPerf.resumeAfterScreenshot()); }
       console.log(JSON.stringify(result));
     };
     try {
@@ -241,6 +269,8 @@ async function main() {
   }
 }
 await main();
+
+
 
 
 
