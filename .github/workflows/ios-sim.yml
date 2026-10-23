@@ -1,0 +1,76 @@
+name: iOS Simulator Safari workload
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Site URL (empty: build and serve this commit)'
+        type: string
+        default: ''
+      beam_api:
+        description: 'NEXT_PUBLIC_BEAM_API used for local build'
+        type: string
+        default: 'https://ruhua-api-aa5d4d3-v24.app.beam.cloud'
+  push:
+    branches: [ci/ios-sim]
+permissions:
+  contents: read
+concurrency:
+  group: ios-sim-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  safari:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      TEST_URL: ${{ inputs.url || '' }}
+      NEXT_PUBLIC_BEAM_API: ${{ inputs.beam_api || 'https://ruhua-api-aa5d4d3-v24.app.beam.cloud' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Static export (bundled world engine is already checked in)
+        if: ${{ inputs.url == '' || github.event_name == 'push' }}
+        run: npx next build
+      - name: Install WebDriver without changing dependency manifests
+        run: npm install --no-save --package-lock=false selenium-webdriver@4.27.0
+      - name: Select and boot an available iPhone
+        shell: bash
+        run: |
+          xcrun simctl list devices available --json > "$RUNNER_TEMP/simulators.json"
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const devices = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/simulators.json")).devices;
+            const phone = Object.entries(devices).filter(([runtime]) => runtime.includes("iOS")).flatMap(([, list]) => list).find(d => d.isAvailable && d.name.startsWith("iPhone"));
+            if (!phone) throw new Error("No available iPhone simulator");
+            fs.appendFileSync(process.env.GITHUB_ENV, `SIMULATOR_UDID=${phone.udid}\n`);
+            fs.writeFileSync(process.env.RUNNER_TEMP + "/simulator-udid", phone.udid);
+            console.log(JSON.stringify(phone));'
+          DEVICE=$(cat "$RUNNER_TEMP/simulator-udid")
+          xcrun simctl boot "$DEVICE" || true
+          xcrun simctl bootstatus "$DEVICE" -b
+          sudo safaridriver --enable
+          safaridriver -p 4444 > "$RUNNER_TEMP/safaridriver.log" 2>&1 &
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:4444/status; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: Run real Mobile Safari scenarios
+        run: node scripts/perf/ios-sim.mjs
+      - name: Preserve simulator diagnostics
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p artifacts/perf/ios-sim
+          cp "$RUNNER_TEMP/simulators.json" artifacts/perf/ios-sim/ 2>/dev/null || true
+          cp "$RUNNER_TEMP/safaridriver.log" artifacts/perf/ios-sim/ 2>/dev/null || true
+          xcrun simctl list devices booted > artifacts/perf/ios-sim/booted.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-sim-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/perf/ios-sim/
+          if-no-files-found: error

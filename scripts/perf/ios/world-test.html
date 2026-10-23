@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>iOS 世界引擎离线测试入口</title>
+<style>html,body{margin:0;height:100%;background:#0b0c0d}#mount{position:fixed;inset:0}#log{position:fixed;bottom:8px;left:8px;color:white;background:#0009;z-index:2;white-space:pre-wrap;font:12px monospace;max-width:95vw}</style>
+<div id="mount"></div><div id="log">等待测试驱动</div>
+<script>
+window.__worldTest = { ready: false };
+window.startWorldTest = async () => {
+  const quality = new URLSearchParams(location.search).get('q') || '100k';
+  const cdn = 'https://cdn.marble.worldlabs.ai/5bfe2aa9-240e-40ec-a325-8a227a81e3f6/';
+  const splats = { '100k': cdn + 'dc80afc3-313d-4740-9930-c64e05a6cdd6_sand_100k.spz', '500k': cdn + '1e47e85b-e670-40e1-9f89-3bfa028b19cf_sand_500k.spz' };
+  const state = window.__worldTest = { quality, ready: false, progress: 0, stats: [], assets: { splat: splats[quality], collider: cdn + '9ea4c254.glb' } };
+  const show = () => document.getElementById('log').textContent = JSON.stringify({ quality: state.quality, ready: state.ready, readySeconds: state.readySeconds, progress: state.progress, stats: state.stats.at(-1), error: state.error }, null, 2);
+  try {
+    const { createWorldEngine, version } = await import('/world/engine.js');
+    state.version = version;
+    const started = performance.now();
+    window.__worldEngine = createWorldEngine({
+      container: document.getElementById('mount'),
+      assets: { splats: { [quality]: splats[quality] }, collider: state.assets.collider, coordinate: 'opencv', format: 'spz' },
+      quality, autoQuality: false, pixelRatio: Math.min(devicePixelRatio, 1.5), maxFps: 60,
+      onProgress: p => { state.progress = p; },
+      onReady: () => { state.ready = true; state.readySeconds = (performance.now() - started) / 1000; show(); },
+      onError: e => { state.error = String(e.stack || e); show(); },
+      onStats: s => { state.stats.push(s); show(); }
+    });
+    show();
+  } catch (e) { state.error = String(e.stack || e); show(); }
+};
+</script>
+</html>
+
