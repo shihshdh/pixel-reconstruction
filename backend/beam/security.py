@@ -86,7 +86,7 @@ def authorize_file(job_id, filename, expires, sig):
         raise AccessDenied()
 
 
-def allow_upload(client_host, forwarded_for=""):
+def allow_upload(client_host, forwarded_for="", bucket="upload-ips", limit=3):
     """Best-effort IP throttling, not identity/authentication or a spend limit.
 
     Beam terminates the public request. Forwarded headers may be spoofable in
@@ -101,12 +101,12 @@ def allow_upload(client_host, forwarded_for=""):
     identity = hmac.new(signing_key(), candidate.encode(), hashlib.sha256).hexdigest()
     now = time.time()
     with admission_lock():
-        path = ROOT / "limits" / "upload-ips.json"
+        path = ROOT / "limits" / (bucket + ".json")
         ledger = read_json(path, {})
         ledger = {key: [stamp for stamp in stamps if now - stamp < 60]
                   for key, stamps in ledger.items() if stamps and now - stamps[-1] < 60}
         recent = ledger.get(identity, [])
-        if len(recent) >= 3:
+        if len(recent) >= limit:
             return False
         recent.append(now)
         ledger[identity] = recent

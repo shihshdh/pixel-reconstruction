@@ -85,3 +85,12 @@
   .thumb,.walker,.card[data-state="pending"] .photo,.meter i::after,.dots::after,.stages li[data-state="now"] i{animation:none;}
   .focus,.meter i,.orbit .orbitRun{transition:none;}
 }
+
+/* 心跳：最近一次向 World Labs 确认的结果（绿点轻轻呼吸；断线时转成琥珀色） */
+.heartbeat{display:flex;align-items:center;gap:8px;margin:10px 0 0;font-size:12.5px;color:var(--ink2);font-variant-numeric:tabular-nums;}
+.heartbeat i{width:7px;height:7px;border-radius:50%;background:var(--ink3);flex:none;}
+.heartbeat[data-state="live"] i{background:#3aa66f;box-shadow:0 0 0 0 #3aa66f66;animation:heartbeat 2.4s ease-out infinite;}
+.heartbeat[data-state="offline"]{color:#b77738;}
+.heartbeat[data-state="offline"] i{background:#c98a3e;}
+@keyframes heartbeat{0%{box-shadow:0 0 0 0 #3aa66f66}70%{box-shadow:0 0 0 7px #3aa66f00}100%{box-shadow:0 0 0 0 #3aa66f00}}
+@media (prefers-reduced-motion:reduce){.heartbeat[data-state="live"] i{animation:none}}

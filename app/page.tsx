@@ -35,7 +35,7 @@ import LiquidTabBar, { GlassSurface, type TabItem } from "@/components/LiquidTab
 import { desktopClass, detectTier, perfProfile, readPerfChoice, savePerfChoice, PERF_EVENT, PERF_LABELS, type PerfChoice, type PerfTier } from "@/lib/perf";
 // 现有 API（lib/api.ts）——创作/工作室/修图都用它
 import {
-  submitPhoto, checkStatus,
+  submitPhoto, checkStatus, warmGpu,
   fileUrl, downloadJobFile, ping, getBase, getDefaultBase, saveBase, normalizeBase, registerJobAccess, refreshJobAccess,
 } from "@/lib/api";
 // 修图对话按作品保存，请求不随页面卸载而中断
@@ -870,6 +870,8 @@ function SourceBar({ source, setSource, conn, device, onReconnect, backend, onAp
 // ============================================================
 function CreatePage({ source, setSource, conn, device, onDone, onReconnect, backend, taskBase, compute, setCompute, engine, onApply, onBusy, incoming = null, onIncomingTaken }: { incoming?: { file: File; id: number } | null; onIncomingTaken?: () => void; [key: string]: any }) {
   const local = isEngineAddress(taskBase) || (compute === "local" && engineWarming(engine));
+  // 打开创作页就先唤醒云端 GPU：挑照片、上传的这段时间里它已经开好机、载好模型
+  useEffect(() => { if (!local && taskBase && conn === "ok") warmGpu(taskBase); }, [local, taskBase, conn]);
   const engineRef = useRef(engine);
   engineRef.current = engine;
   const [phase, setPhase] = useState("idle");
@@ -950,6 +952,7 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
   useEffect(() => () => readAbort.current?.abort(), []);
   async function handleFile(picked: File) {
     if (busyRef.current) return;
+    if (!(compute === "local" && engineWarming(engineRef.current)) && taskBase && !isEngineAddress(taskBase)) warmGpu(taskBase);
     const warming = compute === "local" && engineWarming(engineRef.current);
     if (!taskBase && !warming) { fail("云端服务暂不可用，请稍后重试。"); return; }
     if (!isDevelopablePhoto(picked)) { fail("请选择 50MB 以内的 jpg、png、webp 或 heic 图片。"); return; }
@@ -1561,10 +1564,10 @@ function HomePage({ setPage, active = true, ready = true }) {
   return <main ref={homeRef} className="home-page">
     <section className="overview-intro">
       <div><h1 className={"home-title" + (ready ? " is-ready" : "")} data-parallax=".14">
-        <span className="hero-first-line">一张照片。</span><br />
-        <span>{Array.from("一整个空间。").map((char, i) => <span key={i} className="hero-letter" style={{ animationDelay: `${i * 30}ms` }}>{char}</span>)}</span>
+        <span className="hero-first-line">单张照片，</span><br />
+        <span>{Array.from("重建为三维空间。").map((char, i) => <span key={i} className="hero-letter" style={{ animationDelay: `${i * 30}ms` }}>{char}</span>)}</span>
       </h1></div>
-      <div className="overview-context" data-parallax=".07"><p>Apple SHARP 模型把一张照片重建为三维高斯场景。自由走动、编排运镜，再导出成片。</p>
+      <div className="overview-context" data-parallax=".07"><p>SHARP 单目重建模型把一张照片转换为约 118 万个三维高斯点；World Labs 世界模型补全画框以外的区域，生成带碰撞网格、可以行走的世界。运镜编排与视频导出在浏览器内完成。</p>
         <div className="overview-actions"><button className="editorial-primary" onClick={() => setPage("create")}>上传照片 <span aria-hidden="true">↗</span></button><button className="editorial-link" onClick={scrollDemo}>查看运镜示例 <span aria-hidden="true">↓</span></button></div>
       </div>
     </section>
@@ -1582,14 +1585,14 @@ function HomePage({ setPage, active = true, ready = true }) {
     </section>
     <section className="compute-story">
       <Reveal stagger variant="drift" className="compute-story-layout">
-        <div><h2>重建在云端完成。<br />创作留在浏览器。</h2><p>SHARP 推理由 Beam 按任务分配 RTX 4090。浏览器负责场景查看、运镜预览与视频导出；首次请求需要等待云端服务启动。</p><span className="compute-spec">RTX 4090 · 24GB <i /> 按任务分配</span></div>
+        <div><h2>重建在云端完成。<br />创作留在浏览器。</h2><p>SHARP 推理由 Beam 按任务分配 RTX 4090。打开创作页时显卡随即启动，模型常驻显存，一张照片十几秒完成重建；场景查看、运镜预览与视频导出留在浏览器。</p><span className="compute-spec">RTX 4090 · 24GB <i /> 按任务分配</span></div>
         <figure><img src="/rtx4090.png" alt="用于云端场景重建的 RTX 4090 显卡" loading="lazy" data-parallax=".05" /><figcaption>COMPUTE / BEAM SERVERLESS</figcaption></figure>
       </Reveal>
     </section>
     <SceneWall />
     <LineSculpture active={active} />
     <GlassInvite active={active} onStart={() => setPage("create")} />
-    <footer className="overview-footer"><BrandMark size={21} /><span>Pixel Reconstruction</span><span>单张图片 · 三维场景 · 自由运镜</span></footer>
+    <footer className="overview-footer"><BrandMark size={21} /><span>Pixel Reconstruction</span><span>单张照片 · 三维重建 · 走进世界</span></footer>
   </main>;
 }
 

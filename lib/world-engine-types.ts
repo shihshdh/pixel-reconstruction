@@ -33,12 +33,22 @@ export type WorldSpawn = {
 
 export type WorldStats = { fps: number; splats: number; pixelRatio: number };
 
+/** 画质档的状态：shown 是正在显示的档，loading 是后台正在换上的档（null 表示没有），auto 是否自动升降 */
+export type WorldQualityState = { shown: WorldQuality; loading: WorldQuality | null; progress: number; auto: boolean };
+
 export type WorldEngineOptions = {
   container: HTMLElement;
   assets: WorldAssets;
+  /** 目标画质：先用最小一档尽快进入，再在后台逐档换到这一档 */
   quality: WorldQuality;
-  /** 初始渲染像素比（来自 lib/perf.ts 的档位）；引擎在掉帧时可自行下调，不会超过它 */
+  /** 自动画质（默认开）：移动中帧率有余量就继续升到更高一档，持续掉帧退一档。setQuality 手动选档后关闭 */
+  autoQuality?: boolean;
+  /** 移动时的渲染像素比上限（来自 lib/perf.ts 的档位）；引擎在掉帧时可自行下调，不会超过它 */
   pixelRatio: number;
+  /** 镜头停下后补画一帧用的像素比（渐进式精修：静止画面最高画质）；默认等于 pixelRatio */
+  stillPixelRatio?: number;
+  /** 帧率上限（手机、核显 60）；不给就跟屏幕刷新率 */
+  maxFps?: number;
   /** 最低可降到的像素比 */
   minPixelRatio?: number;
   /** 眼睛离地高度（米），默认 1.6 */
@@ -52,15 +62,19 @@ export type WorldEngineOptions = {
   onProgress?: (progress: number) => void;
   onReady?: () => void;
   onError?: (error: Error) => void;
-  /** 大约每秒一次 */
+  /** 大约每秒一次（只在有画面更新时） */
   onStats?: (stats: WorldStats) => void;
+  /** 画质档变化、后台换档进度 */
+  onQuality?: (state: WorldQualityState) => void;
   /** 用户第一次真正移动或转头时调用一次（页面据此收起操作提示） */
   onFirstMove?: () => void;
 };
 
 export interface WorldEngine {
-  /** 换档：保持当前位置与朝向重新载入高斯点 */
+  /** 手动换档：保持当前位置与朝向换上这一档，并停在这一档（关闭自动画质） */
   setQuality(quality: WorldQuality): Promise<void>;
+  /** 重新打开自动画质 */
+  setAutoQuality(on: boolean): void;
   setMode(mode: WalkMode): void;
   setPixelRatio(ratio: number): void;
   /** 回到出生点 */
@@ -79,4 +93,6 @@ export interface WorldEngine {
 export type WorldEngineModule = {
   version: string;
   createWorldEngine(options: WorldEngineOptions): WorldEngine;
+  /** 提前下载进缓存（世界生成完成后、走进之前），走进时直接从缓存读 */
+  prefetch(urls: string[], signal?: AbortSignal): Promise<void>;
 };

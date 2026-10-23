@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
 
+import storage
 from storage import (CapacityError, IMAGE_PATTERN, job_path, read_state,
                      reserve, valid_id, write_state)
 import world as world_api
@@ -59,6 +60,126 @@ def dispatch(**payload):
         return body.get("task_id")
     except (requests.RequestException, ValueError):
         raise HTTPException(503, "暂时无法连接生成队列，请稍后再试。")
+
+
+BEAM_API = "https://api.beam.cloud/v2/task/"
+# Beam task states after which a task that never reported progress will not run any more
+BEAM_DEAD = {"FAILED", "ERROR", "TIMEOUT", "CANCELLED", "EXPIRED"}
+_beam_cache = {}
+
+
+def task_record_path(call_id):
+    return storage.ROOT / "beam-tasks" / (call_id + ".json")
+
+
+def dispatch_job(call_id, **payload):
+    """Queue SHARP on the GPU and remember Beam's task id, so /status can tell 'waiting for a GPU' from a lost task."""
+    task_id = dispatch(call_id=call_id, **payload)
+    path = task_record_path(call_id)
+    record = storage.read_json(path, {}) or {}
+    record.update(task_id=task_id, payload=payload, dispatched_at=time.time(), dispatches=record.get("dispatches", 0) + 1)
+    storage.atomic_json(path, record)
+    return task_id
+
+
+def beam_task(task_id):
+    """Beam's view of a GPU task (status, started_at). Cached briefly; None if Beam cannot be asked."""
+    if not task_id or not re.fullmatch(r"[0-9a-f-]{36}", str(task_id)):
+        return None
+    cached = _beam_cache.get(task_id)
+    if cached and time.time() - cached[0] < 8:
+        return cached[1]
+    token = os.environ.get("BEAM_API_TOKEN", "").strip()
+    try:
+        response = requests.get(BEAM_API + task_id + "/", headers={"Authorization": "Bearer " + token}, timeout=8)
+        data = response.json() if response.ok else None
+    except (requests.RequestException, ValueError):
+        data = None
+    info = {"status": str(data.get("status") or "").upper(), "started_at": data.get("started_at") or ""} if isinstance(data, dict) else None
+    _beam_cache[task_id] = (time.time(), info)
+    return info
+
+
+def watch_queue(call_id, state):
+    """For a task still 'queued': report what the GPU is doing, and re-queue once if Beam lost or failed it."""
+    record = storage.read_json(task_record_path(call_id), {}) or {}
+    waited = time.time() - record.get("dispatched_at", state.get("updated_at", time.time()))
+    if waited < 15 or not record.get("task_id"):
+        return state
+    info = beam_task(record["task_id"])
+    if not info:
+        return state
+    status = info["status"]
+    started = info["started_at"] and not info["started_at"].startswith("0001")
+    dead = status in BEAM_DEAD or (status == "COMPLETE" and waited > 30)
+    if dead:
+        # Decide under the admission lock with fresh reads: the worker may have finished while Beam was being asked
+        # (never overwrite done/error), and concurrent polls must not both claim the single retry.
+        with storage.admission_lock():
+            fresh = read_state(call_id) or state
+            if fresh.get("status") not in ("queued",):
+                return fresh
+            current = storage.read_json(task_record_path(call_id), {}) or {}
+            if current.get("task_id") != record.get("task_id"):
+                return {**fresh, "stage": "云端 GPU 启动失败 · 已自动重新排队"}  # another poll already retried
+            if current.get("dispatches", 1) < 2 and waited < 1800:
+                # The container failed to start or the task was dropped before the worker saw it: queue it again once
+                try:
+                    dispatch_job(call_id, **current.get("payload", {}))
+                    return {**fresh, "stage": "云端 GPU 启动失败 · 已自动重新排队"}
+                except HTTPException:
+                    pass
+            write_state(call_id, "error", job_id=fresh.get("job_id"), message="云端 GPU 暂时没能启动，请稍后重新显影。")
+            return read_state(call_id)
+    if status == "RUNNING" or started:
+        return {**state, "stage": "云端 GPU 已启动 · 正在载入模型"}
+    if waited > 90:
+        return {**state, "stage": "正在等待空闲的云端 GPU · 已等 %d 秒" % waited}
+    return {**state, "stage": "正在唤醒云端 GPU · 通常不到一分钟"}
+
+
+# ---- GPU warm-up ----
+# Opening the create page or picking a photo calls /warm: the GPU container boots and loads the model
+# (≈ 1–2 min from cold) while the visitor is still choosing and uploading, instead of after the upload.
+# One warm-up at a time; later calls only extend its window. Daily cap RUHUA_DAILY_WARMS (default 60).
+WARM_WINDOW = 150
+
+
+def warm_up():
+    with storage.admission_lock():
+        now = time.time()
+        path = storage.ROOT / "gpu-warm.json"
+        window = storage.hot_get("gpu-warm", path, {}) or {}
+        active = read_state(window["call_id"]) if valid_id(window.get("call_id", "")) else None
+        if active and active.get("status") in ("warming", "warm") and now - window.get("dispatched_at", 0) < 900:
+            window["until"] = now + WARM_WINDOW
+            storage.hot_put("gpu-warm", path, window)
+            return {"warming": True, "extended": True}
+        states = storage.ROOT / "states"
+        def live(item):
+            entry = storage.read_json(item, {}) or {}
+            if entry.get("status") not in ("queued", "running") or now - entry.get("updated_at", 0) > 900:
+                return False
+            entry = read_state(item.stem) or entry  # the volume copy may be stale
+            return entry.get("status") in ("queued", "running")
+        if states.exists() and any(live(item) for item in states.glob("*.json") if valid_id(item.stem)):
+            return {"warming": False, "busy": True}
+        day = time.strftime("%Y-%m-%d", time.gmtime(now))
+        ledger_path = storage.ROOT / "limits" / (day + ".json")
+        ledger = storage.read_json(ledger_path, {}) or {}
+        if ledger.get("warms", 0) >= int(os.environ.get("RUHUA_DAILY_WARMS", "60")):
+            return {"warming": False, "capped": True}
+        ledger["warms"] = ledger.get("warms", 0) + 1
+        storage.atomic_json(ledger_path, ledger)
+        call_id = uuid.uuid4().hex
+        write_state(call_id, "warming", job_id="")
+        storage.hot_put("gpu-warm", path, {"call_id": call_id, "dispatched_at": now, "until": now + WARM_WINDOW})
+    try:
+        dispatch(call_id=call_id, warm=True)
+    except HTTPException:
+        write_state(call_id, "error", job_id="", message="warm-up dispatch failed")
+        return {"warming": False}
+    return {"warming": True}
 
 
 def admission(call_id, job_id, kind="jobs"):
@@ -421,7 +542,7 @@ def create_app():
                 "assist_actions": bool(os.environ.get("DEEPSEEK_API_KEY")),
                 "assist_search": bool(os.environ.get("DEEPSEEK_API_KEY") and os.environ.get("BOCHA_API_KEY")),
                 # 「走进世界」：World Labs 世界模型已配置（前端据此从演示模式切到正式生成）
-                "world": world_api.configured()}
+                "world": world_api.configured(), **storage.hot_status()}
 
     @app.post("/assist")
     async def assist_chat(request: Request):
@@ -438,6 +559,15 @@ def create_app():
             raise HTTPException(400, "请求格式无效。")
         return await run_in_threadpool(handle, payload, request.client.host if request.client else "",
                                       request.headers.get("x-forwarded-for", ""))
+
+    @app.post("/warm")
+    def warm(request: Request):
+        # Never authorizes anything and never touches jobs: it only boots the GPU a little earlier.
+        if not (os.environ.get("RUHUA_GPU_URL") and os.environ.get("BEAM_API_TOKEN")):
+            return {"warming": False}
+        if not allow_upload(request.client.host if request.client else "", request.headers.get("x-forwarded-for", ""), "warm-ips", 6):
+            return {"warming": False, "throttled": True}
+        return warm_up()
 
     @app.post("/generate")
     def generate(request: Request, image: UploadFile = File(...), render_video: bool = Form(False), enhance: bool = Form(False)):
@@ -467,8 +597,8 @@ def create_app():
                 admission(call_id, job_id, "edits")
                 source = "edit_" + uuid.uuid4().hex + ".jpg"
                 (directory / source).write_bytes(protected_outpaint(normalized, .25, protect_prompt(ENHANCE_PROMPT), pixels=ARK_FALLBACK_PIXELS)[0])
-            dispatch(call_id=call_id, job_id=job_id, source=source,
-                     render_video=render_video, enhanced=enhance)
+            dispatch_job(call_id, job_id=job_id, source=source,
+                         render_video=render_video, enhanced=enhance)
         except Exception as error:
             message = error.detail if isinstance(error, HTTPException) else "上传处理失败，请重试。"
             write_state(call_id, "error", job_id=job_id, message=message)
@@ -490,6 +620,8 @@ def create_app():
         if state.get("status") in ("queued", "running") and time.time() - state.get("updated_at", 0) > 3600:
             write_state(call_id, "error", job_id=state.get("job_id"), message="任务等待或执行超时，请重新提交。")
             state = read_state(call_id)
+        if state.get("status") == "queued":
+            state = watch_queue(call_id, state)
         # Legacy jobs may have received a CPU-generated preview via /files.
         ply_name = state.get("ply_file", "")
         if ply_name and OUTPUT_PATTERN.fullmatch(ply_name):
@@ -513,7 +645,8 @@ def create_app():
         if not OUTPUT_PATTERN.fullmatch(filename):
             raise HTTPException(404, "文件不存在")
         path = directory / filename
-        if not path.is_file():
+        # Results written by the GPU container a moment ago can take a few seconds to show up here (shared volume)
+        if not storage.visible(path):
             raise HTTPException(404, "文件不存在或尚未生成")
         media = "image/jpeg" if filename.endswith(".jpg") else "video/mp4" if filename.endswith(".mp4") else "application/octet-stream"
         from transfer import MEDIA_TYPE, accepts_transfer, prepare_transfer, release_transfer, transfer_etag
@@ -655,8 +788,8 @@ def create_app():
         call_id = uuid.uuid4().hex
         admission(call_id, job_id)
         try:
-            dispatch(call_id=call_id, job_id=job_id, source=source,
-                     render_video=False, enhanced=source != "original.jpg")
+            dispatch_job(call_id, job_id=job_id, source=source,
+                         render_video=False, enhanced=source != "original.jpg")
         except HTTPException as error:
             write_state(call_id, "error", job_id=job_id, message=error.detail)
             raise

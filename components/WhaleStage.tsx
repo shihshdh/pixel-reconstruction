@@ -6,7 +6,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import type { AssistMood } from "@/lib/api";
-import { detectTier } from "@/lib/perf";
+import { ambientFps, ambientShouldYield, IMMERSIVE_EVENT, isImmersive } from "@/lib/perf";
 
 export type WhaleStageHandle = {
   setMood: (mood: AssistMood) => void;
@@ -139,6 +139,7 @@ const WhaleStage = forwardRef<WhaleStageHandle, Props>(function WhaleStage({ wid
     let frame = 0;
     let follow: ((event: PointerEvent) => void) | null = null;
     let stopBehaviour = () => {};
+    let stopSchedule = () => {};
     (async () => {
       try {
         await loadCore();
@@ -156,8 +157,18 @@ const WhaleStage = forwardRef<WhaleStageHandle, Props>(function WhaleStage({ wid
           powerPreference: "low-power",
         });
         appRef.current = app;
-        // 低档硬件上助手动画限 30 帧，把性能留给 3D 场景
-        if (detectTier() === "low") app.ticker.maxFPS = 30;
+        // 助手是环境动画（lib/perf.ts 性能调度）：电脑 60 帧、手机与核显 30 帧（高刷屏不跟到 120/300）；
+        // 手机上用户在滚动、拖动时降到 8 帧让出显卡；走进世界时整个停掉
+        const fps = ambientFps();
+        app.ticker.maxFPS = fps;
+        const schedule = setInterval(() => {
+          if (disposed) return;
+          const want = ambientShouldYield() ? 8 : fps;
+          if (app.ticker.maxFPS !== want) app.ticker.maxFPS = want;
+        }, 150);
+        const immersive = () => { if (isImmersive() || pausedRef.current) app.ticker.stop(); else app.ticker.start(); };
+        addEventListener(IMMERSIVE_EVENT, immersive);
+        stopSchedule = () => { clearInterval(schedule); removeEventListener(IMMERSIVE_EVENT, immersive); };
         const model = await Live2DModel.from(MODEL_URL, { autoInteract: false });
         if (disposed) { model.destroy(); return; }
         modelRef.current = model;
@@ -265,7 +276,7 @@ const WhaleStage = forwardRef<WhaleStageHandle, Props>(function WhaleStage({ wid
           });
         };
         window.addEventListener("pointermove", follow, { passive: true });
-        if (pausedRef.current) app.ticker.stop();
+        if (pausedRef.current || isImmersive()) app.ticker.stop();
         callbacks.current.onReady?.();
       } catch (error) {
         if (!disposed) callbacks.current.onError?.(error instanceof Error ? error.message : String(error));
@@ -274,6 +285,7 @@ const WhaleStage = forwardRef<WhaleStageHandle, Props>(function WhaleStage({ wid
     return () => {
       disposed = true;
       stopBehaviour();
+      stopSchedule();
       if (frame) cancelAnimationFrame(frame);
       if (follow) window.removeEventListener("pointermove", follow);
       if (moodTimer.current) clearTimeout(moodTimer.current);
@@ -290,7 +302,7 @@ const WhaleStage = forwardRef<WhaleStageHandle, Props>(function WhaleStage({ wid
   useEffect(() => {
     const app = appRef.current;
     if (!app) return;
-    if (paused) app.ticker?.stop(); else app.ticker?.start();
+    if (paused || isImmersive()) app.ticker?.stop(); else app.ticker?.start();
   }, [paused]);
 
   return <canvas ref={canvasRef} width={width} height={height} aria-hidden="true" style={{ width, height, display: "block" }} />;

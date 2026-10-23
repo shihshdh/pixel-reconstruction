@@ -94,6 +94,10 @@ def generate(directory, job_id, payload, admit):
         for operation_id, item in _record(directory)["operations"].items():
             if item.get("request_id") == request_id:
                 return {"operation_id": operation_id}
+        # 上一次提交 World Labs 已经收下、但网关没来得及记下（容器中途被回收）：凭标签找回，不再花一次额度
+        found = _find_tagged(request_id)
+        if found:
+            return {"operation_id": _adopt(directory, found, request_id)}
     model = str(payload.get("model") or "marble-1.1")
     if model not in MODELS:
         raise HTTPException(400, "模型只能选择速写、标准或广阔。")
@@ -116,6 +120,8 @@ def generate(directory, job_id, payload, admit):
         "model": model,
         "world_prompt": prompt_body,
         "permission": {"public": False},
+        # 标签让世界在任务记录丢了、operation 过期（三小时）之后仍然找得回来（见 _find_tagged）
+        "tags": _tags(job_id, request_id),
     }, timeout=120)
     operation_id = str(result.get("operation_id") or "")
     if not ID.fullmatch(operation_id):
@@ -133,18 +139,99 @@ def lookup(directory, request_id):
         for operation_id, item in _record(directory)["operations"].items():
             if item.get("request_id") == request_id:
                 return {"operation_id": operation_id, "model": item.get("model")}
+        # 网关没记下但 World Labs 收到了（提交途中容器被回收）：按标签找到世界，记成一条“找回的任务”
+        found = _find_tagged(request_id)
+        if found:
+            return {"operation_id": _adopt(directory, found, request_id), "model": found.get("model")}
     raise HTTPException(404, "没有找到这次提交。")
+
+
+# ---------------- 找回：operation 过期、记录丢失时凭标签找世界 ----------------
+# World Labs 的 operation 只保留三小时（expires_at），之后 GET 返回 404。生成完没被查过的任务（关了页面、
+# 第二天才回来）如果只认 operation，就永远停在“最后一步”。每次生成都带上标签：提交编号与作品编号，
+# operation 查不到时按标签在 worlds:list 里找到世界，合成一个“已完成”的 operation 交给前端。
+RECOVERED = "recovered-"
+
+
+def _tags(job_id, request_id):
+    tags = ["pixel-reconstruction", "j" + job_id[:31]]
+    if request_id.startswith("req_") and len(request_id) <= 36:
+        tags.append(request_id[4:])
+    return tags
+
+
+def _find_tagged(request_id=None, job_id=None, created_after=None):
+    """worlds:list 按标签找（只给作品编号时，再按显示名兜底：加标签之前生成的世界）；
+    找不到或接口出错返回 None（找回只是兜底，不能让查询报错）"""
+    tag = request_id[4:] if request_id and request_id.startswith("req_") else ("j" + job_id[:31] if job_id else None)
+    if not tag:
+        return None
+    query = {"tags": [tag], "page_size": 20, "sort_by": "created_at"}
+    if not request_id and created_after:
+        # 旧世界没有标签：按时间取最近的，再用显示名（"Pixel Reconstruction <作品编号前 8 位>"）认
+        query = {"page_size": 50, "sort_by": "created_at", "created_after": created_after + "Z"}
+    try:
+        listing = call("POST", "/worlds:list", query, timeout=30)
+    except HTTPException:
+        return None
+    worlds = [w for w in listing.get("worlds") or [] if isinstance(w, dict) and ID.fullmatch(str(w.get("world_id") or w.get("id") or ""))]
+    if "tags" not in query:
+        worlds = [w for w in worlds if tag in (w.get("tags") or []) or w.get("display_name") == "Pixel Reconstruction " + job_id[:8]]
+    if created_after:
+        worlds = [w for w in worlds if str(w.get("created_at") or "") >= created_after]
+    worlds.sort(key=lambda w: str(w.get("created_at") or ""), reverse=True)
+    return worlds[0] if worlds else None
+
+
+def _adopt(directory, found, request_id=None):
+    world_id = str(found.get("world_id") or found.get("id"))
+    operation_id = RECOVERED + world_id
+    record = _record(directory)
+    record["operations"].setdefault(operation_id, {"model": found.get("model"), "created": time.time(), "recovered": True,
+                                                   **({"request_id": request_id} if request_id else {})})
+    record["operations"][operation_id]["world_id"] = world_id
+    _save(directory, record)
+    return operation_id
+
+
+def _finished(world_id):
+    """把一个已经生成好的世界包装成“已完成”的 operation（字段与 World Labs 的一致）"""
+    data = call("GET", "/worlds/" + world_id, timeout=30)
+    snapshot = data.get("world") if isinstance(data.get("world"), dict) else data
+    return {"operation_id": RECOVERED + world_id, "done": True, "error": None, "recovered": True,
+            "metadata": {"world_id": world_id, "progress": {"status": "SUCCEEDED", "description": "World generation completed successfully"}},
+            "response": snapshot}
 
 
 def operation(directory, operation_id):
     record = _record(directory)
     if not ID.fullmatch(operation_id) or operation_id not in record["operations"]:
         raise HTTPException(404, "没有找到这个生成任务。")
-    data = call("GET", "/operations/" + operation_id, timeout=30)
+    item = record["operations"][operation_id]
+    if operation_id.startswith(RECOVERED):
+        return _finished(item["world_id"])
+    try:
+        data = call("GET", "/operations/" + operation_id, timeout=30)
+    except HTTPException as error:
+        if error.status_code != 404:
+            raise
+        # operation 过期了（三小时）：世界通常早就生成好了。先用记下的 world_id，再按标签找
+        if item.get("world_id"):
+            return _finished(item["world_id"])
+        created = item.get("created")
+        after = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(created - 120)) if created else None
+        found = _find_tagged(item.get("request_id"), None, after) or _find_tagged(None, directory.name, after)
+        if found:
+            world_id = str(found.get("world_id") or found.get("id"))
+            item["world_id"] = world_id
+            _save(directory, record)
+            return _finished(world_id)
+        return {"operation_id": operation_id, "done": True, "expired": True,
+                "error": {"message": "这次生成的任务已经过期，也没有找到生成好的世界，请重新生成。"}}
     snapshot = data.get("response") or {}
     world_id = (data.get("metadata") or {}).get("world_id") or snapshot.get("id") or snapshot.get("world_id")
-    if world_id and ID.fullmatch(str(world_id)) and record["operations"][operation_id].get("world_id") != world_id:
-        record["operations"][operation_id]["world_id"] = str(world_id)
+    if world_id and ID.fullmatch(str(world_id)) and item.get("world_id") != world_id:
+        item["world_id"] = str(world_id)
         _save(directory, record)
     return data
 

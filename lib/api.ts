@@ -168,6 +168,18 @@ export async function ping(base = getBase()): Promise<{ ok: boolean; device?: st
     return { ok: data.ok === true, device: data.device, enhance: !!data.enhance, serverless: !!data.serverless, assist: data.assist === true, assist_vision: data.assist_vision === true, assist_search: data.assist_search === true, world: data.world === true };
   } catch { return { ok: false }; }
 }
+/**
+ * 提前唤醒云端 GPU（网关 /warm）：打开创作页、选好照片、提交修图时调用。GPU 容器启动、模型载入（冷启动约一分钟）
+ * 和挑照片、上传同时进行，照片到了就直接重建（实测上传后 15–18 秒出结果，原来要两分钟）。
+ * 不授权任何东西、不占每日生成次数；网关自己限流、每天有上限。同一页面 3 分钟内只叫一次，失败不提示。
+ */
+let lastWarm = 0;
+export function warmGpu(base = getBase()) {
+  if (!base || typeof window === "undefined" || Date.now() - lastWarm < 180000) return;
+  if (/^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(base)) return; // 本机显卡引擎不需要
+  lastWarm = Date.now();
+  void request<{ warming?: boolean }>("/warm", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }, base, 20000).catch(() => { lastWarm = 0; });
+}
 export type UploadProgress = { sent: number; total: number; bytesPerSecond: number };
 
 /** multipart 上传，汇报进度。慢网络下不按总时长判超时：连续 60 秒没有进展才放弃。 */

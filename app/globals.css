@@ -136,6 +136,9 @@ body::before {
   100% { transform: translate3d(2%, -3%, 0) scale(1.06); }
 }
 
+/* 玻璃背景（RayTracedBackdrop）画出来时极光被完全挡住：不再让它一直在模糊层里动（手机上每帧都要重算 70px 模糊） */
+html[data-ray-backdrop] body::before { animation: none; display: none; }
+
 @media (prefers-reduced-motion: reduce) {
   body::before { animation: none; }
 }

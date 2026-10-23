@@ -10,8 +10,8 @@ import { prefersReduced } from "@/lib/motion";
 import { perfProfile } from "@/lib/perf";
 import styles from "./GlassInvite.module.css";
 
-const TITLE = ["现在，", "轮到你的照片。"];
-const LEAD = "有 NVIDIA 显卡就在本机重建，没有就交给云端。无需任何配置。";
+const TITLE = ["上传照片，", "开始重建。"];
+const LEAD = "本机有 6GB 以上显存的 NVIDIA 显卡时在本地推理，否则分配云端 RTX 4090。无需配置。";
 const LEAD_LINE = 22; // 说明文字折行时的行高（CSS 像素），与 .cta 的 --lead-lines 一致
 
 // 碎片顶点（u, v ∈ [-1, 1]），相邻碎片共用顶点，再各自向内收一圈留出缝

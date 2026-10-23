@@ -8,11 +8,13 @@
 //
 // 画质：按屏幕实际像素比渲染，每像素 4 次旋转网格超采样抗锯齿。
 // 性能与体验：帧率跟随屏幕刷新率（最高 120fps）；持续掉帧依次关超采样、降到 30fps、降分辨率，仍不够就停在静帧。
-// 页面隐藏、进入 3D 工作室（active=false）时停止动画、留一帧静止画面，让显卡专心渲染场景；减少动态效果时只画一帧。
+// 页面隐藏、进入 3D 工作室（active=false）、走进世界（沉浸层）时停止动画、留一帧静止画面，让显卡专心渲染场景；减少动态效果时只画一帧。
+// 手机与核显上用户滚动、拖动时让出显卡（停在当前帧，停手 250ms 后接着动），滚动更跟手（见 lib/perf.ts 性能调度）。
+// 背景画得出来时，body::before 的极光底色被完全挡住：给 html 加 data-ray-backdrop，极光停掉（app/globals.css）。
 // 档位：极致 4× 超采样、跟刷新率、流光全开；高 2× 超采样、60fps、流光 75%；均衡 不超采样、30fps、0.8 倍分辨率、流光 50%。
 // 流畅档不显示（见 app/page.tsx）。
 import { useEffect, useRef } from "react";
-import { integratedGpu, measureRefreshRate, PERSONAL_BUILD, progressiveUltra, type PerfTier } from "@/lib/perf";
+import { ambientShouldYield, IMMERSIVE_EVENT, integratedGpu, isImmersive, measureRefreshRate, PERSONAL_BUILD, progressiveUltra, type PerfTier } from "@/lib/perf";
 
 type Rung = { scale: number; ss: number; fast: boolean };
 // 每档的画质阶梯：第一级是该档的正常画质，持续掉帧时逐级往下退
@@ -171,6 +173,12 @@ export default function RayTracedBackdrop({ theme, active, shown = active, tier 
   const activeRef = useRef(active);
   activeRef.current = active;
   const wakeRef = useRef<() => void>(() => {});
+  // 背景显示着且画得出来：极光底色被完全挡住，停掉它（见 app/globals.css 的 html[data-ray-backdrop]）
+  const okRef = useRef(false), shownRef = useRef(shown);
+  shownRef.current = shown;
+  const coverRef = useRef(() => { document.documentElement.toggleAttribute("data-ray-backdrop", okRef.current && shownRef.current); });
+  // 背景淡入要 600ms：淡入完了再停极光，淡入途中不会露出空底色
+  useEffect(() => { const timer = setTimeout(() => coverRef.current(), shown ? 650 : 0); return () => clearTimeout(timer); }, [shown]);
 
   // 暂停时 wake 只画一帧静止画面，背景留在原处；恢复时继续动画
   useEffect(() => { wakeRef.current(); }, [active]);
@@ -254,7 +262,13 @@ export default function RayTracedBackdrop({ theme, active, shown = active, tier 
     };
     const loop = (now: number) => {
       raf = 0;
-      if (disposed || frozen || !activeRef.current || document.hidden) return;
+      if (disposed || frozen || !activeRef.current || document.hidden || isImmersive()) return;
+      if (ambientShouldYield(now)) {
+        // 让路：这段停顿不算掉帧
+        last = 0; frameTimes.length = 0; slowSince = 0;
+        raf = requestAnimationFrame(loop);
+        return;
+      }
       // 高帧率档按刷新率整数分频；30fps 档按时间间隔
       const due = ladder[level].fast ? ++ticks % divisor === 0 : now - last >= 1000 / 30 - 2;
       if (due) {
@@ -276,7 +290,7 @@ export default function RayTracedBackdrop({ theme, active, shown = active, tier 
     };
     const wake = () => {
       if (disposed) return;
-      if (reduced || frozen || !activeRef.current) { draw(performance.now()); return; }
+      if (reduced || frozen || !activeRef.current || isImmersive()) { draw(performance.now()); return; }
       last = 0;
       if (!raf) raf = requestAnimationFrame(loop);
     };
@@ -286,10 +300,13 @@ export default function RayTracedBackdrop({ theme, active, shown = active, tier 
     const onResize = () => { if (reduced || frozen || !activeRef.current) draw(performance.now()); };
     addEventListener("pointermove", onMove, { passive: true });
     addEventListener("resize", onResize);
+    addEventListener(IMMERSIVE_EVENT, wake);
+    okRef.current = true;
+    coverRef.current();
     document.addEventListener("visibilitychange", onVisible);
     const themeObserver = new MutationObserver(() => { readBackground(); if (reduced || frozen || !activeRef.current) draw(performance.now()); });
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-    const onLost = (event: Event) => { event.preventDefault(); frozen = true; canvas.style.display = "none"; };
+    const onLost = (event: Event) => { event.preventDefault(); frozen = true; canvas.style.display = "none"; okRef.current = false; coverRef.current(); };
     canvas.addEventListener("webglcontextlost", onLost);
     wake();
     // 着色器预热：驱动在第一次真正绘制时才编译（实测等显卡十几毫秒）。还没显示时（展示页、透明）先在空闲时
@@ -299,7 +316,8 @@ export default function RayTracedBackdrop({ theme, active, shown = active, tier 
     return () => {
       if ("cancelIdleCallback" in window) cancelIdleCallback(idle as number); else clearTimeout(idle as ReturnType<typeof setTimeout>);
       disposed = true; cancelAnimationFrame(raf);
-      removeEventListener("pointermove", onMove); removeEventListener("resize", onResize);
+      removeEventListener("pointermove", onMove); removeEventListener("resize", onResize); removeEventListener(IMMERSIVE_EVENT, wake);
+      okRef.current = false; coverRef.current();
       document.removeEventListener("visibilitychange", onVisible);
       themeObserver.disconnect();
       canvas.removeEventListener("webglcontextlost", onLost);

@@ -11,7 +11,7 @@ import { downloadAsset, type DownloadProgress } from "@/lib/asset-download";
 import { isDesktopApp, openWorksFolder, saveWorkFile, workFolder } from "@/lib/desktop";
 import LiquidSegmented from "@/components/LiquidSegmented";
 import { renderZoom } from "@/lib/ui-scale";
-import { createFrameGovernor, perfProfile, readPerfChoice, savePerfChoice, PERF_EVENT, PERF_LABELS, type PerfChoice, type PerfProfile, type PerfTier } from "@/lib/perf";
+import { createFrameGovernor, isImmersive, motionPixelRatio, perfProfile, progressiveUltra, readPerfChoice, savePerfChoice, PERF_EVENT, PERF_LABELS, type PerfChoice, type PerfProfile, type PerfTier } from "@/lib/perf";
 
 /**
  * SplatViewer 2.0
@@ -570,8 +570,10 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
         const mount = mountRef.current;
         const profile = perfProfile();
         profileRef.current = profile;
-        const dpr = profile.maxPixelRatio;
-        governorRef.current = createFrameGovernor(() => profileRef.current || profile, dpr);
+        // 渐进式设备（手机、核显）：移动时按 motionPixelRatio 画、掉帧时再往下降；停下补画一帧 maxPixelRatio（见下面 tick）
+        const motionProfile = () => { const p = profileRef.current || profile; return progressiveUltra(p) ? { ...p, maxPixelRatio: motionPixelRatio(p) } : p; };
+        const dpr = motionProfile().maxPixelRatio;
+        governorRef.current = createFrameGovernor(motionProfile, dpr);
         setPerfInfo({ tier: profile.tier, ratio: dpr });
         const W = mount.clientWidth || 960;
         const H = mount.clientHeight || 600;
@@ -606,6 +608,8 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
           halfPrecisionCovariancesOnGPU: false,
           inMemoryCompressionLevel: 0,
           selfDrivenMode: true,
+          // 按需渲染：镜头不动就不画（自由查看时的收尾帧、静止补画由下面 tick 安排）
+          renderMode: GS.RenderMode.OnChange,
         });
         viewerRef.current = viewer;
         ownedViewer = viewer;
@@ -687,6 +691,19 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
         const introPoseTarget: Pose = { pos: [0, 0, 0], fovScale: 1 };
 
         let lastTick = 0;
+        // 自由查看时的按需渲染：镜头最后一次变化后再画 SETTLE_MS（排序结果回来、惯性收尾），然后停；
+        // 渐进式设备停下后补画一帧满档超采样（sharp），一动就回到移动时的像素比
+        const SETTLE_MS = 500;
+        let lastChange = performance.now(), sharp = false;
+        const shownPos = new THREE.Vector3(NaN, 0, 0), shownQuat = new THREE.Quaternion();
+        const setSharp = (next: boolean) => {
+          if (sharp === next) return;
+          sharp = next;
+          const p = profileRef.current || profile;
+          renderer.setPixelRatio((next ? p.maxPixelRatio : (governorRef.current?.ratio ?? dpr)) * renderZoom(mount));
+          renderer.setSize(mount.clientWidth || 960, mount.clientHeight || 600);
+          viewer.forceRenderNextFrame?.();
+        };
         const forward = new THREE.Vector3(), right = new THREE.Vector3(), step = new THREE.Vector3();
         const worldUp = new THREE.Vector3(0, 1, 0);
         const tick = (now: number) => {
@@ -694,8 +711,10 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
           raf = requestAnimationFrame(tick);
           const dt = lastTick ? Math.min(0.1, (now - lastTick) / 1000) : 0;
           lastTick = now;
-          const adjusted = governorRef.current?.tick(now, recordingRef.current || document.hidden);
-          if (adjusted) applyPixelRatio(adjusted);
+          // 走进世界时这里被全屏盖住：什么都不做（镜头不动，库也不会画）
+          if (isImmersive()) { lastTick = 0; return; }
+          const adjusted = governorRef.current?.tick(now, recordingRef.current || document.hidden || sharp);
+          if (adjusted && !sharp) applyPixelRatio(adjusted);
           if (recordingRef.current || document.hidden) return;
           const v = viewerRef.current;
           const cam = v?.camera;
@@ -751,9 +770,17 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
             setSplat(splat);
             v.forceRenderNextFrame?.();
           } else {
-            // 自由查看：库是惰性渲染，静止时也要强制出画面
-            v.forceRenderNextFrame?.();
+            // 自由查看：按需渲染（见上面 SETTLE_MS）
+            if (!cam.position.equals(shownPos) || !cam.quaternion.equals(shownQuat)) {
+              shownPos.copy(cam.position); shownQuat.copy(cam.quaternion);
+              lastChange = now;
+              if (sharp) setSharp(false);
+            }
+            if (now - lastChange < SETTLE_MS) v.forceRenderNextFrame?.();
+            else if (!sharp && progressiveUltra(profileRef.current || profile)) setSharp(true);
+            return;
           }
+          if (sharp) setSharp(false);
         };
         raf = requestAnimationFrame(tick);
       } catch (e: any) {

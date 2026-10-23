@@ -61,6 +61,10 @@ export type WorldTask = {
   world?: WorldRecord;
   error?: string;
   demo?: boolean;
+  /** 最近一次确认 World Labs 仍在生成的时间（界面据此显示“刚刚确认仍在生成”，而不是一根不动的进度条） */
+  checkedAt?: number;
+  /** 从这时起一直问不到进度（断网、服务冷启动）；问到了就清掉 */
+  unreachableSince?: number;
 };
 
 // ---------------- 任务记录 ----------------
@@ -209,18 +213,33 @@ async function check(task: WorldTask) {
     }
     return;
   }
-  const raw = await apiRequest<any>("/world/operations/" + encodeURIComponent(task.operationId) + "?job_id=" + encodeURIComponent(task.jobId), { headers: jobAuthHeaders(task.jobId) }, task.base, 30000);
+  let raw: any;
+  try {
+    raw = await apiRequest<any>("/world/operations/" + encodeURIComponent(task.operationId) + "?job_id=" + encodeURIComponent(task.jobId), { headers: jobAuthHeaders(task.jobId) }, task.base, 30000);
+  } catch (error) {
+    const code = (error as { status?: unknown })?.status;
+    // 网关明确说没有这个任务（作品记录丢了）：连续几次都这样就结束，不再一直转
+    if (code === 404 || code === 403) {
+      const misses = (notFound.get(task.jobId) || 0) + 1;
+      notFound.set(task.jobId, misses);
+      if (misses >= 3) put({ ...task, status: "failed", error: code === 403 ? "这件作品的访问凭证已失效，无法继续查询。" : "服务里找不到这次生成，请重新生成。" });
+    } else if (!task.unreachableSince) put({ ...task, unreachableSince: Date.now() });
+    throw error;
+  }
+  notFound.delete(task.jobId);
   const status = String(raw?.status || raw?.metadata?.progress?.status || "").toUpperCase();
   const error = raw?.error ? (typeof raw.error === "string" ? raw.error : raw.error.message || "生成失败") : status === "FAILED" ? "生成失败" : "";
   if (error) { put({ ...task, status: "failed", error: String(error) }); return; }
-  if (!raw?.done && status !== "SUCCEEDED") return;
+  if (!raw?.done && status !== "SUCCEEDED") { put({ ...task, checkedAt: Date.now(), unreachableSince: undefined }); return; }
   // operation 里的 world 只是快照，字段可能是空的：缺资源时按 world_id 再取一次完整的
   let world = normalizeWorld(raw.world || raw.response, task.model);
   const worldId = world?.id || raw?.metadata?.world_id;
   if (!hasSplats(world) && worldId) world = await fetchWorld(task, worldId);
   if (!hasSplats(world)) { put({ ...task, status: "failed", error: "世界已生成，但没有拿到三维文件。" }); return; }
-  put({ ...task, status: "done", world });
+  put({ ...task, status: "done", world, checkedAt: Date.now(), unreachableSince: undefined });
+  void prefetchWorld(world);
 }
+const notFound = new Map<string, number>();
 
 /** 打开漫游前刷新资源地址（World Labs 的下载地址带签名，会过期）；失败时沿用缓存的 */
 export async function refreshWorld(task: WorldTask): Promise<WorldTask> {
@@ -265,10 +284,11 @@ export function worldAssets(world: WorldRecord, scene?: { href: string; format: 
     if (!scene?.href) return null;
     return { splats: { "500k": scene.href }, format: scene.format, coordinate: "opencv" };
   }
-  return { splats: world.splats, format: "spz", collider: world.collider, metricScale: world.metricScale, groundOffset: world.groundOffset, coordinate: "opencv" };
+  const splats = Object.fromEntries(Object.entries(world.splats).map(([q, url]) => [q, url && routeWorldUrl(url)])) as WorldRecord["splats"];
+  return { splats, format: "spz", collider: world.collider && routeWorldUrl(world.collider), metricScale: world.metricScale, groundOffset: world.groundOffset, coordinate: "opencv" };
 }
 
-const ENGINE_URL = "/world/engine.js?v=1";
+const ENGINE_URL = "/world/engine.js?v=2";
 let enginePromise: Promise<WorldEngineModule> | null = null;
 /** 漫游引擎单独打包（world-engine/，自带 three 0.180 + Spark），第一次走进世界时才下载 */
 export function loadWorldEngine(): Promise<WorldEngineModule> {
@@ -282,4 +302,60 @@ export function loadWorldEngine(): Promise<WorldEngineModule> {
     throw new Error("漫游引擎没能载入，请检查网络后重试。" + (error instanceof Error && error.message ? `（${error.message}）` : ""));
   }).finally(() => { if (site) w.__THREE__ = site; });
   return enginePromise;
+}
+
+/**
+ * 世界生成好了就在后台把走进去要用的东西先取回来：漫游引擎、最小一档高斯点、碰撞网格（进 Cache Storage）。
+ * 点「走进世界」时第一档直接从缓存读，一两秒就能进去；更高的档在漫游时后台换上。
+ * 省流量时不预取。
+ */
+const prefetched = new Set<string>();
+export async function prefetchWorld(world?: WorldRecord) {
+  if (!world || world.demo || typeof window === "undefined" || prefetched.has(world.id)) return;
+  try { if ((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData) return; } catch {}
+  prefetched.add(world.id);
+  await probeWorldRoute(world.thumbnail || world.splats["100k"]);
+  const idle = () => new Promise<void>(resolve => ("requestIdleCallback" in window ? requestIdleCallback(() => resolve(), { timeout: 4000 }) : setTimeout(resolve, 1200)));
+  try {
+    await idle();
+    const engine = await loadWorldEngine();
+    const first = (["100k", "500k", "full_res"] as WorldQuality[]).map(q => world.splats[q]).find(Boolean);
+    await engine.prefetch?.([first, world.collider].filter((url): url is string => !!url).map(routeWorldUrl));
+  } catch { prefetched.delete(world.id); }
+}
+
+// ---------------- 国内网络 ----------------
+// World Labs 的文件放在 Google Cloud Storage（cdn.marble.worldlabs.ai），国内多数网络直连不通或很慢。
+// 第一次用到时先试直连（2.5 秒内取到缩略图的头几个字节算通），不通就改走本站的中转（netlify/edge-functions/world-file.ts，
+// 只放行这个 CDN 的路径，结果在 Netlify 边缘缓存），客户端里走网站的中转地址。结果在本次打开期间记住。
+const WORLD_CDN = "https://cdn.marble.worldlabs.ai/";
+const RELAY_SITE = "https://pixel-reconstruction.netlify.app";
+let route: "direct" | "relay" | null = null;
+let routeProbe: Promise<void> | null = null;
+function relayOrigin() {
+  if (typeof location !== "undefined" && /(^|\.)netlify\.app$/.test(location.hostname)) return location.origin;
+  return RELAY_SITE;
+}
+/** 探测一次直连是否可用（结果记在本次会话里）；在走进世界、预取之前调用 */
+export function probeWorldRoute(sample?: string): Promise<void> {
+  if (route) return Promise.resolve();
+  try { const saved = sessionStorage.getItem("ruhua-world-route"); if (saved === "direct" || saved === "relay") { route = saved; return Promise.resolve(); } } catch {}
+  if (!sample?.startsWith(WORLD_CDN)) return Promise.resolve();
+  routeProbe ||= (async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2500);
+    try {
+      const response = await fetch(sample, { headers: { Range: "bytes=0-1023" }, signal: controller.signal, cache: "no-store" });
+      await response.arrayBuffer();
+      route = response.ok ? "direct" : "relay";
+    } catch { route = "relay"; }
+    finally { clearTimeout(timer); }
+    try { sessionStorage.setItem("ruhua-world-route", route!); } catch {}
+  })();
+  return routeProbe;
+}
+/** World Labs 的文件地址 → 实际下载用的地址（直连不通时走本站中转） */
+export function routeWorldUrl(url: string): string {
+  if (route !== "relay" || !url.startsWith(WORLD_CDN)) return url;
+  return relayOrigin() + "/world-file/" + url.slice(WORLD_CDN.length);
 }

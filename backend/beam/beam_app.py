@@ -21,19 +21,30 @@ GPU_IMAGE = (
 )
 
 
+def load_model():
+    # Start the resident SHARP model as soon as the container boots (worker.py / sharp_server.py).
+    from worker import on_start
+    on_start()
+
+
+# GPUs: RTX 4090 first; when none is free the scheduler takes the next Ada card (same sm_89 kernels) instead of
+# leaving the photo queued. keep_warm 90 s: a re-render right after an edit reuses the loaded model.
 @task_queue(
     name="ruhua-gpu", app="ruhua", image=GPU_IMAGE,
-    gpu="RTX4090", gpu_count=1, cpu=2, memory="16Gi",
-    workers=1, keep_warm_seconds=0, retries=0, timeout=900,
+    gpu=["RTX4090", "L40S", "L4"], gpu_count=1, cpu=2, memory="16Gi",
+    workers=1, keep_warm_seconds=90, retries=0, timeout=900, on_start=load_model,
     task_policy=TaskPolicy(max_retries=0, timeout=900, ttl=2700),
-    max_pending_tasks=3, authorized=True, autoscaler=SINGLE_CONTAINER,
+    max_pending_tasks=5, authorized=True, autoscaler=SINGLE_CONTAINER,
     volumes=[DATA_VOLUME],
-    env={"RUHUA_DATA": DATA_PATH, "TORCH_HOME": DATA_PATH + "/cache/torch",
+    env={"RUHUA_DATA": DATA_PATH, "RUHUA_STATE_MAP": "ruhua-states", "TORCH_HOME": DATA_PATH + "/cache/torch",
          "HF_HOME": DATA_PATH + "/cache/huggingface",
          "TORCH_EXTENSIONS_DIR": DATA_PATH + "/cache/torch-extensions",
          "TORCH_CUDA_ARCH_LIST": "8.9", "MAX_JOBS": "2"},
 )
-def gpu(call_id: str, job_id: str, source: str = "original.jpg", render_video: bool = False, enhanced: bool = False):
+def gpu(call_id: str, job_id: str = "", source: str = "original.jpg", render_video: bool = False, enhanced: bool = False, warm: bool = False):
+    if warm:
+        from worker import warm as hold
+        return hold(call_id)
     from worker import process
     return process(call_id, job_id, source, render_video, enhanced)
 
@@ -68,14 +79,17 @@ for _origin in os.environ.get("RUHUA_EXTRA_ORIGINS", "").split(","):
         ALLOWED_ORIGINS.append(_origin)
 
 
+# keep_warm 300 s: with 0 every request got a brand-new container (measured 2026-10-23: ~3.2 s container start,
+# 0.02 s of work, from every region), so each status poll, world poll and file lookup cost 3–4 s. A CPU container
+# kept 5 minutes after the last request costs about $0.12 per active hour and nothing once idle.
 @asgi(
     name="ruhua-api", app="ruhua", image=API_IMAGE,
     cpu=0.5, memory="1Gi", workers=1, concurrent_requests=8,
-    keep_warm_seconds=0, timeout=300, max_pending_tasks=20,
+    keep_warm_seconds=300, timeout=300, max_pending_tasks=20,
     authorized=False,
     autoscaler=QueueDepthAutoscaler(min_containers=0, max_containers=1, tasks_per_container=8),
     volumes=[DATA_VOLUME], secrets=API_SECRETS,
-    env={"RUHUA_DATA": DATA_PATH, "RUHUA_DAILY_JOBS": "30", "RUHUA_DAILY_EDITS": "30", "RUHUA_DAILY_CHATS": "300", "RUHUA_DAILY_SEARCHES": "200",
+    env={"RUHUA_DATA": DATA_PATH, "RUHUA_STATE_MAP": "ruhua-states", "RUHUA_DAILY_JOBS": "30", "RUHUA_DAILY_EDITS": "30", "RUHUA_DAILY_CHATS": "300", "RUHUA_DAILY_SEARCHES": "200",
          "RUHUA_DAILY_WORLDS": "6",
          "RUHUA_MAX_PENDING": "3", "RUHUA_ALLOWED_ORIGINS": ",".join(ALLOWED_ORIGINS)},
 )

@@ -27,10 +27,16 @@ def reply(status=200, body=None):
     return response
 
 
-def upstream(credits=7000, operation=None, world_body=None):
-    """Fake World Labs: answers by method and path, records every call."""
+def upstream(credits=7000, operation=None, world_body=None, listed=None):
+    """Fake World Labs: answers by method and path, records every call.
+    operation="expired" 模拟三小时后 operation 被清掉（404）；listed 是 worlds:list 返回的世界"""
     def handler(method, url, json=None, timeout=None, headers=None):
         path = url[len(world.API):]
+        if path == "/worlds:list":
+            tags = (json or {}).get("tags")
+            return reply(body={"worlds": [w for w in listed or [] if not tags or set(tags) & set(w.get("tags") or [])]})
+        if path.startswith("/operations/") and operation == "expired":
+            return reply(404)
         if path == "/credits":
             return reply(body={"remaining_credits": credits})
         if path == "/worlds:generate":
@@ -169,7 +175,7 @@ class WorldTests(unittest.TestCase):
     # ---- 提交编号：页面中途关掉也能找回，重复提交不重复花钱 ----
     def test_request_id_recovers_and_deduplicates(self):
         request = "req_0123456789abcdef"
-        with self.assertRaises(HTTPException) as caught:
+        with self.assertRaises(HTTPException) as caught, patch.object(world.requests, "request", upstream()):
             world.lookup(self.directory, request)
         self.assertEqual(caught.exception.status_code, 404)
         first, _, admit = self.generate({"model": "marble-1.0-draft", "request_id": request})
@@ -180,12 +186,60 @@ class WorldTests(unittest.TestCase):
         other = storage.job_path(OTHER)
         other.mkdir(parents=True)
         for directory, value in [(other, request), (self.directory, "../x"), (self.directory, "")]:
-            with self.assertRaises(HTTPException) as caught:
+            with self.assertRaises(HTTPException) as caught, patch.object(world.requests, "request", upstream()):
                 world.lookup(directory, value)
             self.assertEqual(caught.exception.status_code, 404)
         error, request_calls, _ = self.generate({"request_id": "bad id!"})
         self.assertEqual(error.status_code, 400)
         request_calls.assert_not_called()
+
+    # ---- operation 过期（三小时）与记录丢失：凭标签找回世界，不再永远停在“最后一步” ----
+    def test_generate_tags_the_world_with_job_and_request(self):
+        request = "req_" + "ab" * 16
+        _, calls, _ = self.generate({"model": "marble-1.0-draft", "request_id": request})
+        body = [c.kwargs["json"] for c in calls.call_args_list if c.args[1].endswith("/worlds:generate")][0]
+        self.assertEqual(body["tags"], ["pixel-reconstruction", "j" + JOB[:31], "ab" * 16])
+        self.assertTrue(all(len(tag) <= 32 for tag in body["tags"]))
+
+    def test_expired_operation_with_known_world_reports_done(self):
+        self.generate({"model": "marble-1.0-draft"})
+        done = {"done": True, "metadata": {"world_id": WORLD}, "response": {}}
+        with patch.object(world.requests, "request", upstream(operation=done)):
+            world.operation(self.directory, OPERATION)
+        with patch.object(world.requests, "request", upstream(operation="expired")):
+            result = world.operation(self.directory, OPERATION)
+        self.assertTrue(result["done"]); self.assertIsNone(result["error"])
+        self.assertEqual(result["metadata"]["world_id"], WORLD)
+        self.assertEqual(result["response"]["id"], WORLD)
+
+    def test_expired_operation_never_polled_is_found_by_tag(self):
+        request = "req_" + "cd" * 16
+        self.generate({"model": "marble-1.0-draft", "request_id": request})
+        tagged = [{"world_id": WORLD, "model": "marble-1.0-draft", "tags": ["cd" * 16], "created_at": "2999-01-01T00:00:00Z"}]
+        with patch.object(world.requests, "request", upstream(operation="expired", listed=tagged)):
+            result = world.operation(self.directory, OPERATION)
+            self.assertTrue(result["done"])
+            self.assertEqual(result["metadata"]["world_id"], WORLD)
+            self.assertEqual(world.world(self.directory, WORLD)["id"], WORLD)  # 找回后取世界也认得
+
+    def test_expired_operation_with_nothing_found_fails_clearly(self):
+        self.generate({"model": "marble-1.0-draft", "request_id": "req_" + "ef" * 16})
+        with patch.object(world.requests, "request", upstream(operation="expired", listed=[])):
+            result = world.operation(self.directory, OPERATION)
+        self.assertTrue(result["done"])
+        self.assertIn("过期", result["error"]["message"])
+
+    def test_lost_submission_is_recovered_by_tag(self):
+        request = "req_" + "12" * 16
+        tagged = [{"world_id": WORLD, "model": "marble-1.1", "tags": ["12" * 16], "created_at": "2026-10-23T00:00:00Z"}]
+        with patch.object(world.requests, "request", upstream(listed=tagged)):
+            found = world.lookup(self.directory, request)
+            self.assertTrue(found["operation_id"].startswith(world.RECOVERED))
+            result = world.operation(self.directory, found["operation_id"])
+            self.assertTrue(result["done"]); self.assertEqual(result["metadata"]["world_id"], WORLD)
+            # 同一个提交编号再提交：直接返回找回的任务，不再花额度
+            again = world.generate(self.directory, JOB, {"request_id": request, "model": "marble-1.1"}, MagicMock())
+        self.assertEqual(again, {"operation_id": found["operation_id"]})
 
     # ---- 网关路由 ----
     def test_routes_require_the_job_token_and_count_daily_worlds(self):

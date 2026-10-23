@@ -2,7 +2,7 @@
 // 请求也在这里跑，不跟着修图页的生命周期走：切到别的页面、再切回来，改图结果照样落进对话；
 // 从作品库重新打开同一件作品，以前修过的每一版都还在。鲸鱼娘写的提示词也直接写进这里的草稿。
 import { useSyncExternalStore } from "react";
-import { checkStatus, downloadJobFile, editImage, getBase, refreshJobAccess, requestRerender, type EditResolution } from "./api";
+import { checkStatus, downloadJobFile, editImage, getBase, refreshJobAccess, requestRerender, warmGpu, type EditResolution } from "./api";
 import { isDesktopApp, saveWorkFile, workFolder } from "./desktop";
 
 export type EditMessage = { id: string; role: "user" | "ai"; text?: string; img?: string; ref?: string; failed?: boolean; at: number };
@@ -119,6 +119,8 @@ export async function runEdit(job: Job, request: { display: string; prompt: stri
     chat: [...s.chat, { id: newId(), at: Date.now(), role: "user", text: request.display, ref: ref || undefined }],
   }));
   try {
+    // 修图要二三十秒：同时唤醒云端 GPU，接着“重新显影”时模型已经在显卡上
+    warmGpu(job.backend_url || undefined);
     const result = await editImage(job.job_id, request.prompt, request.pad, ref, session.history, job.backend_url, request.credentials, request.strength, session.resolution);
     update(key, s => ({
       editing: false, base: "", history: [...s.history, request.display.slice(0, 400)],

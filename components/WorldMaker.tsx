@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
 import LiquidSegmented from "@/components/LiquidSegmented";
-import { createWorld, estimateProgress, expectedSeconds, forgetWorld, stageIndex, useWorldTask, WORLD_MODELS, WORLD_STAGES, type WorldModel } from "@/lib/world";
+import { createWorld, estimateProgress, expectedSeconds, forgetWorld, prefetchWorld, probeWorldRoute, routeWorldUrl, stageIndex, useWorldTask, WORLD_MODELS, WORLD_STAGES, type WorldModel } from "@/lib/world";
 import styles from "./WorldMaker.module.css";
 
 const WorldWalk = dynamic(() => import("@/components/WorldWalk"), { ssr: false });
@@ -56,6 +56,20 @@ export default function WorldMaker({ job, poster, scene, live, title }: {
     img.src = poster;
   }, [poster]);
 
+  // 世界已经生成好：后台先把走进去要用的取回来（引擎、最小一档、碰撞网格），点「走进世界」时一两秒就能进去。
+  // 缩略图同样在 World Labs 的 CDN 上：先测直连通不通，不通就走本站中转（国内网络）
+  const [, setRouted] = useState(0);
+  useEffect(() => {
+    if (task?.status !== "done" || !task.world || task.world.demo) return;
+    let alive = true;
+    void probeWorldRoute(task.world.thumbnail || task.world.splats["100k"]).then(() => { if (alive) setRouted(n => n + 1); });
+    void prefetchWorld(task.world);
+    return () => { alive = false; };
+  }, [task?.status, task?.world]);
+  // 还要再放弃确认一次（已经花了额度，不弹窗）
+  const [confirmGiveUp, setConfirmGiveUp] = useState(false);
+  useEffect(() => { if (!confirmGiveUp) return; const timer = setTimeout(() => setConfirmGiveUp(false), 3500); return () => clearTimeout(timer); }, [confirmGiveUp]);
+
   const start = async () => {
     setBusy(true); setError("");
     try { await createWorld(job, { model, prompt, demo: !live }); }
@@ -81,7 +95,7 @@ export default function WorldMaker({ job, poster, scene, live, title }: {
     <div ref={cardRef} id="world-card" className={`rig-card ${styles.card}`} data-state={done ? "done" : pending ? "pending" : task?.status === "failed" ? "failed" : "idle"}>
       <div className={styles.visual} style={visualStyle} aria-hidden={!done}>
         {done && task.world?.thumbnail
-          ? <img className={styles.thumb} src={task.world.thumbnail} alt="生成的世界" />
+          ? <img className={styles.thumb} src={routeWorldUrl(task.world.thumbnail)} alt="生成的世界" />
           : <>
             <span className={styles.surround} />
             <span className={styles.focus} />
@@ -134,7 +148,21 @@ export default function WorldMaker({ job, poster, scene, live, title }: {
             <span>已等待 {clock(waited)}{waited > expected * 1.4 ? " · 比平时久一些，仍在生成" : ` · 预计 ${clock(expected)}`}</span>
             <span>{task.demo ? "演示" : WORLD_MODELS.find(m => m.value === task.model)?.label}</span>
           </div>
+          {/* 心跳：进度条是估的，这一行是真的——最近一次向 World Labs 确认的结果 */}
+          {!task.demo && <p className={styles.heartbeat} data-state={task.unreachableSince && now - task.unreachableSince > 15000 ? "offline" : task.checkedAt ? "live" : "wait"}>
+            <i aria-hidden="true" />
+            {task.unreachableSince && now - task.unreachableSince > 15000
+              ? `连接中断 ${clock((now - task.unreachableSince) / 1000)}，正在自动重连；生成在云端不受影响`
+              : !task.operationId ? "正在把照片交给 World Labs"
+              : task.checkedAt ? `World Labs 仍在生成 · ${Math.max(0, Math.round((now - task.checkedAt) / 1000))} 秒前确认`
+              : "正在连接 World Labs"}
+          </p>}
           <p className={styles.note}>可以先去别的页面或关掉窗口，生成在云端继续；回到这件作品时会接着显示。</p>
+          {!task.demo && waited > expected * 3 && <div className={styles.actions}>
+            <button className="key ghost" onClick={() => { if (confirmGiveUp) { setConfirmGiveUp(false); forgetWorld(job.job_id); } else setConfirmGiveUp(true); }}>
+              {confirmGiveUp ? "再点一次：放弃这次生成" : "等太久了，放弃这次生成"}
+            </button>
+          </div>}
         </>}
 
         {done && task.world && <>

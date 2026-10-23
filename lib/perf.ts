@@ -197,3 +197,54 @@ export function createFrameGovernor(profile: () => PerfProfile, initial: number)
     },
   };
 }
+
+// ---------------- 性能调度 ----------------
+// 手机发热、掉帧的主要来源是“没人看也在一直画”：背景、助手、光盘在用户滚动时和页面抢显卡，
+// 被全屏漫游盖住的场景还在后面满帧渲染。这里是各处持续动画共用的几条规则：
+//   1. 环境动画（背景、助手、光盘自转）帧率上限：手机与核显 30fps，其余 60fps；高刷屏不跟到 120/300。
+//   2. 交互优先：手机与核显上，用户在滚动、拖动时环境动画让出显卡（停在当前帧），停手 250ms 后接着动。
+//   3. 沉浸层（走进世界）打开时，页面上被它盖住的画面全部暂停。
+//   4. 三维场景按需渲染，移动时用 motionPixelRatio，停下补画一帧满档超采样（渐进式精修，静止画质不降）。
+
+/** 渐进式设备（手机、核显）：环境动画限 30fps、交互时让路 */
+export function ambientFps(): number {
+  try { return integratedGpu() && !PERSONAL_BUILD ? 30 : 60; } catch { return 60; }
+}
+
+/** 移动镜头时的渲染像素比：渐进式设备不超过 2（静止那一帧仍按 maxPixelRatio 补画）；独显按档位上限 */
+export function motionPixelRatio(profile: PerfProfile = perfProfile()): number {
+  return progressiveUltra(profile) ? Math.min(profile.maxPixelRatio, Math.max(1, window.devicePixelRatio || 1), 2) : profile.maxPixelRatio;
+}
+
+let interactingUntil = 0;
+let interactionWatch = false;
+/** 用户正在滚动 / 拖动 / 触摸（最后一次输入后 250ms 内） */
+export function userInteracting(now = performance.now()): boolean {
+  if (!interactionWatch && typeof window !== "undefined") {
+    interactionWatch = true;
+    const mark = () => { interactingUntil = performance.now() + 250; };
+    for (const type of ["scroll", "wheel", "touchmove", "pointermove"] as const) {
+      window.addEventListener(type, event => {
+        if (type === "pointermove" && !(event as PointerEvent).buttons) return; // 只算按下拖动，不算悬停
+        mark();
+      }, { passive: true, capture: true });
+    }
+  }
+  return now < interactingUntil;
+}
+/** 环境动画这一帧该不该让路：渐进式设备上用户正在交互时让出显卡 */
+export function ambientShouldYield(now = performance.now()): boolean {
+  return ambientFps() < 60 && userInteracting(now);
+}
+
+export const IMMERSIVE_EVENT = "ruhua-immersive";
+let immersiveCount = 0;
+/** 全屏沉浸层（走进世界）打开 / 关闭：页面上被盖住的画面据此暂停 */
+export function setImmersive(on: boolean) {
+  immersiveCount = Math.max(0, immersiveCount + (on ? 1 : -1));
+  try {
+    document.documentElement.toggleAttribute("data-immersive", immersiveCount > 0);
+    window.dispatchEvent(new CustomEvent(IMMERSIVE_EVENT, { detail: immersiveCount > 0 }));
+  } catch {}
+}
+export function isImmersive(): boolean { return immersiveCount > 0; }

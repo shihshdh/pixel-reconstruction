@@ -6,6 +6,12 @@
   path = "/scene-file/*"
   function = "scene-file"
 
+# 「走进世界」国内中转（netlify/edge-functions/world-file.ts）：结果在边缘缓存
+[[edge_functions]]
+  path = "/world-file/*"
+  function = "world-file"
+  cache = "manual"
+
 [[headers]]
   for = "/*"
   [headers.values]

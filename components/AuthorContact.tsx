@@ -153,7 +153,7 @@ export default function AuthorContact({ className = "" }: { className?: string }
   return <>
     <button ref={trigger} type="button" className={`${styles.trigger} ${className}`} aria-label="联系作者" title="联系作者" aria-haspopup="dialog" aria-expanded={open}
       onClick={() => { savedFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setCopyState("idle"); setOpen(true); }}>
-      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="7" r="2.7" /><path d="M4.4 16.1c.5-2.9 2.4-4.5 5.6-4.5s5.1 1.6 5.6 4.5" /><path d="M15.7 3.4a8 8 0 1 1-11.4 0" /></svg>
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="8" /><circle cx="10" cy="8.2" r="2.6" /><path d="M5.6 16.2c.7-2.2 2.3-3.4 4.4-3.4s3.7 1.2 4.4 3.4" /></svg>
       <span>联系作者</span>
     </button>
     {open && createPortal(<div ref={overlay} className={styles.overlay} data-author-contact onPointerDown={event => { if (event.target === event.currentTarget) close(); }}>

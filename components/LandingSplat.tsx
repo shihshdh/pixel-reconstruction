@@ -179,6 +179,7 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
         // （极致档 2.25 倍）；移动镜头时平均帧时间超过 22ms（低于约 45fps）就降一级（完整 → 中间 → 原生），
         // 停在还能流畅运行的最高一级。
         const fullRatio = tieredProfile ? tieredProfile.maxPixelRatio : Math.min(window.devicePixelRatio || 1, low ? 1.25 : 1.5);
+        // 展示页镜头一直在缓慢漂移：手机上不分移动 / 静止两档像素比（实测分开后每次微小漂移要画两遍，空闲时 9fps → 20fps），保持原来的满档
         const startRatio = tieredProfile ? Math.min(fullRatio, window.devicePixelRatio || 1) : fullRatio;
         renderer.setPixelRatio(startRatio);
         // 透明底：单张照片重建的场景在天空等远处偶有稀疏的空洞，透出下面同一张原图，而不是黑底

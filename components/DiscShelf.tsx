@@ -6,6 +6,7 @@
 // 所以只需在 rAF 里用弹簧把 p 推向目标，再把变换直接写进 style，不触发 React 重渲染。
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { prefersReduced } from "@/lib/motion";
+import { ambientFps, ambientShouldYield } from "@/lib/perf";
 import styles from "./DiscShelf.module.css";
 
 type DiscItem = { id: string; title: string; date: string; meta: string; fav: boolean };
@@ -49,9 +50,21 @@ export default function DiscShelf<T extends DiscItem>({ items, renderThumb, stat
   useEffect(() => { if (motion.current.target > n - 1) go(n - 1); }, [n, go]);
 
   useEffect(() => {
-    let raf = 0;
+    let raf = 0, onScreen = true;
+    // 性能调度（lib/perf.ts）：弹簧到位后只剩光盘慢慢自转，按环境动画的帧率走（手机 30fps、电脑 60fps），
+    // 手机上用户滚动页面时让路；整个光盘架滚出屏幕就不画
+    const ambient = 1000 / ambientFps() - 1.5;
+    const stage = stageRef.current;
+    const io = stage && typeof IntersectionObserver !== "undefined"
+      ? new IntersectionObserver(([entry]) => { onScreen = entry.isIntersecting; if (onScreen && !raf) raf = requestAnimationFrame(tick); })
+      : null;
+    if (stage) io?.observe(stage);
     const tick = (now: number) => {
+      raf = 0;
       const m = motion.current;
+      if (!onScreen) { m.last = 0; return; }
+      const settled = Math.abs(m.target - m.p) < .0005 && Math.abs(m.v) < .0005;
+      if (settled && m.last && (now - m.last < ambient || ambientShouldYield(now))) { raf = requestAnimationFrame(tick); return; }
       const dt = Math.min(0.05, m.last ? (now - m.last) / 1000 : 0.016); m.last = now;
       if (reduced.current) { m.p = m.target; m.v = 0; }
       else {
@@ -88,7 +101,7 @@ export default function DiscShelf<T extends DiscItem>({ items, renderThumb, stat
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => { cancelAnimationFrame(raf); io?.disconnect(); };
   }, [n]);
 
   // 滚轮：滑动时跟手，停下 140ms 后吸附到最近一张。到头再往外滚就把滚动还给页面

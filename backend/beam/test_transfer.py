@@ -163,7 +163,8 @@ class EndpointTests(Fixture):
         function.decorator_list = []
         namespace = {"Header": lambda default="", **kwargs: default, "authorize_file": security.authorize_file,
                      "AccessDenied": security.AccessDenied, "HTTPException": HTTPException,
-                     "get_job": storage.job_path, "OUTPUT_PATTERN": security.FILE_PATTERN, "FileResponse": Response}
+                     "get_job": storage.job_path, "OUTPUT_PATTERN": security.FILE_PATTERN, "FileResponse": Response,
+                     "storage": storage}
         exec(compile(ast.Module(body=[function], type_ignores=[]), "gateway.py", "exec"), namespace)
         self.endpoint, self.HTTPException = namespace["file"], HTTPException
 

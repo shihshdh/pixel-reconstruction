@@ -8,6 +8,11 @@
 // 移动：眼睛位置 + 一根浮起的胶囊（底端离脚 stepHeight，这样 35cm 以内的台阶不会挡住水平移动），
 // 脚下用射线找地面：行走模式有重力、贴地、上台阶；飞行模式没有重力但同样不穿墙。速度与转头都用指数平滑，
 // 起步约 0.25 秒、停下约 0.3 秒，不做匀速硬启停。没有碰撞网格时（演示模式）在出生点周围的圆里活动，边缘柔性回弹。
+//
+// 载入：先用最小的一档（100k，约 1MB）尽快走进去，碰撞网格同时下载；之后在后台逐档换到目标画质（autoQuality 时
+// 还看帧率：移动中持续有余量才升到更高一档，持续掉帧就退一档）。下载过的文件存进 Cache Storage，再次走进同一个世界不用重下。
+// 渲染按需：只有镜头在动、Spark 排序结果刚回来、换档、改尺寸时才画；静止时停掉渲染循环，显卡归零。
+// 镜头停下后按 stillPixelRatio 补画一帧（渐进式精修）：静止画面是最高画质，移动时按 pixelRatio 及掉帧自适应。
 import * as THREE from "three";
 import { SparkRenderer, SplatMesh } from "@sparkjsdev/spark";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -15,7 +20,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { MeshBVH } from "three-mesh-bvh";
 import type { WalkMode, WorldAssets, WorldEngine, WorldEngineOptions, WorldQuality } from "../../lib/world-engine-types";
 
-export const version = "1.0.0";
+export const version = "1.1.0";
 
 const ORDER: WorldQuality[] = ["100k", "500k", "full_res"];
 const RADIUS = .38, STEP = .35, GRAVITY = 9.8;
@@ -24,12 +29,16 @@ const RADIUS = .38, STEP = .35, GRAVITY = 9.8;
 const WALKABLE = .6;
 const LOOK_SPEED = .0034; // 弧度 / 像素（60° 视角时）
 
-/** 有这一档就用这一档，否则按 100k → 500k → full_res 找最接近的 */
-function pickSplat(assets: WorldAssets, quality: WorldQuality): { url: string; quality: WorldQuality } | null {
+/** 这个世界有的档位，从小到大 */
+function availableLevels(assets: WorldAssets): WorldQuality[] {
+  return ORDER.filter(q => !!assets.splats[q]);
+}
+/** 不高于 quality 的最高一档（没有就取最小一档） */
+function levelAtMost(levels: WorldQuality[], quality: WorldQuality): number {
   const want = ORDER.indexOf(quality);
-  const ranked = [...ORDER].sort((a, b) => Math.abs(ORDER.indexOf(a) - want) - Math.abs(ORDER.indexOf(b) - want) || ORDER.indexOf(a) - ORDER.indexOf(b));
-  for (const q of ranked) { const url = assets.splats[q]; if (url) return { url, quality: q }; }
-  return null;
+  let best = 0;
+  levels.forEach((q, i) => { if (ORDER.indexOf(q) <= want) best = i; });
+  return best;
 }
 function fileType(assets: WorldAssets, url: string): string {
   if (assets.format) return assets.format;
@@ -37,25 +46,76 @@ function fileType(assets: WorldAssets, url: string): string {
   return ext === "ksplat" || ext === "ply" || ext === "splat" || ext === "spz" ? ext : "spz";
 }
 
-/** 带进度的下载；blob: 地址同样适用 */
-async function download(url: string, onProgress: (p: number) => void, signal: AbortSignal): Promise<ArrayBuffer> {
-  const response = await fetch(url, { signal });
+// ---------- 下载与缓存 ----------
+// World Labs 的文件地址里带随机编号、内容不会变，可以长期缓存。Cache Storage 只留最近的 8 个文件（约几百 MB 以内），
+// 拿不到（隐私模式、非安全上下文）就直接下载。
+const CACHE = "pr-world-v1";
+const CACHE_KEEP = 8;
+const cacheKey = (url: string) => { try { const u = new URL(url, location.href); return u.origin + u.pathname; } catch { return url; } };
+async function openCache(): Promise<Cache | null> {
+  try { return typeof caches !== "undefined" ? await caches.open(CACHE) : null; } catch { return null; }
+}
+async function cached(url: string): Promise<ArrayBuffer | null> {
+  if (url.startsWith("blob:")) return null;
+  const cache = await openCache();
+  try { const hit = await cache?.match(cacheKey(url)); return hit ? await hit.arrayBuffer() : null; } catch { return null; }
+}
+/** 存进缓存。Response 在调用时同步复制字节：之后 Spark 把原缓冲区转交给 worker 也不影响 */
+async function remember(url: string, bytes: ArrayBuffer) {
+  if (url.startsWith("blob:")) return;
+  const copy = new Response(bytes, { headers: { "Content-Type": "application/octet-stream" } });
+  const cache = await openCache();
+  if (!cache) return;
+  try {
+    await cache.put(cacheKey(url), copy);
+    const keys = await cache.keys();
+    for (const old of keys.slice(0, Math.max(0, keys.length - CACHE_KEEP))) await cache.delete(old);
+  } catch { /* 存储空间不够就不缓存 */ }
+}
+/** 带进度的下载（先查缓存）；priority 为 low 时让出带宽给页面上别的请求。
+ *  手机网络上大文件常中途断开（安卓模拟器实测 ERR_QUIC_PROTOCOL_ERROR）：网络错误重试两次，间隔 1.5 s、3 s */
+async function download(url: string, onProgress: (p: number) => void, signal: AbortSignal, priority: "high" | "low" = "high"): Promise<ArrayBuffer> {
+  const hit = await cached(url);
+  if (hit) { onProgress(1); return hit; }
+  for (let attempt = 0; ; attempt++) {
+    try { return await fetchOnce(url, onProgress, signal, priority); }
+    catch (error) {
+      const http = error instanceof Error && /下载世界文件失败（\d+）/.test(error.message);
+      if (signal.aborted || http || attempt >= 2) throw error;
+      await new Promise(resolve => setTimeout(resolve, 1500 * (attempt + 1)));
+    }
+  }
+}
+async function fetchOnce(url: string, onProgress: (p: number) => void, signal: AbortSignal, priority: "high" | "low"): Promise<ArrayBuffer> {
+  const response = await fetch(url, { signal, priority } as RequestInit);
   if (!response.ok) throw new Error(`下载世界文件失败（${response.status}）`);
   const total = Number(response.headers.get("content-length")) || 0;
-  if (!response.body || !total) { const buffer = await response.arrayBuffer(); onProgress(1); return buffer; }
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let received = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value); received += value.length;
-    onProgress(Math.min(1, received / total));
+  let buffer: ArrayBuffer;
+  if (!response.body || !total) { buffer = await response.arrayBuffer(); onProgress(1); }
+  else {
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value); received += value.length;
+      onProgress(Math.min(1, received / total));
+    }
+    const out = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.length; }
+    buffer = out.buffer;
   }
-  const out = new Uint8Array(received);
-  let offset = 0;
-  for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.length; }
-  return out.buffer;
+  void remember(url, buffer);
+  return buffer;
+}
+/** 页面在世界生成完成后、走进之前提前下载（进缓存），点「走进世界」时直接从缓存读 */
+export async function prefetch(urls: string[], signal?: AbortSignal) {
+  for (const url of urls) {
+    if (!url || signal?.aborted) continue;
+    try { await download(url, () => {}, signal || new AbortController().signal, "low"); } catch { /* 预取失败不影响之后正常下载 */ }
+  }
 }
 
 export function createWorldEngine(options: WorldEngineOptions): WorldEngine {
@@ -64,6 +124,8 @@ export function createWorldEngine(options: WorldEngineOptions): WorldEngine {
   const reduced = !!options.reducedMotion;
   const maxRatio = Math.max(.5, options.pixelRatio);
   const minRatio = Math.min(maxRatio, options.minPixelRatio ?? Math.max(.75, maxRatio * .5));
+  // 静止时补画的那一帧用的像素比（不低于移动时的）
+  const stillRatio = Math.max(maxRatio, options.stillPixelRatio ?? maxRatio);
   let ratio = maxRatio;
   let mode: WalkMode = options.mode ?? "walk";
   let disposed = false, paused = false, ready = false, moved = false;
@@ -83,6 +145,8 @@ export function createWorldEngine(options: WorldEngineOptions): WorldEngine {
 const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
   const spark = new SparkRenderer({ renderer });
   scene.add(spark);
+  // Spark 的排序结果、新载入的高斯点就绪时会标记“需要重画”：唤醒渲染循环画上
+  spark.onDirty = () => wake(2);
   const resize = () => {
     const w = Math.max(1, container.clientWidth), h = Math.max(1, container.clientHeight);
     renderer.setSize(w, h, false);
@@ -92,7 +156,7 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
     camera.updateProjectionMatrix();
   };
   resize();
-  const observer = new ResizeObserver(resize);
+  const observer = new ResizeObserver(() => { resize(); wake(); });
   observer.observe(container);
 
   // ---------- 模型变换 ----------
@@ -131,8 +195,8 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
     }
     return out;
   };
-  async function loadCollider(url: string) {
-    const gltf = await new GLTFLoader().loadAsync(url);
+  async function loadCollider(bytes: ArrayBuffer) {
+    const gltf = await new GLTFLoader().parseAsync(bytes, "");
     gltf.scene.updateMatrixWorld(true);
     const parts: THREE.BufferGeometry[] = [];
     gltf.scene.traverse(object => {
@@ -215,10 +279,11 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
       keys.add(code);
       if (code.startsWith("Arrow") || code === "Space") event.preventDefault();
       if (!code.startsWith("Shift")) firstMove();
+      wake(); // 渲染循环静止时停着：任何输入都要先把它叫醒
     }
   };
-  const keyUp = (event: KeyboardEvent) => { keys.delete(event.code); };
-  const blur = () => keys.clear();
+  const keyUp = (event: KeyboardEvent) => { keys.delete(event.code); wake(); };
+  const blur = () => { keys.clear(); wake(); };
   let drag: { id: number; x: number; y: number } | null = null;
   const look = (dx: number, dy: number) => {
     const k = LOOK_SPEED * (camera.fov / 62);
@@ -231,13 +296,15 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
     drag = { id: event.pointerId, x: event.clientX, y: event.clientY };
     canvas.setPointerCapture(event.pointerId);
     canvas.focus({ preventScroll: true });
+    wake();
   };
   const pointerMove = (event: PointerEvent) => {
     if (!drag || drag.id !== event.pointerId) return;
     look(event.clientX - drag.x, event.clientY - drag.y);
     drag.x = event.clientX; drag.y = event.clientY;
+    wake();
   };
-  const pointerUp = (event: PointerEvent) => { if (drag?.id === event.pointerId) drag = null; };
+  const pointerUp = (event: PointerEvent) => { if (drag?.id === event.pointerId) { drag = null; wake(); } };
   // 滚轮：沿视线轻推一下（全屏界面里不会和页面滚动冲突）
   const wheel = (event: WheelEvent) => {
     event.preventDefault();
@@ -245,6 +312,7 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
     const dir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(mode === "fly" ? pitch : 0, yaw, 0, "YXZ"));
     velocity.addScaledVector(dir, push);
     firstMove();
+    wake();
   };
   addEventListener("keydown", keyDown);
   addEventListener("keyup", keyUp);
@@ -353,13 +421,30 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
     if (bvh && eye.y < floorY) settleSpawn();
   };
 
-  // ---------- 渲染循环 ----------
+  // ---------- 渲染循环（按需） ----------
   let last = 0, statFrames = 0, statTime = 0, slow = 0, fast = 0;
   let reset: { from: THREE.Vector3; yaw: number; pitch: number; t: number } | null = null;
+  // pending：还要再画几帧（排序收尾、换档、改尺寸）；sharp：当前画面是不是静止时补画的高清帧
+  let pending = 4, looping = false, lastRender = 0, lastMoveRender = 0, sharp = false;
+  const minInterval = options.maxFps ? 1000 / options.maxFps - 1.5 : 0;
+  const shownPosition = new THREE.Vector3(NaN, NaN, NaN), shownQuaternion = new THREE.Quaternion();
+  // 移动中每帧的间隔：自动画质据此决定能不能升档、要不要退档
+  const moveIntervals: number[] = [];
+  const setRatio = (next: number) => {
+    if (Math.abs(next - renderer.getPixelRatio()) < .01) return;
+    renderer.setPixelRatio(next); resize();
+  };
+  /** 唤醒渲染循环；frames 是至少再画几帧 */
+  function wake(frames = 4) {
+    pending = Math.max(pending, frames);
+    if (!looping && !paused && !disposed && !document.hidden) start();
+  }
+  const busy = () => keys.size > 0 || external.x !== 0 || external.y !== 0 || !!drag || !!reset
+    || velocity.lengthSq() > 1e-6 || Math.abs(yaw - yawShown) > 1e-5 || Math.abs(pitch - pitchShown) > 1e-5
+    || Math.abs(eye.y - eyeShownY) > 1e-4 || (mode === "walk" && !!bvh && !grounded);
   const frame = (now: number) => {
     if (disposed || paused) return;
     const dt = last ? Math.min(.05, (now - last) / 1000) : 1 / 60;
-    const frameMs = last ? now - last : 16;
     last = now;
     if (ready) {
       if (reset) {
@@ -382,84 +467,193 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
       camera.position.set(eye.x, eyeShownY, eye.z);
       camera.quaternion.setFromEuler(new THREE.Euler(pitchShown, yawShown, 0, "YXZ"));
     }
-    renderer.render(scene, camera);
-
-    // 自适应像素比：持续偏慢降一档，持续充裕再升回来（不超过页面给的上限）
-    if (ready && !document.hidden) {
-      if (frameMs > 22.5) { slow += frameMs; fast = 0; } else if (frameMs < 13) { fast += frameMs; slow = 0; } else { slow = fast = 0; }
-      if (slow > 1500 && ratio > minRatio + .01) { ratio = Math.max(minRatio, ratio - .25); renderer.setPixelRatio(ratio); resize(); slow = 0; }
-      if (fast > 4000 && ratio < maxRatio - .01) { ratio = Math.min(maxRatio, ratio + .25); renderer.setPixelRatio(ratio); resize(); fast = 0; }
+    const cameraMoved = !camera.position.equals(shownPosition) || !camera.quaternion.equals(shownQuaternion);
+    const sorting = spark.dirty || spark.sorting || spark.sortDirty;
+    if (!cameraMoved && !sorting && pending <= 0) {
+      // 什么都没变：静止时补画一帧高清的，然后停掉循环，直到下一次输入、排序结果或换档
+      if (ready && !sharp && stillRatio > ratio + .01 && !busy()) {
+        sharp = true; setRatio(stillRatio); renderer.render(scene, camera); lastRender = now;
+      }
+      if (!busy()) { renderer.setAnimationLoop(null); looping = false; }
+      return;
     }
-    statFrames++; statTime += frameMs;
+    // 帧率上限（手机、核显 60fps）：物理每帧照算，画面隔帧画
+    if (minInterval && lastRender && now - lastRender < minInterval) return;
+    if (cameraMoved && sharp) { sharp = false; setRatio(ratio); }
+    renderer.render(scene, camera);
+    const interval = lastRender ? now - lastRender : 0;
+    lastRender = now;
+    if (pending > 0) pending--;
+    if (cameraMoved) {
+      shownPosition.copy(camera.position); shownQuaternion.copy(camera.quaternion);
+      // 连续移动中的帧间隔才算数（刚开始动、停了又动的第一帧不算）
+      if (lastMoveRender && now - lastMoveRender < 120 && interval > 0) adapt(interval);
+      lastMoveRender = now;
+    }
+    statFrames++; statTime += interval;
     if (statTime >= 1000) {
       options.onStats?.({ fps: Math.round(statFrames * 1000 / statTime), splats: splatCount, pixelRatio: ratio });
       statFrames = 0; statTime = 0;
     }
   };
-  const start = () => { last = 0; renderer.setAnimationLoop(frame); };
-  const visibility = () => { if (document.hidden) renderer.setAnimationLoop(null); else if (!paused && !disposed) start(); };
+  // 自适应：移动时持续偏慢先降像素比，降到底仍慢就退一档高斯点；持续充裕再升回来（不超过页面给的上限）
+  const budget = () => Math.max(1000 / (options.maxFps || 60), 1000 / 120);
+  const adapt = (interval: number) => {
+    moveIntervals.push(interval); if (moveIntervals.length > 90) moveIntervals.shift();
+    const slowMs = budget() * 1.35, fastMs = budget() * .8;
+    if (interval > slowMs) { slow += interval; fast = 0; } else if (interval < fastMs) { fast += interval; slow = 0; } else { slow = fast = 0; }
+    if (slow > 1500) {
+      slow = 0;
+      if (ratio > minRatio + .01) { ratio = Math.max(minRatio, ratio - .25); setRatio(ratio); }
+      else stepDown();
+    }
+    if (fast > 4000 && ratio < maxRatio - .01) { ratio = Math.min(maxRatio, ratio + .25); setRatio(ratio); fast = 0; }
+  };
+  const start = () => { last = 0; looping = true; renderer.setAnimationLoop(frame); };
+  const visibility = () => { if (document.hidden) { renderer.setAnimationLoop(null); looping = false; } else if (!paused && !disposed) wake(); };
   document.addEventListener("visibilitychange", visibility);
   start();
 
   // ---------- 载入 ----------
+  // 档位：先上最小一档尽快进入，再逐档换到 goal；autoQuality 时移动中帧率有余量还会继续升到 cap，持续掉帧退一档。
+  const levels = availableLevels(assets);
+  let auto = options.autoQuality !== false;
+  let shown = -1;                                  // 当前显示的是 levels 里的第几档
+  let goal = levels.length ? levelAtMost(levels, options.quality) : 0;
+  let cap = auto ? levels.length - 1 : goal;       // 自动升档最多到这一档
+  let upgrading: { level: number; progress: number } | null = null;
   let loadToken = 0;
-  async function loadSplats(quality: WorldQuality, initial: boolean) {
+  const reportQuality = () => {
+    if (shown < 0) return;
+    options.onQuality?.({ shown: levels[shown], loading: upgrading ? levels[upgrading.level] : null, progress: upgrading?.progress ?? 1, auto });
+  };
+  /** 载入第 level 档并换上；initial 时进度报给 onProgress，之后的换档报给 onQuality */
+  async function loadLevel(level: number, initial: boolean) {
     const token = ++loadToken;
-    const pick = pickSplat(assets, quality);
-    if (!pick) throw new Error("这个世界没有可用的三维文件。");
-    const report = (p: number) => { if (token === loadToken) options.onProgress?.(Math.max(0, Math.min(1, p))); };
+    const quality = levels[level];
+    const url = assets.splats[quality]!;
+    const report = (p: number) => {
+      if (token !== loadToken) return;
+      if (initial) options.onProgress?.(Math.max(0, Math.min(1, p)));
+      else { upgrading = { level, progress: p }; reportQuality(); }
+    };
     report(0);
-    const bytes = await download(pick.url, p => report(p * .85), abort.signal);
-    if (disposed || token !== loadToken) return;
-    const next = new SplatMesh({ fileBytes: bytes, fileType: fileType(assets, pick.url) as never, fileName: pick.url.split("?")[0].split("/").pop() });
+    const bytes = await download(url, p => report(p * .9), abort.signal, initial ? "high" : "low");
+    if (disposed || token !== loadToken) return false;
+    const next = new SplatMesh({ fileBytes: bytes, fileType: fileType(assets, url) as never, fileName: url.split("?")[0].split("/").pop() });
     place(next);
     await next.initialized;
-    if (disposed || token !== loadToken) { next.dispose(); return; }
-    report(.95);
+    if (disposed || token !== loadToken) { next.dispose(); return false; }
     scene.add(next);
     const old = mesh;
     mesh = next;
     splatCount = next.packedSplats?.numSplats ?? 0;
-    if (old) { scene.remove(old); old.dispose(); }
-    if (initial && assets.collider) {
-      try { await loadCollider(assets.collider); } catch (error) { console.warn("[world] 碰撞网格载入失败，按无碰撞处理", error); }
-    }
-    if (initial) settleSpawn();
+    shown = level;
+    upgrading = null;
+    // 新旧两份同时在场景里画两帧，排序换到新的之后再撤掉旧的，换档时不闪
+    if (old) setTimeout(() => { scene.remove(old); old.dispose(); wake(); }, 120);
+    wake(8);
     report(1);
+    reportQuality();
+    return true;
   }
-  loadSplats(options.quality, true).then(() => {
+  // 碰撞网格和第一档高斯点同时下载；对齐要用高斯点抽样，所以等第一档载好再建
+  const colliderBytes = assets.collider
+    ? download(assets.collider, () => {}, abort.signal).catch(error => { console.warn("[world] 碰撞网格下载失败，按无碰撞处理", error); return null; })
+    : Promise.resolve(null);
+  async function attachCollider() {
+    const bytes = await colliderBytes;
+    if (!bytes || disposed) return;
+    try { await loadCollider(bytes); } catch (error) { console.warn("[world] 碰撞网格载入失败，按无碰撞处理", error); return; }
     if (disposed) return;
+    // 还没开始走：站到出生点的地面上；已经走开了：就地落到脚下的地面
+    if (!moved) settleSpawn();
+    else if (bvh) { const floor = groundBelow(eye.x, eye.y + .5, eye.z, 40); if (floor !== null) { eye.y = floor + eyeHeight; vy = 0; } }
+    wake();
+  }
+  /** 后台逐档往上换；每档之间留一点时间给页面上别的事 */
+  let climbing = false;
+  async function climb() {
+    if (climbing) return;
+    climbing = true;
+    try {
+      while (!disposed && shown >= 0 && shown < goal) {
+        await new Promise(resolve => setTimeout(resolve, 400));
+        if (disposed || shown >= goal) break;
+        if (!await loadLevel(shown + 1, false)) break;
+      }
+    } catch (error) {
+      console.warn("[world] 后台换档失败，停在当前画质", error);
+      upgrading = null; reportQuality();
+    } finally { climbing = false; }
+  }
+  // 自动画质：移动中（至少 3 秒的帧）稳稳跑满帧率、像素比已在上限，就再升一档；持续掉帧且像素比已降到底，退一档
+  function headroom() {
+    if (!auto || climbing || shown >= cap || shown < goal || moveIntervals.length < 90) return;
+    const sorted = [...moveIntervals].sort((a, b) => a - b);
+    const p90 = sorted[Math.floor(sorted.length * .9)];
+    if (p90 <= budget() * 1.08 && ratio >= maxRatio - .01) { goal = shown + 1; moveIntervals.length = 0; void climb(); }
+  }
+  function stepDown() {
+    if (!auto || shown <= 0 || climbing) return;
+    cap = goal = shown - 1;                         // 这一档本机跑不动：以后不再自动升上来
+    moveIntervals.length = 0;
+    void loadLevel(shown - 1, false).catch(() => {});
+  }
+  const headroomTimer = setInterval(() => { if (!disposed && looping) headroom(); }, 1000);
+
+  (async () => {
+    if (!levels.length) throw new Error("这个世界没有可用的三维文件。");
+    // 起步：最小一档；如果目标档已经在缓存里（之前走进过），直接用目标档
+    let first = 0;
+    for (let level = goal; level > 0; level--) if (await cached(assets.splats[levels[level]]!)) { first = level; break; }
+    if (!await loadLevel(first, true)) return;
+    if (disposed) return;
+    await Promise.race([attachCollider(), new Promise(resolve => setTimeout(resolve, 1500))]);
+    if (disposed) return;
+    if (!bvh) settleSpawn();
     ready = true;
     options.onReady?.();
-  }, error => {
+    wake();
+    void climb();
+  })().catch(error => {
     if (disposed || abort.signal.aborted) return;
     options.onError?.(error instanceof Error ? error : new Error(String(error)));
   });
 
   const engine: WorldEngine & { __debug?: () => unknown } = {
-    async setQuality(quality) { if (!disposed) await loadSplats(quality, false); },
+    async setQuality(quality) {
+      // 手动选档：停在这一档，不再自动升降
+      if (disposed || !levels.length) return;
+      auto = false;
+      goal = cap = levelAtMost(levels, quality);
+      if (goal !== shown) await loadLevel(goal, false);
+    },
+    setAutoQuality(on) { auto = on; if (on) { cap = levels.length - 1; reportQuality(); } },
     setMode(next) {
       if (next === mode) return;
       mode = next; vy = 0;
       // 从飞行切回行走：落到脚下的地面（没有碰撞网格就回到出生高度）
       if (mode === "walk" && bvh) { const floor = groundBelow(eye.x, eye.y, eye.z, 200); if (floor !== null) eye.y = floor + eyeHeight; }
     },
-    setPixelRatio(next) { ratio = Math.max(minRatio, Math.min(maxRatio, next)); renderer.setPixelRatio(ratio); resize(); },
+    setPixelRatio(next) { ratio = Math.max(minRatio, Math.min(maxRatio, next)); sharp = false; setRatio(ratio); wake(); },
     resetView() {
       if (!ready) return;
       if (reduced) { settleSpawn(); return; }
       reset = { from: eye.clone(), yaw, pitch, t: 0 };
       velocity.set(0, 0, 0); vy = 0;
+      wake();
     },
     setPaused(next) {
       paused = next;
-      if (paused) renderer.setAnimationLoop(null); else if (!document.hidden && !disposed) start();
+      if (paused) { renderer.setAnimationLoop(null); looping = false; } else if (!document.hidden && !disposed) wake();
     },
     setMoveInput(x, y) {
       external.x = Math.max(-1, Math.min(1, x)); external.y = Math.max(-1, Math.min(1, y));
       if (Math.hypot(x, y) > .1) firstMove();
+      wake();
     },
-    look,
+    look(dx, dy) { look(dx, dy); wake(); },
     capture() {
       renderer.render(scene, camera);
       return new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("截图失败")), "image/png"));
@@ -468,6 +662,7 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
       if (disposed) return;
       disposed = true;
       abort.abort();
+      clearInterval(headroomTimer);
       renderer.setAnimationLoop(null);
       observer.disconnect();
       document.removeEventListener("visibilitychange", visibility);
@@ -483,6 +678,7 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
     },
   };
   // 验收脚本用（world-engine/test）：不在接口约定里
-  engine.__debug = () => ({ eye: eye.toArray().map(v => +v.toFixed(3)), yaw: +yaw.toFixed(3), grounded, collider: !!bvh, mode, ratio, splats: splatCount });
+  engine.__debug = () => ({ eye: eye.toArray().map(v => +v.toFixed(3)), yaw: +yaw.toFixed(3), grounded, collider: !!bvh, mode, ratio,
+    pixelRatio: renderer.getPixelRatio(), splats: splatCount, quality: levels[shown], looping, auto, goal: levels[goal], cap: levels[cap] });
   return engine;
 }
