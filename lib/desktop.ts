@@ -13,8 +13,15 @@ function api(): Internals | undefined {
 
 export const isDesktopApp = () => !!api();
 
-/** Windows 客户端安装包：随站点一起发布（见 desktop/README.md）。 */
-export const DESKTOP_DOWNLOAD = "/download/PixelReconstruction-Setup.exe";
+/**
+ * Windows 客户端安装包：放在 GitHub Releases，每次发版多传一份固定文件名的 PixelReconstruction-Setup.exe，
+ * latest/download 永远指向最新版，网站不用跟着改（见 desktop/README.md）。
+ * 国内直连 github.com 常超时（2026-10 实测广州、深圳 15 秒无响应），默认走 gh-proxy.com 镜像，GitHub 原址作备用；
+ * 镜像是第三方服务，校验值（SHA-256）以 GitHub Release 页面为准。
+ */
+export const DESKTOP_DOWNLOAD_GITHUB = "https://github.com/shihshdh/pixel-reconstruction/releases/latest/download/PixelReconstruction-Setup.exe";
+export const DESKTOP_DOWNLOAD = "https://gh-proxy.com/" + DESKTOP_DOWNLOAD_GITHUB;
+export const DESKTOP_RELEASES = "https://github.com/shihshdh/pixel-reconstruction/releases/latest";
 
 /** 每件作品一个文件夹，名字只由任务 ID 决定，工作室导出的视频也能放回同一处。 */
 export const workFolder = (jobId: string) => "scene_" + jobId.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);

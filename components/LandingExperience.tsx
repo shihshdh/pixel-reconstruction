@@ -4,7 +4,7 @@ import GlassTitle from "@/components/GlassTitle";
 import LiquidSegmented from "@/components/LiquidSegmented";
 import HandwrittenTagline, { type Handwriting } from "@/components/HandwrittenTagline";
 import HANDWRITING from "@/lib/handwriting.generated.json";
-import { DESKTOP_DOWNLOAD, isDesktopApp, titleBarMouseDown } from "@/lib/desktop";
+import { DESKTOP_DOWNLOAD, DESKTOP_DOWNLOAD_GITHUB, DESKTOP_RELEASES, isDesktopApp, titleBarMouseDown } from "@/lib/desktop";
 import WindowControls from "@/components/WindowControls";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import dynamic from "next/dynamic";
@@ -159,7 +159,15 @@ export default function LandingExperience({ onEnter, onExitStart, exitDuration =
             <span>Pixel<br />Reconstruction<small>SINGLE-IMAGE 3D</small></span>
           </div>
           <div className={styles.headerActions}>
-          {showDownload && <a className={`${styles.skip} ${styles.download}`} href={DESKTOP_DOWNLOAD} download>下载 Windows 客户端 <span aria-hidden="true">↓</span></a>}
+          {showDownload && <span className={styles.downloadWrap}>
+            <a className={`${styles.skip} ${styles.download}`} href={DESKTOP_DOWNLOAD}>下载 Windows 客户端 <span aria-hidden="true">↓</span></a>
+            <span className={styles.downloadAlt}>
+              <span>
+                <a href={DESKTOP_DOWNLOAD_GITHUB}>备用：从 GitHub 下载</a>
+                <a href={DESKTOP_RELEASES} target="_blank" rel="noreferrer">版本说明与 SHA-256 校验值</a>
+              </span>
+            </span>
+          </span>}
           <button className={styles.skip} onClick={enter} onPointerEnter={restoreCopy} onFocus={restoreCopy}>直接进入 <span aria-hidden="true">↗</span></button>
           <WindowControls className="on-scene" />
           </div>

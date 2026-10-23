@@ -46,10 +46,10 @@
   [headers.values]
     Cache-Control = "public, max-age=604800"
 
-# Windows 客户端安装包（desktop/ 打包后复制到 public/download/，不进 git）。
-# 文件名固定，缓存一小时，替换后很快生效。
-[[headers]]
-  for = "/download/*"
-  [headers.values]
-    Cache-Control = "public, max-age=3600"
-    Content-Disposition = "attachment"
+# Windows 客户端安装包放在 GitHub Releases（每次发版多传一份固定文件名 PixelReconstruction-Setup.exe）。
+# 以前分享出去的 /download/ 地址跳到最新版：走 gh-proxy.com 国内镜像（直连 github.com 国内常超时，见 lib/desktop.ts）。
+[[redirects]]
+  from = "/download/PixelReconstruction-Setup.exe"
+  to = "https://gh-proxy.com/https://github.com/shihshdh/pixel-reconstruction/releases/latest/download/PixelReconstruction-Setup.exe"
+  status = 302
+  force = true

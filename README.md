@@ -26,7 +26,7 @@
 
 重建使用 Apple 的 [SHARP](https://github.com/apple/ml-sharp) 模型，在云端 GPU 上完成单图推理，一次大约一分钟。查看、运镜和视频导出都在浏览器本地完成，不需要安装任何软件。
 
-也可以使用 Windows 客户端（Windows 10/11，64 位）：[从网站下载](https://pixel-reconstruction.netlify.app/download/PixelReconstruction-Setup.exe) · [GitHub Releases](https://github.com/shihshdh/pixel-reconstruction/releases/latest)。客户端把页面和素材打包在本地，启动快，照片和作品会另存到本机。有 NVIDIA 显卡的电脑会在后台自动装好本机引擎（国内镜像直连），之后照片直接用自己的显卡重建，约 7 秒一张、不上传；独显默认「极致」画质，界面背景是实时渲染的液态玻璃；窗口无边框，深色主题为黑金配色。说明见 [desktop/README.md](desktop/README.md)。
+也可以使用 Windows 客户端（Windows 10/11，64 位）：[国内镜像下载](https://gh-proxy.com/https://github.com/shihshdh/pixel-reconstruction/releases/latest/download/PixelReconstruction-Setup.exe) · [GitHub 下载](https://github.com/shihshdh/pixel-reconstruction/releases/latest/download/PixelReconstruction-Setup.exe) · [版本说明与校验值](https://github.com/shihshdh/pixel-reconstruction/releases/latest)。客户端把页面和素材打包在本地，启动快，照片和作品会另存到本机。有 NVIDIA 显卡的电脑会在后台自动装好本机引擎（国内镜像直连），之后照片直接用自己的显卡重建，约 7 秒一张、不上传；独显默认「极致」画质，界面背景是实时渲染的液态玻璃；窗口无边框，深色主题为黑金配色。说明见 [desktop/README.md](desktop/README.md)。
 
 ## 效果
 

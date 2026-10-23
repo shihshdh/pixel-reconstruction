@@ -26,7 +26,7 @@ import DiscShelf from "@/components/DiscShelf";
 import SceneWall from "@/components/SceneWall";
 import LineSculpture from "@/components/LineSculpture";
 import GlassInvite from "@/components/GlassInvite";
-import { DESKTOP_DOWNLOAD, isDesktopApp, openWorksFolder, setFullscreen, titleBarMouseDown } from "@/lib/desktop";
+import { DESKTOP_DOWNLOAD, DESKTOP_DOWNLOAD_GITHUB, DESKTOP_RELEASES, isDesktopApp, openWorksFolder, setFullscreen, titleBarMouseDown } from "@/lib/desktop";
 import WindowControls from "@/components/WindowControls";
 import { computeUiZoom } from "@/lib/ui-scale";
 import { engineAccepts, engineInstalling, engineWarming, pauseEngineInstall, resumeEngineInstall, watchLocalEngine, type EngineStatus } from "@/lib/local-engine";
@@ -220,6 +220,14 @@ const GLOBAL_CSS = `
 .nav-download svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round;}
 .nav-download:hover{background:color-mix(in srgb,currentColor 5%,transparent);border-color:color-mix(in srgb,currentColor 8%,transparent);}
 .nav-download:active{transform:scale(.96);}
+.nav-download-wrap{position:relative;display:inline-flex;flex:none;}
+.nav-download-alt{position:absolute;top:100%;right:-6px;padding-top:10px;z-index:40;opacity:0;visibility:hidden;transform:translateY(-4px);transition:opacity 160ms,transform 160ms,visibility 0s 160ms;}
+.nav-download-wrap:hover .nav-download-alt,.nav-download-wrap:focus-within .nav-download-alt{opacity:1;visibility:visible;transform:none;transition:opacity 160ms,transform 160ms;}
+.nav-download-alt>span{display:flex;flex-direction:column;gap:2px;padding:6px;border-radius:16px;background:var(--glass);border:1px solid var(--glass-brd);backdrop-filter:blur(22px) saturate(1.6);-webkit-backdrop-filter:blur(22px) saturate(1.6);box-shadow:var(--shadow);}
+.nav-download-alt a{display:flex;align-items:baseline;justify-content:space-between;gap:18px;padding:8px 11px;border-radius:10px;color:var(--ink);font-size:12px;white-space:nowrap;text-decoration:none;}
+.nav-download-alt a:hover,.nav-download-alt a:focus-visible{background:color-mix(in srgb,currentColor 7%,transparent);outline:none;}
+.nav-download-alt a:last-child{color:var(--ink2);}
+.nav-download-alt small{font-size:11px;color:var(--ink3);}
 @media(max-width:1023px){.nav-download{padding:0;width:32px;justify-content:center;}.nav-download span{display:none;}}
 @media(max-width:767px){.nav-download{display:none;}}
 .gallery-folder{margin-left:10px;padding:4px 12px;border:1px solid var(--line);border-radius:99px;background:var(--card);color:var(--ink);font-size:12px;}
@@ -664,10 +672,20 @@ function DesktopDownload() {
   const [show, setShow] = useState(false);
   useEffect(() => { setShow(!(window as Window & { __PIXEL_DESKTOP__?: unknown }).__PIXEL_DESKTOP__); }, []);
   if (!show) return null;
-  return <a className="nav-download" href={DESKTOP_DOWNLOAD} download title="下载 Windows 客户端（Windows 10/11，64 位）">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10.5 M7.5 10.5 12 15l4.5-4.5 M5 19.5h14" /></svg>
-    <span>Windows 客户端</span>
-  </a>;
+  // 点按钮走国内镜像；悬停或键盘聚焦时下面展开备用的 GitHub 原址与校验值
+  return <span className="nav-download-wrap">
+    <a className="nav-download" href={DESKTOP_DOWNLOAD} title="下载 Windows 客户端（Windows 10/11，64 位，国内镜像）">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10.5 M7.5 10.5 12 15l4.5-4.5 M5 19.5h14" /></svg>
+      <span>Windows 客户端</span>
+    </a>
+    <span className="nav-download-alt">
+      <span>
+        <a href={DESKTOP_DOWNLOAD}>国内镜像下载<small>gh-proxy.com</small></a>
+        <a href={DESKTOP_DOWNLOAD_GITHUB}>备用：从 GitHub 下载<small>github.com</small></a>
+        <a href={DESKTOP_RELEASES} target="_blank" rel="noreferrer">版本说明与 SHA-256 校验值</a>
+      </span>
+    </span>
+  </span>;
 }
 
 // 全局画质（客户端与网页里的电脑都有）：决定工作室的渲染倍率、导出分辨率，以及“极致”档的光追界面。

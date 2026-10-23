@@ -62,15 +62,15 @@ npm install
 npm run build
 ```
 
-`npm run build` 会先构建网站（根目录 `npm run build`），把 `out/` 复制到 `desktop/dist/`（不含 `download/`），再打包。安装包输出到 `src-tauri/target/release/bundle/nsis/`，约 48MB。换图标时替换 `app-icon.png`（1024×1024），再运行 `npm run icons`。
+`npm run build` 会先构建网站（根目录 `npm run build`），把 `out/` 复制到 `desktop/dist/`（不含 `download/`），再打包。安装包输出到 `src-tauri/target/release/bundle/nsis/`，约 300MB（含展示场景与本机引擎的离线依赖）。换图标时替换 `app-icon.png`（1024×1024），再运行 `npm run icons`。
 
 ## 发布
 
 1. 版本号在 `src-tauri/tauri.conf.json` 和 `src-tauri/Cargo.toml` 里各有一处，保持一致；
-2. 把安装包复制为 `public/download/PixelReconstruction-Setup.exe`，随站点一起发布，网站导航栏的“Windows 客户端”指向这个文件；
-3. 同一个安装包上传到 GitHub Releases。
+2. 安装包上传到 GitHub Releases 两份：带版本号的 `PixelReconstruction-Setup-X.Y.Z.exe`，和固定文件名的 `PixelReconstruction-Setup.exe`；
+3. 网站的下载按钮指向 `releases/latest/download/PixelReconstruction-Setup.exe`（默认经 gh-proxy.com 国内镜像，GitHub 原址作备用，见 `lib/desktop.ts`），发版后不用改网站、也不用重新部署。
 
-`public/download/` 不进仓库，安装包以 GitHub Releases 为准。
+安装包不随站点发布：约 300MB，放在 Netlify 会很快用完流量额度。
 
 ## 说明
 
