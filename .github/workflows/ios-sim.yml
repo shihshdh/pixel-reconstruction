@@ -41,21 +41,25 @@ jobs:
       - name: Install WebDriver without changing dependency manifests
         run: npm install --no-save --package-lock=false selenium-webdriver@4.27.0
       - name: Select and boot an available iPhone
+        timeout-minutes: 8
         shell: bash
         run: |
           xcrun simctl list devices available --json > "$RUNNER_TEMP/simulators.json"
           node --input-type=module -e '
             import fs from "node:fs";
             const devices = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/simulators.json")).devices;
-            const phone = Object.entries(devices).filter(([runtime]) => runtime.includes("iOS")).flatMap(([, list]) => list).find(d => d.isAvailable && d.name.startsWith("iPhone"));
+            const phones = Object.entries(devices).filter(([runtime]) => runtime.includes("iOS")).flatMap(([, list]) => list).filter(d => d.isAvailable && d.name.startsWith("iPhone"));
+            const phone = phones.find(d => d.name.startsWith("iPhone SE")) || phones[0];
             if (!phone) throw new Error("No available iPhone simulator");
             fs.appendFileSync(process.env.GITHUB_ENV, `SIMULATOR_UDID=${phone.udid}\n`);
             fs.writeFileSync(process.env.RUNNER_TEMP + "/simulator-udid", phone.udid);
             console.log(JSON.stringify(phone));'
           DEVICE=$(cat "$RUNNER_TEMP/simulator-udid")
           xcrun simctl boot "$DEVICE" || true
-          xcrun simctl bootstatus "$DEVICE" -b
-          xcrun simctl launch "$DEVICE" com.apple.mobilesafari
+          echo "Waiting for selected iPhone to finish booting"
+          python3 -c 'import subprocess,sys; subprocess.run(["xcrun","simctl","bootstatus",sys.argv[1],"-b"],check=True,timeout=300)' "$DEVICE"
+          echo "Prelaunching Mobile Safari (60 second deadline)"
+          python3 -c 'import subprocess,sys; subprocess.run(["xcrun","simctl","launch",sys.argv[1],"com.apple.mobilesafari"],check=True,timeout=60)' "$DEVICE" || true
           sudo safaridriver --enable
           safaridriver -p 4444 > "$RUNNER_TEMP/safaridriver.log" 2>&1 &
           for i in {1..30}; do
@@ -80,6 +84,7 @@ jobs:
           name: ios-sim-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/perf/ios-sim/
           if-no-files-found: error
+
 
 
 
