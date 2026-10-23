@@ -55,6 +55,7 @@ jobs:
           DEVICE=$(cat "$RUNNER_TEMP/simulator-udid")
           xcrun simctl boot "$DEVICE" || true
           xcrun simctl bootstatus "$DEVICE" -b
+          xcrun simctl launch "$DEVICE" com.apple.mobilesafari
           sudo safaridriver --enable
           safaridriver -p 4444 > "$RUNNER_TEMP/safaridriver.log" 2>&1 &
           for i in {1..30}; do
@@ -79,5 +80,6 @@ jobs:
           name: ios-sim-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/perf/ios-sim/
           if-no-files-found: error
+
 
 

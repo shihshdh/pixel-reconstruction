@@ -141,7 +141,21 @@ async function main() {
     } else {
       const { Builder } = await import('selenium-webdriver');
       console.log('Creating iOS Safari WebDriver session');
-      session = await new Builder().usingServer('http://127.0.0.1:4444').withCapabilities({ browserName: 'safari', platformName: 'iOS', 'safari:useSimulator': true, 'safari:deviceType': 'iPhone', ...(process.env.SIMULATOR_UDID ? { 'safari:deviceUDID': process.env.SIMULATOR_UDID } : {}) }).build();
+      report.sessionAttempts = [];
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          session = await new Builder().usingServer('http://127.0.0.1:4444').withCapabilities({ browserName: 'safari', platformName: 'iOS', 'safari:useSimulator': true, 'safari:deviceType': 'iPhone', ...(process.env.SIMULATOR_UDID ? { 'safari:deviceUDID': process.env.SIMULATOR_UDID } : {}) }).build();
+          report.sessionAttempts.push({ attempt, created: true }); break;
+        } catch (error) {
+          report.sessionAttempts.push({ attempt, created: false, error: String(error.message || error) }); await save();
+          if (attempt === 3 || error.name !== 'SessionNotCreatedError') throw error;
+          console.log(`Safari session attempt ${attempt} failed; relaunching Mobile Safari`);
+          const device = process.env.SIMULATOR_UDID || 'booted';
+          try { execFileSync('xcrun', ['simctl', 'terminate', device, 'com.apple.mobilesafari'], { timeout: 20000, stdio: 'inherit' }); } catch {}
+          execFileSync('xcrun', ['simctl', 'launch', device, 'com.apple.mobilesafari'], { timeout: 30000, stdio: 'inherit' });
+          await sleep(5000);
+        }
+      }
       console.log('iOS Safari WebDriver session created');
       await session.manage().setTimeouts({ pageLoad: 120000, script: 30000, implicit: 0 });
       evaluate = (fn, ...args) => session.executeScript(fn, ...args);
@@ -219,6 +233,7 @@ async function main() {
   }
 }
 await main();
+
 
 
 
