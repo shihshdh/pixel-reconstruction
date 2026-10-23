@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const arg = (key, fallback) => { const n = process.argv.indexOf(key); return n < 0 ? fallback : process.argv[n + 1]; };
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.wasm': 'application/wasm', '.spz': 'application/octet-stream' };
+const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.mp4': 'video/mp4', '.woff2': 'font/woff2', '.wasm': 'application/wasm', '.spz': 'application/octet-stream' };
 
 // Mount the harness outside public/. In URL mode proxy only the tested site's engine bundle.
 function serve(port, site) {
@@ -26,8 +26,22 @@ function serve(port, site) {
         let filename = path.resolve(base, relative);
         if (!filename.startsWith(base + path.sep)) { res.writeHead(403); res.end(); return; }
         if ((await fs.stat(filename)).isDirectory()) filename = path.join(filename, 'index.html');
-        res.writeHead(200, { 'Content-Type': mime[path.extname(filename)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
-        res.end(await fs.readFile(filename));
+        const stat = await fs.stat(filename);
+        const headers = { 'Content-Type': mime[path.extname(filename)] || 'application/octet-stream', 'Cache-Control': 'no-store', 'Accept-Ranges': 'bytes' };
+        // Mobile Safari probes video using Range requests; a generic 200 response can fail playback.
+        const range = req.headers.range;
+        if (range) {
+          const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+          let start = match?.[1] ? Number(match[1]) : Math.max(0, stat.size - Number(match?.[2]));
+          let end = match?.[1] && match?.[2] ? Math.min(Number(match[2]), stat.size - 1) : stat.size - 1;
+          if (!match || (!match[1] && !match[2]) || start > end || start >= stat.size) {
+            res.writeHead(416, { ...headers, 'Content-Range': `bytes */${stat.size}` }); res.end(); return;
+          }
+          res.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${stat.size}`, 'Content-Length': end - start + 1 });
+          res.end(req.method === 'HEAD' ? undefined : (await fs.readFile(filename)).subarray(start, end + 1)); return;
+        }
+        res.writeHead(200, { ...headers, 'Content-Length': stat.size });
+        res.end(req.method === 'HEAD' ? undefined : await fs.readFile(filename));
       } catch (error) { res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end(String(error)); }
     });
     server.listen(port, '0.0.0.0', () => resolve(server));
@@ -69,7 +83,7 @@ function instrument() {
     try { wrap(c.getContext('webgl2') || c.getContext('webgl'), c); } catch {}
   });
   scan();
-  const observer = new MutationObserver(scan); observer.observe(document.documentElement, { childList: true, subtree: true });
+  // Future contexts are intercepted by getContext; do not initialize newly inserted canvases.
   window.requestAnimationFrame = callback => { rafRequests++; return nativeRaf(t => { rafCallbacks++; callback(t); }); };
   const sample = t => { if (previous !== undefined) intervals.push(t - previous); previous = t; nativeRaf(sample); };
   nativeRaf(sample); // Excluded from application rAF counts.
@@ -79,11 +93,17 @@ function instrument() {
   addEventListener('unhandledrejection', e => errors.push({ type: 'rejection', message: String(e.reason?.stack || e.reason) }));
   const quantile = (a, p) => a.length ? a[Math.min(a.length - 1, Math.floor((a.length - 1) * p))] : null;
   window.__iosPerf = {
-    reset() { scan(); for (const s of counters.values()) Object.assign(s, { frames: 0, draws: 0, pixels: 0, last: null }); rafRequests = rafCallbacks = 0; intervals = []; tasks = []; previous = undefined; started = performance.now(); },
+    reset() { document.querySelectorAll('canvas').forEach(entry); for (const s of counters.values()) Object.assign(s, { frames: 0, draws: 0, pixels: 0, last: null }); rafRequests = rafCallbacks = 0; intervals = []; tasks = []; previous = undefined; started = performance.now(); },
     snapshot() {
       const seconds = (performance.now() - started) / 1000, sorted = [...intervals].sort((a, b) => a - b);
+      const visible = c => {
+        const rect = c.getBoundingClientRect();
+        if (!c.isConnected || rect.width <= 0 || rect.height <= 0 || rect.bottom <= 0 || rect.right <= 0 || rect.top >= innerHeight || rect.left >= innerWidth) return false;
+        for (let p = c; p; p = p.parentElement) { const style = getComputedStyle(p); if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false; }
+        return true;
+      };
       const canvases = [...counters].map(([c, s]) => ({ label: label(c), width: c.width, height: c.height, attached: c.isConnected,
-        visible: c.isConnected && c.getBoundingClientRect().height > 0 && getComputedStyle(c).visibility !== 'hidden' && getComputedStyle(c).opacity !== '0',
+        visible: visible(c),
         frames: s.frames, draws: s.draws, fps: s.frames / seconds, pixelsPerSecond: s.pixels / seconds }));
       const animations = document.getAnimations().filter(a => a.playState === 'running');
       return { seconds, canvases, totalPixelsPerSecond: canvases.reduce((n, c) => n + c.pixelsPerSecond, 0), rafRequests, rafCallbacks,
@@ -104,6 +124,8 @@ async function main() {
   const report = { time: new Date().toISOString(), driver, url: base, commit: process.env.GITHUB_SHA || null,
     runUrl: process.env.GITHUB_RUN_ID ? `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}` : null,
     caveats: ['Simulator GPU/frame rate is not physical iPhone performance.', 'Pixels/second is canvas area per rendered frame, not GPU fragment count.', 'Instrumentation begins after navigation; initial navigation errors may precede hooks.', 'rAF sampling is excluded from app counts; pre-injection cached rAF functions cannot be intercepted.'], results: [], errors: [] };
+  const save = () => fs.writeFile(path.join(output, 'ios-sim-results.json'), JSON.stringify(report, null, 2));
+  await save(); // Preserve even a session-creation failure/timeout.
   let browser, session, page, evaluate, navigate, shot, cleanup;
   try {
     if (driver === 'webkit') {
@@ -118,11 +140,13 @@ async function main() {
       cleanup = () => browser.close();
     } else {
       const { Builder } = await import('selenium-webdriver');
+      console.log('Creating iOS Safari WebDriver session');
       session = await new Builder().usingServer('http://127.0.0.1:4444').withCapabilities({ browserName: 'safari', platformName: 'iOS', 'safari:useSimulator': true, 'safari:deviceType': 'iPhone', ...(process.env.SIMULATOR_UDID ? { 'safari:deviceUDID': process.env.SIMULATOR_UDID } : {}) }).build();
+      console.log('iOS Safari WebDriver session created');
       await session.manage().setTimeouts({ pageLoad: 120000, script: 30000, implicit: 0 });
       evaluate = (fn, ...args) => session.executeScript(fn, ...args);
       navigate = url => session.get(url);
-      shot = async file => execFileSync('xcrun', ['simctl', 'io', process.env.SIMULATOR_UDID || 'booted', 'screenshot', file], { stdio: 'inherit' });
+      shot = async file => execFileSync('xcrun', ['simctl', 'io', process.env.SIMULATOR_UDID || 'booted', 'screenshot', file], { stdio: 'inherit', timeout: 30000 });
       cleanup = () => session.quit();
     }
     const waitFor = async (fn, ms = 60000) => {
@@ -144,11 +168,13 @@ async function main() {
       const result = { name, ...await evaluate(() => window.__iosPerf.snapshot()) };
       if (name.startsWith('world-')) result.world = await evaluate(() => window.__worldTest);
       result.screenshot = `${name}.png`;
+      report.results.push(result); await save();
       await shot(path.join(output, result.screenshot));
-      report.results.push(result); console.log(JSON.stringify(result));
+      console.log(JSON.stringify(result));
     };
     try {
-      await navigate(base); await evaluate(instrument);
+      console.log('Navigating to site:', base);
+      await navigate(base); console.log('Site loaded; injecting counters'); await evaluate(instrument);
       report.userAgent = await evaluate(() => navigator.userAgent);
       await measure('landing-idle');
       await clickText('直接进入');
@@ -166,6 +192,7 @@ async function main() {
     } catch (error) { report.errors.push({ scenario: 'site', message: String(error.stack || error) }); await shot(path.join(output, 'site-error.png')).catch(() => {}); }
     for (const quality of ['100k', '500k']) {
       try {
+        console.log('Starting world scenario:', quality);
         await navigate(`http://127.0.0.1:${port}/__perf/world-test.html?q=${quality}`);
         await evaluate(instrument);
         await evaluate(() => { window.startWorldTest(); });
@@ -178,10 +205,20 @@ async function main() {
     }
   } catch (error) { report.errors.push({ scenario: 'driver', message: String(error.stack || error) }); }
   finally {
-    if (cleanup) await cleanup().catch(error => report.errors.push({ scenario: 'cleanup', message: String(error) }));
+    await save(); // Persist before driver teardown, which may stall on a broken simulator.
+    if (cleanup) {
+      let timer;
+      try { await Promise.race([cleanup(), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Driver cleanup exceeded 15s')), 15000); })]); }
+      catch (error) { report.errors.push({ scenario: 'cleanup', message: String(error) }); }
+      finally { clearTimeout(timer); }
+    }
+    server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));
-    await fs.writeFile(path.join(output, 'ios-sim-results.json'), JSON.stringify(report, null, 2));
+    await save();
     if (report.errors.length || report.results.length !== 7 || report.results.some(r => r.errors.length || r.world?.error)) process.exitCode = 1;
   }
 }
 await main();
+
+
+
