@@ -160,7 +160,13 @@ async function main() {
       await session.manage().setTimeouts({ pageLoad: 120000, script: 30000, implicit: 0 });
       evaluate = (fn, ...args) => session.executeScript(fn, ...args);
       navigate = url => session.get(url);
-      shot = async file => execFileSync('xcrun', ['simctl', 'io', process.env.SIMULATOR_UDID || 'booted', 'screenshot', file], { stdio: 'inherit', timeout: 30000 });
+      shot = async file => {
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          console.log(`Native screenshot ${path.basename(file)}, attempt ${attempt}`);
+          try { return execFileSync('xcrun', ['simctl', 'io', process.env.SIMULATOR_UDID || 'booted', 'screenshot', file], { stdio: 'inherit', timeout: 120000 }); }
+          catch (error) { if (attempt === 2) throw error; console.warn('simctl screenshot delayed; retrying:', error.code); await sleep(3000); }
+        }
+      };
       cleanup = () => session.quit();
     }
     const waitFor = async (fn, ms = 60000) => {
@@ -183,7 +189,8 @@ async function main() {
       if (name.startsWith('world-')) result.world = await evaluate(() => window.__worldTest);
       result.screenshot = `${name}.png`;
       report.results.push(result); await save();
-      await shot(path.join(output, result.screenshot));
+      try { await shot(path.join(output, result.screenshot)); }
+      catch (error) { result.screenshotError = String(error); report.errors.push({ scenario: name, screenshotError: String(error) }); await save(); }
       console.log(JSON.stringify(result));
     };
     try {
@@ -229,10 +236,12 @@ async function main() {
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));
     await save();
+    if (report.errors.length) console.error(JSON.stringify({ errors: report.errors }));
     if (report.errors.length || report.results.length !== 7 || report.results.some(r => r.errors.length || r.world?.error)) process.exitCode = 1;
   }
 }
 await main();
+
 
 
 
