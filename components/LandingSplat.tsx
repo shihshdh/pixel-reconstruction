@@ -231,6 +231,7 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
 
         // SHARP stores OpenCV coordinates (+Y down, +Z forward). Convert once
         // to Three coordinates; retaining +Z caused reversed CPU depth sorting.
+        // 不用库的渐进载入：0.4.7 每到一段都把已到的全部数据重新整理一遍（实测手机仿真累计 120 秒、场景一直没就绪）。
         // AbortablePromise.then does not forward the rejection callback passed
         // by await. Await its native promise so leaving mid-load is handled.
         await viewer.addSplatScene(path, {
@@ -248,6 +249,9 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
           },
         }).promise;
         clearTimeout(timeout);
+        if (disposed) return;
+        // 高斯着色器在后台编译完再开始渲染：第一次 render 时同步编译会卡住主线程（手机仿真实测与数据整理合计近 2 秒）
+        if (viewer.splatMesh) await renderer.compileAsync(viewer.splatMesh, viewer.camera).catch(() => {});
         if (disposed) return;
         measure();
         viewer.start();

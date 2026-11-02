@@ -157,13 +157,23 @@ export default function LineSculpture({ active = true, custom, variant = "home",
         for (let s = 0; s < S; s++) for (let j = offsets[s]; j + 1 < offsets[s + 1]; j++, o += 6) {
           for (let c = 0; c < 6; c++) { pos[o + c] = xyz[j * 3 + c] * m.posScale; col[o + c] = LUT[rgb[j * 3 + c]]; }
         }
-        const geo = new LineSegmentsGeometry().setPositions(pos.subarray(0, o)).setColors(col.subarray(0, o));
+        // setPositions 会逐点算包围盒和包围球（十几万条线段，手机仿真里约 300 毫秒，滚到这里时卡一下）。
+        // 坐标是 int16 × posScale，范围已知：跳过逐点计算，直接给一个保守的包围盒，视锥剔除照样正确。
+        const geo = new LineSegmentsGeometry();
+        geo.computeBoundingBox = () => {}; geo.computeBoundingSphere = () => {};
+        geo.setPositions(pos.subarray(0, o)).setColors(col.subarray(0, o));
+        const half = 32767 * m.posScale;
+        geo.boundingBox = new THREE.Box3(new THREE.Vector3(-half, -half, -half), new THREE.Vector3(half, half, half));
+        geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), half * Math.sqrt(3));
         if (lines) { world.remove(lines); lines.geometry.dispose(); }
         lines = new LineSegments2(geo, mat); world.add(lines);
         meta = m; views = m.views.map(v => new THREE.Vector3(...v.position)); dist = views[0].length();
         // 首次加载和切换场景都直接显示对齐后的视角 1。
         flight = null; controls.enabled = true;
         camera.position.copy(views[0]); camera.lookAt(0, 0, 0); controls.update();
+        // 线条着色器在后台编译完再画第一帧（同步编译会在滚动到这里时卡一下）
+        await renderer.compileAsync(world, camera).catch(() => {});
+        if (disposed) return;
         fit(); renderer.render(world, camera); setView("0"); setLoading(false);
       };
 

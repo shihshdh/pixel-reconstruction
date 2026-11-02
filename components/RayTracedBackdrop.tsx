@@ -188,139 +188,153 @@ export default function RayTracedBackdrop({ theme, active, shown = active, tier 
     if (!canvas) return;
     const gl = canvas.getContext("webgl", { antialias: false, alpha: false, depth: false, powerPreference: "high-performance", preserveDrawingBuffer: false });
     if (!gl) { canvas.style.display = "none"; return; }
-    const compile = (type: number, source: string) => {
-      const shader = gl.createShader(type)!;
-      gl.shaderSource(shader, source); gl.compileShader(shader);
-      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader) || "shader");
+    // 并行编译：编译、链接后不立即查状态——查 COMPILE_STATUS / LINK_STATUS 会让主线程一直等到驱动编译完
+    // （这段光追着色器很大，实测手机仿真里卡主线程几百毫秒）。有 KHR_parallel_shader_compile 时驱动在后台编译，
+    // 每帧问一次 COMPLETION_STATUS_KHR，完成后再查链接结果、开始画；没有这个扩展时退回原来的同步做法。
+    const shaders = [[gl.VERTEX_SHADER, VERTEX], [gl.FRAGMENT_SHADER, FRAGMENT]].map(([type, source]) => {
+      const shader = gl.createShader(type as number)!;
+      gl.shaderSource(shader, source as string); gl.compileShader(shader);
       return shader;
-    };
-    let program: WebGLProgram;
-    try {
-      program = gl.createProgram()!;
-      gl.attachShader(program, compile(gl.VERTEX_SHADER, VERTEX));
-      gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FRAGMENT));
-      gl.linkProgram(program);
-      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program) || "link");
-    } catch (error) {
-      console.warn("[光追背景] 着色器不可用，已关闭：", error);
-      canvas.style.display = "none"; return;
-    }
-    gl.useProgram(program);
-    const buffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-    const loc = gl.getAttribLocation(program, "a");
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-    const u = (name: string) => gl.getUniformLocation(program, name);
-    const uR = u("R"), uT = u("T"), uP = u("P"), uBG = u("BG"), uDark = u("DARK"), uSS = u("SS"), uFlow = u("FLOW");
+    });
+    const program = gl.createProgram()!;
+    shaders.forEach(shader => gl.attachShader(program, shader));
+    gl.linkProgram(program);
+    const parallel = gl.getExtension("KHR_parallel_shader_compile");
+    let stop = () => {}, cancelled = false, poll = 0, begun = false;
+    const begin = () => {
+      begun = true;
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        console.warn("[光追背景] 着色器不可用，已关闭：", gl.getProgramInfoLog(program) || shaders.map(shader => gl.getShaderInfoLog(shader)).join(" | "));
+        canvas.style.display = "none"; return;
+      }
+      gl.useProgram(program);
+      const buffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+      const loc = gl.getAttribLocation(program, "a");
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+      const u = (name: string) => gl.getUniformLocation(program, name);
+      const uR = u("R"), uT = u("T"), uP = u("P"), uBG = u("BG"), uDark = u("DARK"), uSS = u("SS"), uFlow = u("FLOW");
 
-    const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-    // 帧率跟随屏幕：取刷新率的整数分频、不超过 120fps（300Hz → 100fps，144Hz → 72fps，60Hz → 60fps），
-    // 帧间隔均匀不抖。画质阶梯：满像素比 4× 超采样 → 1× → 降到 30fps → 0.6 倍像素比 → 静帧。
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    let divisor = 2, fastFps = 30;
-    // 核显上的极致档：先保住 4× 超采样、帧率降到 30fps（缓慢流动的环境背景，30fps 看不出差别），
-    // 实在不够再降超采样。独显照旧先保帧率。
-    // 高、均衡档从各自的起点开始，掉帧时沿同样的阶梯往下退
-    const ladder: Rung[] = tier === "ultra" && progressiveUltra()
-      ? [{ scale: dpr, ss: 4, fast: false }, { scale: dpr, ss: 1, fast: false }, { scale: dpr * .6, ss: 1, fast: false }]
-      : setting.ladder(dpr);
-    let level = 0, scale = ladder[0].scale, ticks = 0;
-    const fps = () => ladder[level].fast ? fastFps : 30;
-    let raf = 0, last = 0, slowSince = 0, frozen = false, disposed = false;
-    // 特调版（lib/perf.ts PERSONAL_BUILD）在独显上上限放到 150fps：300Hz 屏正好二分频
-    const cap = tier === "ultra" && PERSONAL_BUILD && !integratedGpu() ? 150 : setting.cap;
-    // 实测刷新率会有一点点偏差（300Hz 屏量出 303）：分频留 5% 容差，否则 303 / 150 向上取整成了三分频
-    void measureRefreshRate().then(hz => { divisor = Math.max(1, Math.ceil(hz / cap - .05)); fastFps = hz / divisor; canvas.dataset.fps = String(Math.round(fastFps)); });
-    const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
-    const started = performance.now();
-    const frameTimes: number[] = [];
+      const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+      // 帧率跟随屏幕：取刷新率的整数分频、不超过 120fps（300Hz → 100fps，144Hz → 72fps，60Hz → 60fps），
+      // 帧间隔均匀不抖。画质阶梯：满像素比 4× 超采样 → 1× → 降到 30fps → 0.6 倍像素比 → 静帧。
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      let divisor = 2, fastFps = 30;
+      // 核显上的极致档：先保住 4× 超采样、帧率降到 30fps（缓慢流动的环境背景，30fps 看不出差别），
+      // 实在不够再降超采样。独显照旧先保帧率。
+      // 高、均衡档从各自的起点开始，掉帧时沿同样的阶梯往下退
+      const ladder: Rung[] = tier === "ultra" && progressiveUltra()
+        ? [{ scale: dpr, ss: 4, fast: false }, { scale: dpr, ss: 1, fast: false }, { scale: dpr * .6, ss: 1, fast: false }]
+        : setting.ladder(dpr);
+      let level = 0, scale = ladder[0].scale, ticks = 0;
+      const fps = () => ladder[level].fast ? fastFps : 30;
+      let raf = 0, last = 0, slowSince = 0, frozen = false, disposed = false;
+      // 特调版（lib/perf.ts PERSONAL_BUILD）在独显上上限放到 150fps：300Hz 屏正好二分频
+      const cap = tier === "ultra" && PERSONAL_BUILD && !integratedGpu() ? 150 : setting.cap;
+      // 实测刷新率会有一点点偏差（300Hz 屏量出 303）：分频留 5% 容差，否则 303 / 150 向上取整成了三分频
+      void measureRefreshRate().then(hz => { divisor = Math.max(1, Math.ceil(hz / cap - .05)); fastFps = hz / divisor; canvas.dataset.fps = String(Math.round(fastFps)); });
+      const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
+      const started = performance.now();
+      const frameTimes: number[] = [];
 
-    const resize = () => {
-      const w = Math.max(1, Math.round(innerWidth * scale)), h = Math.max(1, Math.round(innerHeight * scale));
-      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
-      gl.viewport(0, 0, w, h);
-    };
-    // 背景色只随主题变：缓存起来，主题切换时（下面的 MutationObserver）再读。原来每帧 getComputedStyle，
-    // 页面上别的样式一变就逼浏览器同步重算样式。
-    let bg = [1, 1, 1];
-    const readBackground = () => { bg = parseColor(getComputedStyle(canvas.parentElement || document.body).getPropertyValue("--bg") || "#ffffff"); };
-    readBackground();
-    const draw = (now: number) => {
-      resize();
-      pointer.x += (pointer.tx - pointer.x) * .04;
-      pointer.y += (pointer.ty - pointer.y) * .04;
-      gl.uniform2f(uR, canvas.width, canvas.height);
-      gl.uniform1f(uSS, ladder[level].ss);
-      gl.uniform1f(uFlow, setting.flow);
-      gl.uniform1f(uT, reduced ? 4 : (now - started) / 1000);
-      gl.uniform2f(uP, pointer.x, pointer.y);
-      gl.uniform3f(uBG, bg[0], bg[1], bg[2]);
-      gl.uniform1f(uDark, document.documentElement.getAttribute("data-theme") === "dark" ? 1 : 0);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
-    };
-    const loop = (now: number) => {
-      raf = 0;
-      if (disposed || frozen || !activeRef.current || document.hidden || isImmersive()) return;
-      if (ambientShouldYield(now)) {
-        // 让路：这段停顿不算掉帧
-        last = 0; frameTimes.length = 0; slowSince = 0;
+      const resize = () => {
+        const w = Math.max(1, Math.round(innerWidth * scale)), h = Math.max(1, Math.round(innerHeight * scale));
+        if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+        gl.viewport(0, 0, w, h);
+      };
+      // 背景色只随主题变：缓存起来，主题切换时（下面的 MutationObserver）再读。原来每帧 getComputedStyle，
+      // 页面上别的样式一变就逼浏览器同步重算样式。
+      let bg = [1, 1, 1];
+      const readBackground = () => { bg = parseColor(getComputedStyle(canvas.parentElement || document.body).getPropertyValue("--bg") || "#ffffff"); };
+      readBackground();
+      const draw = (now: number) => {
+        resize();
+        pointer.x += (pointer.tx - pointer.x) * .04;
+        pointer.y += (pointer.ty - pointer.y) * .04;
+        gl.uniform2f(uR, canvas.width, canvas.height);
+        gl.uniform1f(uSS, ladder[level].ss);
+        gl.uniform1f(uFlow, setting.flow);
+        gl.uniform1f(uT, reduced ? 4 : (now - started) / 1000);
+        gl.uniform2f(uP, pointer.x, pointer.y);
+        gl.uniform3f(uBG, bg[0], bg[1], bg[2]);
+        gl.uniform1f(uDark, document.documentElement.getAttribute("data-theme") === "dark" ? 1 : 0);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+      };
+      const loop = (now: number) => {
+        raf = 0;
+        if (disposed || frozen || !activeRef.current || document.hidden || isImmersive()) return;
+        if (ambientShouldYield(now)) {
+          // 让路：这段停顿不算掉帧
+          last = 0; frameTimes.length = 0; slowSince = 0;
+          raf = requestAnimationFrame(loop);
+          return;
+        }
+        // 高帧率档按刷新率整数分频；30fps 档按时间间隔
+        const due = ladder[level].fast ? ++ticks % divisor === 0 : now - last >= 1000 / 30 - 2;
+        if (due) {
+          const delta = last ? now - last : 1000 / fps();
+          last = now;
+          draw(now);
+          // 掉帧保护：连续 2 秒平均帧间隔超过目标的 1.5 倍，就往下退一级
+          frameTimes.push(delta); if (frameTimes.length > 30) frameTimes.shift();
+          const average = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
+          if (frameTimes.length >= 20 && average > 1500 / fps()) {
+            slowSince ||= now;
+            if (now - slowSince > 2000) {
+              slowSince = 0; frameTimes.length = 0;
+              if (level < ladder.length - 1) { level++; scale = ladder[level].scale; canvas.dataset.level = String(level); } else { frozen = true; canvas.dataset.level = "frozen"; return; }
+            }
+          } else slowSince = 0;
+        }
         raf = requestAnimationFrame(loop);
-        return;
-      }
-      // 高帧率档按刷新率整数分频；30fps 档按时间间隔
-      const due = ladder[level].fast ? ++ticks % divisor === 0 : now - last >= 1000 / 30 - 2;
-      if (due) {
-        const delta = last ? now - last : 1000 / fps();
-        last = now;
-        draw(now);
-        // 掉帧保护：连续 2 秒平均帧间隔超过目标的 1.5 倍，就往下退一级
-        frameTimes.push(delta); if (frameTimes.length > 30) frameTimes.shift();
-        const average = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
-        if (frameTimes.length >= 20 && average > 1500 / fps()) {
-          slowSince ||= now;
-          if (now - slowSince > 2000) {
-            slowSince = 0; frameTimes.length = 0;
-            if (level < ladder.length - 1) { level++; scale = ladder[level].scale; canvas.dataset.level = String(level); } else { frozen = true; canvas.dataset.level = "frozen"; return; }
-          }
-        } else slowSince = 0;
-      }
-      raf = requestAnimationFrame(loop);
+      };
+      const wake = () => {
+        if (disposed) return;
+        if (reduced || frozen || !activeRef.current || isImmersive()) { draw(performance.now()); return; }
+        last = 0;
+        if (!raf) raf = requestAnimationFrame(loop);
+      };
+      wakeRef.current = wake;
+      const onMove = (event: PointerEvent) => { pointer.tx = event.clientX / innerWidth * 2 - 1; pointer.ty = event.clientY / innerHeight * 2 - 1; };
+      const onVisible = () => { if (!document.hidden) wake(); };
+      const onResize = () => { if (reduced || frozen || !activeRef.current) draw(performance.now()); };
+      addEventListener("pointermove", onMove, { passive: true });
+      addEventListener("resize", onResize);
+      addEventListener(IMMERSIVE_EVENT, wake);
+      okRef.current = true;
+      coverRef.current();
+      document.addEventListener("visibilitychange", onVisible);
+      const themeObserver = new MutationObserver(() => { readBackground(); if (reduced || frozen || !activeRef.current) draw(performance.now()); });
+      themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+      const onLost = (event: Event) => { event.preventDefault(); frozen = true; canvas.style.display = "none"; okRef.current = false; coverRef.current(); };
+      canvas.addEventListener("webglcontextlost", onLost);
+      wake();
+      // 着色器预热：驱动在第一次真正绘制时才编译（实测等显卡十几毫秒）。还没显示时（展示页、透明）先在空闲时
+      // 画一帧，进入主界面、背景淡入的那一刻就不再卡这一下。
+      const warm = () => { if (!disposed && !activeRef.current) { draw(performance.now()); gl.finish(); } };
+      const idle = "requestIdleCallback" in window ? requestIdleCallback(warm, { timeout: 5000 }) : setTimeout(warm, 2000);
+      stop = () => {
+        if ("cancelIdleCallback" in window) cancelIdleCallback(idle as number); else clearTimeout(idle as ReturnType<typeof setTimeout>);
+        disposed = true; cancelAnimationFrame(raf);
+        removeEventListener("pointermove", onMove); removeEventListener("resize", onResize); removeEventListener(IMMERSIVE_EVENT, wake);
+        okRef.current = false; coverRef.current();
+        document.removeEventListener("visibilitychange", onVisible);
+        themeObserver.disconnect();
+        canvas.removeEventListener("webglcontextlost", onLost);
+      };
     };
-    const wake = () => {
-      if (disposed) return;
-      if (reduced || frozen || !activeRef.current || isImmersive()) { draw(performance.now()); return; }
-      last = 0;
-      if (!raf) raf = requestAnimationFrame(loop);
+    const check = () => {
+      poll = 0;
+      if (cancelled) return;
+      if (!parallel || gl.getProgramParameter(program, parallel.COMPLETION_STATUS_KHR)) begin();
+      else poll = requestAnimationFrame(check);
     };
-    wakeRef.current = wake;
-    const onMove = (event: PointerEvent) => { pointer.tx = event.clientX / innerWidth * 2 - 1; pointer.ty = event.clientY / innerHeight * 2 - 1; };
-    const onVisible = () => { if (!document.hidden) wake(); };
-    const onResize = () => { if (reduced || frozen || !activeRef.current) draw(performance.now()); };
-    addEventListener("pointermove", onMove, { passive: true });
-    addEventListener("resize", onResize);
-    addEventListener(IMMERSIVE_EVENT, wake);
-    okRef.current = true;
-    coverRef.current();
-    document.addEventListener("visibilitychange", onVisible);
-    const themeObserver = new MutationObserver(() => { readBackground(); if (reduced || frozen || !activeRef.current) draw(performance.now()); });
-    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-    const onLost = (event: Event) => { event.preventDefault(); frozen = true; canvas.style.display = "none"; okRef.current = false; coverRef.current(); };
-    canvas.addEventListener("webglcontextlost", onLost);
-    wake();
-    // 着色器预热：驱动在第一次真正绘制时才编译（实测等显卡十几毫秒）。还没显示时（展示页、透明）先在空闲时
-    // 画一帧，进入主界面、背景淡入的那一刻就不再卡这一下。
-    const warm = () => { if (!disposed && !activeRef.current) { draw(performance.now()); gl.finish(); } };
-    const idle = "requestIdleCallback" in window ? requestIdleCallback(warm, { timeout: 5000 }) : setTimeout(warm, 2000);
+    check();
     return () => {
-      if ("cancelIdleCallback" in window) cancelIdleCallback(idle as number); else clearTimeout(idle as ReturnType<typeof setTimeout>);
-      disposed = true; cancelAnimationFrame(raf);
-      removeEventListener("pointermove", onMove); removeEventListener("resize", onResize); removeEventListener(IMMERSIVE_EVENT, wake);
-      okRef.current = false; coverRef.current();
-      document.removeEventListener("visibilitychange", onVisible);
-      themeObserver.disconnect();
-      canvas.removeEventListener("webglcontextlost", onLost);
+      cancelled = true; cancelAnimationFrame(poll);
+      if (begun) stop();
       gl.getExtension("WEBGL_lose_context")?.loseContext();
     };
   }, []);

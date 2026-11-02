@@ -192,7 +192,8 @@ export default function GlassInvite({ onStart, active = true }: { onStart: () =>
       // 鼠标状态：target 是鼠标给的目标，cur 是缓动后的当前值
       const state = { tx: 0, ty: 0, x: 0, y: 0, rx: .1, ry: -.06, inside: false, hover: -1, visible: false };
       const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
-      let raf = 0, last = 0;
+      // compiled：物理材质的着色器在后台编译完之前不画（见下方 compileAsync）
+      let raf = 0, last = 0, compiled = false;
       const loop = (now: number) => {
         raf = 0;
         const dt = Math.min(.05, last ? (now - last) / 1000 : .016); last = now;
@@ -217,7 +218,7 @@ export default function GlassInvite({ onStart, active = true }: { onStart: () =>
         if (moving && state.visible && activeRef.current) raf = requestAnimationFrame(loop);
         else last = 0;
       };
-      const kick = () => { if (!raf && state.visible && activeRef.current) raf = requestAnimationFrame(loop); };
+      const kick = () => { if (!raf && compiled && state.visible && activeRef.current) raf = requestAnimationFrame(loop); };
 
       const resize = () => {
         W = Math.max(1, root.clientWidth); H = Math.max(1, root.clientHeight);
@@ -241,7 +242,15 @@ export default function GlassInvite({ onStart, active = true }: { onStart: () =>
       void document.fonts?.ready.then(() => { if (!disposed) { paint(); kick(); } });
       applyGlass();
       resize();
-      setTimeout(() => root.setAttribute("data-ready", ""), 60);
+      // 透射 + 色散 + 清漆的物理材质着色器很大：第一次 render 时同步编译会卡住滚动（手机仿真实测 200 多毫秒）。
+      // compileAsync 借 KHR_parallel_shader_compile 在后台编译，编完画第一帧再淡入画布。
+      void renderer.compileAsync(scene, camera).catch(() => {}).then(() => {
+        if (disposed) return;
+        compiled = true;
+        renderer.render(scene, camera);
+        kick();
+        setTimeout(() => root.setAttribute("data-ready", ""), 60);
+      });
 
       cleanup = () => {
         cancelAnimationFrame(raf); ro.disconnect(); io.disconnect(); themeWatch.disconnect();
