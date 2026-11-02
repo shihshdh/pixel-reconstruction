@@ -33,7 +33,7 @@ export default function LineSculpture({ active = true, custom, variant = "home",
   const activeRef = useRef(active);
   const [mode, setMode] = useState<"pending" | "live" | "static">("pending");
   const [scene, setScene] = useState<SceneId>("louvre");
-  const [view, setView] = useState<ViewChoice>("free");
+  const [view, setView] = useState<ViewChoice>("0");
   const [loading, setLoading] = useState(true);
   // 用户自己生成的线雕没有预先渲染的静态图：只要有 WebGL2 就实时显示
   useEffect(() => {
@@ -125,7 +125,7 @@ export default function LineSculpture({ active = true, custom, variant = "home",
       controls.addEventListener("end", () => { const { i, deg } = nearest(); if (deg < 16) fly(i, 700 + deg * 90); });
       controls.addEventListener("change", kick);
 
-      let lastView: ViewChoice = "free";
+      let lastView: ViewChoice = "0";
       function tick(now: number) {
         raf = 0;
         let moving = false;
@@ -143,9 +143,6 @@ export default function LineSculpture({ active = true, custom, variant = "home",
         if ((moving || flight) && visible && activeRef.current) raf = requestAnimationFrame(tick);
       }
 
-      let firstShow = true, seenRatio = 0;
-      // 第一次看到（且数据已就绪）时，停顿一下再慢慢拼出照片
-      const maybeIntro = () => { if (firstShow && meta && visible && seenRatio > .45) { firstShow = false; setTimeout(() => fly(0), 900); } };
       const load = async (id: SceneId) => {
         setLoading(true);
         const m: Meta = custom ? custom.meta : await (await fetch(`/sculpture/${id}.json`)).json();
@@ -164,17 +161,15 @@ export default function LineSculpture({ active = true, custom, variant = "home",
         if (lines) { world.remove(lines); lines.geometry.dispose(); }
         lines = new LineSegments2(geo, mat); world.add(lines);
         meta = m; views = m.views.map(v => new THREE.Vector3(...v.position)); dist = views[0].length();
-        // 换场景：先停在散乱的角度，进入视口后再慢慢转到视角 1
+        // 首次加载和切换场景都直接显示对齐后的视角 1。
         flight = null; controls.enabled = true;
-        camera.position.copy(scatterPos()); camera.lookAt(0, 0, 0); controls.update();
-        fit(); setLoading(false); maybeIntro();
-        if (!firstShow && visible) setTimeout(() => fly(0), 500);
+        camera.position.copy(views[0]); camera.lookAt(0, 0, 0); controls.update();
+        fit(); renderer.render(world, camera); setView("0"); setLoading(false);
       };
 
       const io = new IntersectionObserver(([entry]) => {
-        visible = entry.isIntersecting; seenRatio = entry.intersectionRatio;
+        visible = entry.isIntersecting;
         if (visible) kick();
-        maybeIntro();
       }, { threshold: [0, .45] });
       io.observe(stage);
       const ro = new ResizeObserver(fit); ro.observe(stage);
@@ -193,7 +188,7 @@ export default function LineSculpture({ active = true, custom, variant = "home",
   // 回到首页时补画一帧（离开期间暂停了渲染）
   useEffect(() => { if (active) stageRef.current?.dispatchEvent(new Event("pointerup")); }, [active]);
 
-  const chooseScene = (id: SceneId) => { setScene(id); setView("free"); void apiRef.current?.load(id); };
+  const chooseScene = (id: SceneId) => { setScene(id); setView("0"); void apiRef.current?.load(id); };
   const chooseView = (v: ViewChoice) => { if (v === "free") apiRef.current?.scatter(); else apiRef.current?.fly(+v, 1600); };
 
   const overlay = variant === "overlay";
@@ -211,8 +206,8 @@ export default function LineSculpture({ active = true, custom, variant = "home",
       </div>
     </header>
     <div ref={stageRef} className={styles.stage} data-loading={mode === "live" && loading ? "" : undefined}>
-      {mode === "static" && <img className={styles.still} src={`/sculpture/${scene}-still.webp`} alt={scene === "louvre" ? "由彩色短线拼成的卢浮宫金字塔夜景" : "由彩色短线拼成的寺前夜樱"} />}
-      {mode === "live" && loading && <span className={styles.status} role="status">正在铺线…</span>}
+      {!custom && (mode !== "live" || loading) && <img className={styles.still} src={`/sculpture/${scene}-still.webp`} alt={scene === "louvre" ? "由彩色短线拼成的卢浮宫金字塔夜景" : "由彩色短线拼成的寺前夜樱"} />}
+      {mode !== "static" && loading && <span className={styles.status} role="status">正在铺线…</span>}
     </div>
   </section>;
 }

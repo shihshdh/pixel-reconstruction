@@ -143,6 +143,8 @@ export default function GlassInvite({ onStart, active = true }: { onStart: () =>
         glow(.8, .28, glows[0][1], glows[0][0]);
         glow(.18, .9, glows[1][1], glows[1][0]);
         glow(.56, .5, glows[2][1], glows[2][0]);
+        // 手机上把正文放在玻璃前的 DOM 层，底板只保留光影。
+        if (matchMedia("(max-width: 740px)").matches) { texture.needsUpdate = true; return; }
         // 文字的位置按 CSS 像素算，再加上 PAD 留出的边，和按钮对齐
         const s = ratio, ox = (PAD - 1) / 2 * W * s, oy = (PAD - 1) / 2 * H * s;
         const family = getComputedStyle(document.body).fontFamily;

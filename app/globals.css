@@ -1222,6 +1222,13 @@ button { font-family: inherit; }
 @keyframes assistPoint { 0% { box-shadow: 0 0 0 0 #5f8fb466; } 100% { box-shadow: 0 0 0 12px #5f8fb400; } }
 @media (prefers-reduced-motion: reduce) { [data-assist-highlight] { animation: none; } }
 
+/* 手机上的筛选、分段选项和工具按钮保留足够的触摸面积。 */
+@media (max-width: 740px) {
+  .ruhua-root button { min-height: 40px !important; min-width: 40px; }
+  .ruhua-root summary, .ruhua-root .video-option { min-height: 40px; display: flex; align-items: center; }
+  .ruhua-root [aria-label="切换展示场景"] { max-width: calc(100vw - 120px); overflow-x: auto; }
+}
+
 /* 滚动条：细、透明轨道、悬停才明显（Apple 风格的叠加滚动条），不在窗口右侧留一条实心黑边 */
 html{scrollbar-width:thin;scrollbar-color:color-mix(in srgb,currentColor 28%,transparent) transparent;}
 ::-webkit-scrollbar{width:8px;height:8px;background:transparent;}

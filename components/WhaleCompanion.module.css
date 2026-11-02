@@ -93,6 +93,14 @@
 .credit a{color:inherit;text-decoration:underline;text-decoration-color:var(--line2);text-underline-offset:2px}
 
 [data-compact] .panel{height:min(470px,calc(100svh - 120px))}
+@media(max-width:740px){
+  .root{bottom:max(96px,calc(96px + env(safe-area-inset-bottom)))!important;right:12px!important;}
+  .chip{height:44px;}
+  .collapse,.headActions button{min-width:40px;min-height:40px;}
+  .suggest button,.bubble>div button,.confirm button,.vision button,.vision details>summary{min-height:40px;}
+  .form button{height:44px;}
+  .credit a{display:inline-flex;align-items:center;min-height:40px;}
+}
 
 @keyframes rise{from{opacity:0;transform:translateY(14px)}}
 @keyframes pop{from{opacity:0;transform:translateY(8px) scale(.97)}}
