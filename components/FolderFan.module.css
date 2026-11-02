@@ -48,5 +48,10 @@
 .arrow{position:absolute;right:18px;bottom:16px;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;background:#ffffffd0;color:var(--f-accent);font-size:16px;transition:transform .3s cubic-bezier(.34,1.56,.64,1);}
 .stage[data-open] .arrow{transform:translateX(3px);}
 
-@media(max-width:740px){.stage{height:420px;transform:scale(.72);transform-origin:50% 100%;}}
+@media(max-width:740px){
+  .stage{height:360px;overflow:clip;}
+  .puff{left:50%;top:32%;font-size:clamp(64px,18vw,100px);}
+  .folder{transform:scale(.72);transform-origin:50% 100%;}
+  .stage[data-open] .card{transform:translate3d(calc(var(--open-x) * .5),var(--open-y),0) rotate(var(--open-r)) scale(1.14);}
+}
 @media(prefers-reduced-motion:reduce){.card,.face,.arrow{transition:none;}}

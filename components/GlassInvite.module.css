@@ -8,3 +8,10 @@
 .cta{position:absolute!important;left:8.5%;top:calc(30% + var(--title-size,52px) * 2.12 + 58px + (var(--lead-lines,1) - 1) * 22px);z-index:2;}
 :global([data-theme="dark"]) .cta{background:#ececef;color:#111;}
 @media(max-width:1120px){.invite{margin-left:24px;margin-right:24px;}}
+@media(max-width:740px){
+  .invite{height:auto;min-height:360px;padding:32px 24px;display:flex;flex-direction:column;justify-content:center;gap:24px;isolation:isolate;}
+  .copy{position:relative;z-index:1;width:auto;height:auto;overflow:visible;clip:auto;white-space:normal;padding:18px;border-radius:18px;background:color-mix(in srgb,var(--bg) 88%,transparent);color:var(--ink);}
+  .copy h2{margin:0;font-size:clamp(28px,7.5vw,34px);line-height:1.25;letter-spacing:-.02em;text-wrap:balance;}
+  .copy p{margin:16px 0 0;font-size:13.5px;line-height:1.7;color:var(--ink2);overflow-wrap:break-word;}
+  .cta{position:relative!important;left:auto;top:auto;align-self:flex-start;min-height:44px;margin-left:18px;}
+}

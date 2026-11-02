@@ -15,9 +15,9 @@
 .canvas:active{cursor:grabbing;}
 .stage[data-loading] .canvas{opacity:0;}
 .still{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;}
-.status{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:12px;letter-spacing:.12em;color:var(--ink3);animation:breathe 1.6s ease-in-out infinite;}
+.status{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);padding:8px 12px;border:1px solid var(--line);border-radius:99px;background:var(--card);font-size:12px;letter-spacing:.12em;color:var(--ink2);}
 @keyframes breathe{50%{opacity:.4;}}
 
 @media(max-width:1120px){.section{margin-left:24px;margin-right:24px;}}
-@media(max-width:740px){.section{margin-top:64px;}.stage{height:320px;border-radius:18px;}}
+@media(max-width:740px){.section{margin-top:64px;}.stage{height:320px;border-radius:18px;}.controls{max-width:100%;}.controls :global(.lq)>button{min-height:40px;padding-left:10px;padding-right:10px;}.overlaySection{padding:24px 16px;}}
 @media(prefers-reduced-motion:reduce){.canvas{transition:none;}.status{animation:none;}}

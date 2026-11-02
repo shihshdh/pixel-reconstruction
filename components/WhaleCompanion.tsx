@@ -401,17 +401,19 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
     vv?.addEventListener("resize", sync); window.addEventListener("resize", sync);
     return () => { vv?.removeEventListener("resize", sync); window.removeEventListener("resize", sync); };
   }, []);
-  const belowPanel = (prefs.collapsed || stageState === "failed" ? 38 : stageSize.height) + 10 + prefs.bottom;
+  const belowPanel = (prefs.collapsed || stageState === "failed" ? 44 : stageSize.height) + 10 + Math.max(compact ? 96 : 0, prefs.bottom);
   const panelMax = viewHeight ? Math.max(220, viewHeight - belowPanel - 12) : undefined;
   const clampPos = useCallback((right: number, bottom: number) => {
     const box = rootRef.current?.querySelector<HTMLElement>("[data-figure]")?.getBoundingClientRect();
     const w = box?.width || stageSize.width, h = box?.height || stageSize.height;
     // 手机上屏幕底部是导航标签栏（约 74px 高），站在它上面
-    const floor = matchMedia("(max-width: 740px)").matches ? 86 : 8;
+    const dock = document.querySelector(".nav-dock")?.getBoundingClientRect();
+    const floor = matchMedia("(max-width: 740px)").matches ? Math.max(96, dock ? window.innerHeight - dock.top + 14 : 0) : 8;
     return { right: Math.max(8, Math.min(window.innerWidth - w - 8, right)), bottom: Math.max(floor, Math.min(window.innerHeight - h - 8, bottom)) };
   }, [stageSize.width, stageSize.height]);
   useEffect(() => {
     const fit = () => setPrefs(p => ({ ...p, ...clampPos(p.right, p.bottom) }));
+    fit();
     window.addEventListener("resize", fit);
     return () => window.removeEventListener("resize", fit);
   }, [clampPos]);
