@@ -31,7 +31,7 @@ export function preloadScene(scene: LandingScene) {
   slot = { path, blob, controller };
   // 原图也先解码，切换时淡入不卡
   const img = new Image();
-  img.src = `/scene/${scene.id}.jpg`;
+  img.sizes = "(max-aspect-ratio: 8/5) 160vh, 100vw"; img.srcset = `/scene/${scene.id}-1440-v1.webp 1440w, /scene/${scene.id}-full-v1.webp ${Math.min(scene.width, 2048)}w`; img.src = `/scene/${scene.id}-full-v1.webp`;
   void img.decode?.().catch(() => {});
 }
 

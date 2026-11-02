@@ -46,7 +46,7 @@ import { prefersReduced, SPRING, installPressFeedback, useParallax } from "@/lib
 // Three.js 渲染器：禁 SSR
 function LandingFallback() {
   return <div className="landing-fallback" role="status" aria-label="正在准备三维展示">
-    <img src="/scene/landing.jpg" alt="印尼佩尼达岛的 Kelingking 悬崖与海滩" fetchPriority="high" />
+    <img src="/scene/victoria-full-v1.webp" srcSet="/scene/victoria-1440-v1.webp 1440w, /scene/victoria-full-v1.webp 2048w" sizes="(max-aspect-ratio: 8/5) 160vh, 100vw" alt="从太平山俯瞰香港维多利亚港：中环高楼、海港与九龙" loading="eager" decoding="async" fetchPriority="high" />
     <div className="landing-fallback-shade" aria-hidden="true" />
     <div className="landing-fallback-brand" data-brand-target=""><BrandMark size={40} /><span>Pixel<br />Reconstruction<small>SINGLE-IMAGE 3D</small></span></div>
     <p>正在准备三维展示<span aria-hidden="true">…</span><noscript> · 请启用 JavaScript 以浏览三维场景</noscript></p>
@@ -1324,10 +1324,10 @@ function EnhancePage({ result, setPage, onRerenderDone, doubao, onDoubaoChange }
 // 首页演示播放器：四个运镜视频 + dock 切换 + 循环
 // ============================================================
 const DEMO_VIDEOS = [
-  { id: "orbit", name: "环绕", src: "/demo/demo-orbit.mp4", poster: "/demo/demo-orbit.jpg" },
-  { id: "dolly", name: "缓推", src: "/demo/demo-dolly.mp4", poster: "/demo/demo-dolly.jpg" },
-  { id: "arc", name: "弧推", src: "/demo/demo-arc.mp4", poster: "/demo/demo-arc.jpg" },
-  { id: "zoom", name: "变焦", src: "/demo/demo-zoom.mp4", poster: "/demo/demo-zoom.jpg" },
+  { id: "orbit", name: "环绕", src: "/demo/demo-orbit.mp4", poster: "/demo/demo-orbit-v1.webp" },
+  { id: "dolly", name: "缓推", src: "/demo/demo-dolly.mp4", poster: "/demo/demo-dolly-v1.webp" },
+  { id: "arc", name: "弧推", src: "/demo/demo-arc.mp4", poster: "/demo/demo-arc-v1.webp" },
+  { id: "zoom", name: "变焦", src: "/demo/demo-zoom.mp4", poster: "/demo/demo-zoom-v1.webp" },
 ];
 
 // ============================================================
@@ -1376,7 +1376,7 @@ function DemoPlayer({ innerRef, active: pageActive = true }) {
       <div style={{ position: "absolute", top: 18, left: 18, zIndex: 3, padding: "7px 14px", borderRadius: 980, background: "rgba(0,0,0,.38)", backdropFilter: "blur(6px)", color: "#f5f5f7", fontSize: 12 }}>高斯泼溅 · 运镜演示</div>
       <div style={{ position: "relative", width: "100%", aspectRatio: "16 / 10" }}>
         {DEMO_VIDEOS.map(v => <div key={v.id} style={{ position: "absolute", inset: 0, opacity: v.id === active ? 1 : 0, transition: "opacity 380ms var(--e-out)", pointerEvents: v.id === active ? "auto" : "none" }}>
-          <img src={v.poster} alt={v.name + "运镜预览"} loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", position: "absolute", inset: 0 }} />
+          <img src={v.poster} alt={v.name + "运镜预览"} loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover", position: "absolute", inset: 0 }} />
           <video ref={el => { vidRefs.current[v.id] = el; }} src={requested[v.id] ? v.src : undefined} poster={v.poster} muted loop playsInline
             preload={!pageActive ? "none" : v.id === active ? "auto" : v.id === prefetch ? "metadata" : "none"}
             onCanPlay={() => setReady(r => r[v.id] ? r : { ...r, [v.id]: true })}
@@ -1563,6 +1563,25 @@ function Reveal({ children, stagger = false, style, as: Tag = "div", variant = "
 // ============================================================
 // 首页（概览）—— 完整还原设计稿 + 动效
 // ============================================================
+// Native lazy loading can fetch images over 1,000px away, even under the landing overlay.
+// Give the compute photo a URL only while the overview is active and it is near the viewport.
+function ComputePhoto({ active }: { active: boolean }) {
+  const ref = useRef<HTMLImageElement>(null);
+  const [near, setNear] = useState(false);
+  useEffect(() => {
+    if (!active || near || !ref.current) return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) { setNear(true); observer.disconnect(); }
+    }, { rootMargin: "350px" });
+    observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, [active, near]);
+  return <img ref={ref} src={near ? "/rtx4090-1600-v1.webp" : undefined}
+    srcSet={near ? "/rtx4090-960-v1.webp 960w, /rtx4090-1600-v1.webp 1600w" : undefined}
+    sizes="(max-width: 767px) 100vw, 50vw" width={1914} height={822}
+    alt="用于云端场景重建的 RTX 4090 显卡" loading="lazy" decoding="async" data-parallax=".05" />;
+}
+
 function HomePage({ setPage, active = true, ready = true }) {
   const demoRef = useRef(null);
   const [workflowStage, setWorkflowStage] = useState(0);
@@ -1592,7 +1611,7 @@ function HomePage({ setPage, active = true, ready = true }) {
     <DemoPlayer innerRef={demoRef} active={active} />
     <p className="demo-caption">同一场景，四种相机运动。选择上方运镜，查看视角与空间关系的变化。</p>
     <section className="workflow-flow">
-      <Reveal variant="focus" className="workflow-intro"><h2>从照片，到成片。</h2><p>先有空间，再决定怎么看。</p><WorkflowPreview stage={workflowStage} onStageChange={setWorkflowStage} playing={workflowPlaying} onPlayingChange={setWorkflowPlaying} active={active} /></Reveal>
+      <Reveal variant="focus" className="workflow-intro"><h2>从照片，到成片。</h2><p>先有空间，再决定怎么看。</p>{active && <WorkflowPreview stage={workflowStage} onStageChange={setWorkflowStage} playing={workflowPlaying} onPlayingChange={setWorkflowPlaying} active={active} />}</Reveal>
       <Reveal as="ol" stagger variant="unfold" className="workflow-list">
         {[
           ["上传照片", "选择主体清晰、具有前后层次的图片。支持 JPG、PNG、WebP、HEIC；20MB 以内原图上传，更大的照片会在本地压缩到 20MB 以内。"],
@@ -1604,10 +1623,10 @@ function HomePage({ setPage, active = true, ready = true }) {
     <section className="compute-story">
       <Reveal stagger variant="drift" className="compute-story-layout">
         <div><h2>重建在云端完成。<br />创作留在浏览器。</h2><p>SHARP 推理由 Beam 按任务分配 RTX 4090。打开创作页时显卡随即启动，模型常驻显存，一张照片十几秒完成重建；场景查看、运镜预览与视频导出留在浏览器。</p><span className="compute-spec">RTX 4090 · 24GB <i /> 按任务分配</span></div>
-        <figure><img src="/rtx4090.png" alt="用于云端场景重建的 RTX 4090 显卡" loading="lazy" data-parallax=".05" /><figcaption>COMPUTE / BEAM SERVERLESS</figcaption></figure>
+        <figure><ComputePhoto active={active} /><figcaption>COMPUTE / BEAM SERVERLESS</figcaption></figure>
       </Reveal>
     </section>
-    <SceneWall />
+    {active && <SceneWall />}
     <LineSculpture active={active} />
     <GlassInvite active={active} onStart={() => setPage("create")} />
     <footer className="overview-footer"><BrandMark size={21} /><span>Pixel Reconstruction</span><span>单张照片 · 三维重建 · 走进世界</span></footer>

@@ -28,6 +28,28 @@
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
 
+# Next's static bundle filenames are content hashed.
+[[headers]]
+  for = "/_next/static/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Image variants contain an explicit version; bump it with every regenerated release.
+[[headers]]
+  for = "/scene/*-v1.webp"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/rtx4090-*-v1.webp"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/demo/*-v1.webp"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
 # Unversioned URLs keep a short cache so replacing them takes effect within a day.
 [[headers]]
   for = "/scene/*.jpg"

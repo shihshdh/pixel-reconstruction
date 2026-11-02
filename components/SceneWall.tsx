@@ -128,7 +128,7 @@ function FlipbookTile({ ratio, hidden }: { ratio: string; hidden: boolean }) {
     return () => { io.disconnect(); clearInterval(timer); };
   }, []);
   return <figure ref={ref} className={`${styles.tile} ${styles.flip}`} data-hidden={hidden || undefined} style={{ aspectRatio: ratio }}>
-    <img src={FRAMES[frame]} alt="同一场景的四种运镜画面轮流播放" decoding="async" />
+    <img src={FRAMES[frame]} alt="同一场景的四种运镜画面轮流播放" loading="lazy" decoding="async" />
     <figcaption className={styles.always}><strong>运镜 · {MOTIONS[Math.floor(frame / 3)]}</strong><span>{String(frame + 1).padStart(2, "0")} / 12</span></figcaption>
   </figure>;
 }
@@ -159,7 +159,7 @@ export default function SceneWall() {
         </div>
       </div>
       <FolderFan label="场景" note="9 个空间"
-        cards={FOLDER.map((id, i) => { const scene = LANDING_SCENES.find(s => s.id === id)!; return { key: id, title: scene.name, tag: i === 0 || i === FOLDER.length - 1 ? scene.name : undefined, thumb: <img src={`/scene/wall/${id}.webp`} alt="" loading="lazy" /> }; })}
+        cards={FOLDER.map((id, i) => { const scene = LANDING_SCENES.find(s => s.id === id)!; return { key: id, title: scene.name, tag: i === 0 || i === FOLDER.length - 1 ? scene.name : undefined, thumb: <img src={`/scene/wall/${id}.webp`} alt="" loading="lazy" decoding="async" /> }; })}
         onOpenCard={showTile} onOpen={() => gridRef.current?.scrollIntoView({ behavior: smooth(), block: "start" })} />
     </header>
     <div ref={gridRef} className={styles.grid}>

@@ -33,6 +33,7 @@ export default function LandingExperience({ onEnter, onExitStart, exitDuration =
   const [sceneAttempt, setSceneAttempt] = useState(0);
   // 轮流播放的场景：每个停留 SCENE_DWELL_MS；正在拖动探索、减少动态效果时不自动换
   const [sceneIndex, setSceneIndex] = useState(0);
+  const [previousSceneIndex, setPreviousSceneIndex] = useState<number | null>(null);
   const scene = LANDING_SCENES[sceneIndex];
   // 第一次之后的场景切换：新场景晚一点开始载入，先让标题换语言的动画流畅跑完
   const switched = useRef(false);
@@ -40,13 +41,15 @@ export default function LandingExperience({ onEnter, onExitStart, exitDuration =
   const [sceneMoving, setSceneMoving] = useState(false);
   const sceneMotion = useCallback((moving: boolean) => setSceneMoving(moving), []);
   const showScene = useCallback((index: number) => {
+    if (index === sceneIndex) return;
+    setPreviousSceneIndex(sceneIndex);
     switched.current = true;
     markCopyBusy();
     setSceneIndex(index);
     setSceneMoving(false);
     setLoad({ phase: "download", percent: null });
     setStatus("loading");
-  }, []);
+  }, [sceneIndex]);
   const sceneStatus = useCallback((next: LandingSceneStatus) => setStatus(next), []);
   const sceneProgress = useCallback((next: LandingLoadProgress) => setLoad(next), []);
   const retryScene = () => {
@@ -141,13 +144,17 @@ export default function LandingExperience({ onEnter, onExitStart, exitDuration =
         <div className={styles.scene}>
           {/* 每个场景一张原图：切换时先淡入下一张原图，3D 场景载入后叠在它上面（原图不撤走，
               场景里稀疏的地方透出的就是原图），全程不黑屏 */}
-          {/* 只挂载上一个（淡出用）、当前和下一个（预载）场景的原图，首屏不必一次下载全部 */}
+          {/* 只挂载已下载的上一张（淡出用）和当前原图；下一张由预载器按需解码 */}
           {LANDING_SCENES.map((item, index) => {
-            const offset = (index - sceneIndex + count) % count;
-            if (offset > 1 && offset < count - 1) return null;
+            // Only the current poster and the already downloaded fade-out poster mount.
+            // landing-preload decodes the next poster after the current scene is ready.
+            if (index !== sceneIndex && index !== previousSceneIndex) return null;
             return <img key={item.id}
               className={`${styles.poster} ${index !== sceneIndex ? styles.posterHidden : ""}`}
-              src={`/scene/${item.id}.jpg`} alt={index === sceneIndex ? item.alt : ""} aria-hidden={index !== sceneIndex} fetchPriority={index === sceneIndex ? "high" : "low"} />;
+              src={`/scene/${item.id}-full-v1.webp`}
+              srcSet={`/scene/${item.id}-1440-v1.webp 1440w, /scene/${item.id}-full-v1.webp ${Math.min(item.width, 2048)}w`}
+              sizes="(max-aspect-ratio: 8/5) 160vh, 100vw" loading="eager" decoding="async"
+              alt={index === sceneIndex ? item.alt : ""} aria-hidden={index !== sceneIndex} fetchPriority={index === sceneIndex ? "high" : "low"} />;
           })}
           <div className={`${styles.splats} ${status === "ready" ? styles.splatsReady : ""}`}><LandingSplat key={`${scene.id}-${sceneAttempt}`} startDelay={switched.current ? 480 : 0} scene={scene} depth={depth} reducedMotion={reduced} onStatus={sceneStatus} onInteraction={exploreScene} onProgress={sceneProgress} onMotion={sceneMotion} /></div>
         </div>
