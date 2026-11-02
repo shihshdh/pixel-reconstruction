@@ -4,28 +4,29 @@
 
 import { useState, useEffect, useRef, useCallback, type CSSProperties, type ElementType, type ReactNode } from "react";
 import dynamic from "next/dynamic";
-import DevelopPainting from "@/components/DevelopPainting";
-import CompanionPageImage from "@/components/CompanionPageImage";
+const DevelopPainting = dynamic(() => import("@/components/DevelopPainting"));
+const CompanionPageImage = dynamic(() => import("@/components/CompanionPageImage"));
 import { preparePhoto, readLocalPhoto } from "@/lib/photo-prep";
 import { lookupPlace, photoCoords, photoDevice, photoSettings, readPhotoMeta, type PhotoMeta } from "@/lib/photo-meta";
 import { announceMoment, isDevelopablePhoto, UPLOAD_REQUEST_EVENT, type UploadRequest } from "@/lib/companion-moments";
 import { useScenePoster } from "@/components/ScenePoster";
 import { cacheGalleryItem, deleteGalleryItem, galleryId, isSameGalleryScene, getGalleryAsset, getGalleryScene, listGallery, setGalleryFavorite, setGalleryPhoto, subscribeGallery, type GalleryItem } from "@/lib/gallery-storage";
-import DoubaoSettings, { type DoubaoPreferences } from "@/components/DoubaoSettings";
-import EditPromptPicker from "@/components/EditPromptPicker";
+import type { DoubaoPreferences } from "@/components/DoubaoSettings";
+const DoubaoSettings = dynamic(() => import("@/components/DoubaoSettings"));
+const EditPromptPicker = dynamic(() => import("@/components/EditPromptPicker"));
 import BrandMark from "@/components/BrandMark";
 import InteriorStyles from "@/components/InteriorStyles";
-import WorkflowPreview from "@/components/WorkflowPreview";
+const WorkflowPreview = dynamic(() => import("@/components/WorkflowPreview"));
 import ShowcaseTransition from "@/components/ShowcaseTransition";
 import BrandIntro from "@/components/BrandIntro";
 import PixelLoader from "@/components/PixelLoader";
 import { MorphIcon } from "morphicons/react";
 import { ICON } from "@/lib/icons";
 import AuthorContact from "@/components/AuthorContact";
-import DiscShelf from "@/components/DiscShelf";
-import SceneWall from "@/components/SceneWall";
-import LineSculpture from "@/components/LineSculpture";
-import GlassInvite from "@/components/GlassInvite";
+const DiscShelf = dynamic(() => import("@/components/DiscShelf")) as typeof import("@/components/DiscShelf").default;
+const SceneWall = dynamic(() => import("@/components/SceneWall"));
+const LineSculpture = dynamic(() => import("@/components/LineSculpture"));
+const GlassInvite = dynamic(() => import("@/components/GlassInvite"));
 import { DESKTOP_DOWNLOAD, DESKTOP_DOWNLOAD_GITHUB, DESKTOP_RELEASES, isDesktopApp, openWorksFolder, setFullscreen, titleBarMouseDown } from "@/lib/desktop";
 import WindowControls from "@/components/WindowControls";
 import { computeUiZoom } from "@/lib/ui-scale";
@@ -55,7 +56,7 @@ function LandingFallback() {
 const LandingExperience = dynamic(() => import("@/components/LandingExperience"), { ssr: false, loading: LandingFallback });
 const SplatViewer = dynamic(() => import("@/components/SplatViewer"), { ssr: false });
 const WorldMaker = dynamic(() => import("@/components/WorldMaker"), { ssr: false });
-// Site companion; loads only after the landing and only when the gateway can chat.
+// Site companion; the module itself waits for the first settled workspace entry.
 const WhaleCompanion = dynamic(() => import("@/components/WhaleCompanion"), { ssr: false });
 // 画质“极致”档（独立显卡）的界面光追背景；其他档位不加载。
 const RayTracedBackdrop = dynamic(() => import("@/components/RayTracedBackdrop"), { ssr: false });
@@ -1627,8 +1628,8 @@ function HomePage({ setPage, active = true, ready = true }) {
       </Reveal>
     </section>
     {active && <SceneWall />}
-    <LineSculpture active={active} />
-    <GlassInvite active={active} onStart={() => setPage("create")} />
+    {ready && <LineSculpture active={active} />}
+    {ready && <GlassInvite active={active} onStart={() => setPage("create")} />}
     <footer className="overview-footer"><BrandMark size={21} /><span>Pixel Reconstruction</span><span>单张照片 · 三维重建 · 走进世界</span></footer>
   </main>;
 }
@@ -1672,6 +1673,8 @@ export default function App() {
   // （Live2D 模型解析、纹理解码与上传，实测首帧约 80ms），再晚一点启动本机引擎（起 Python、读权重）。
   // 原来这些都在转场结束的同一刻开始，主界面刚出现就连着卡几帧。
   const [settled, setSettled] = useState(false);
+  const [companionWanted, setCompanionWanted] = useState(false);
+  useEffect(() => { if (splashDone && settled) setCompanionWanted(true); }, [splashDone, settled]);
   useEffect(() => {
     if (!splashDone) { setSettled(false); return; }
     let idle = 0;
@@ -1684,7 +1687,12 @@ export default function App() {
   useEffect(() => {
     if (!settled) return;
     const timer = setTimeout(() => setEngineWanted(true), 1200);
-    return () => clearTimeout(timer);
+    // 各页的按需模块在空闲时预取，第一次切到创作、修图、作品库不用等下载
+    const prefetch = setTimeout(() => {
+      const load = () => { void Promise.all([import("@/components/DevelopPainting"), import("@/components/CompanionPageImage"), import("@/components/EditPromptPicker"), import("@/components/DoubaoSettings"), import("@/components/DiscShelf"), import("@/components/SplatViewer")]).catch(() => {}); };
+      if ("requestIdleCallback" in window) requestIdleCallback(load, { timeout: 4000 }); else load();
+    }, 2500);
+    return () => { clearTimeout(timer); clearTimeout(prefetch); };
   }, [settled]);
   useEffect(() => engineWanted ? watchLocalEngine(setEngine) : undefined, [engineWanted]);
   // 大窗口、全屏时界面整体等比放大（见 lib/ui-scale.ts）
@@ -1821,7 +1829,7 @@ export default function App() {
     {!splashDone && <LandingExperience exitDuration={960} onExitStart={() => setShowcaseMotion("enter")} onEnter={() => { setSplashDone(true); setShowcaseMotion(null); window.scrollTo(0, 0); }} />}
     <ShowcaseTransition direction={showcaseMotion} />
     {/* 工作室和显影期间停下，把显卡让给场景渲染与本机推理 */}
-    {rayUi && <RayTracedBackdrop key={rayUi} tier={rayUi} theme={theme} active={splashDone && page !== "studio" && !creating} shown={splashDone} />}
+    {rayUi && (splashDone || showcaseMotion) && <RayTracedBackdrop key={rayUi} tier={rayUi} theme={theme} active={splashDone && page !== "studio" && !creating} shown={splashDone} />}
     <div className="showcase-workspace" inert={!splashDone} aria-hidden={!splashDone} style={{ visibility: splashDone || showcaseMotion ? "visible" : "hidden", position: "relative", zIndex: 1 }}>
       <Nav engine={engine} page={page} setPage={navigate} theme={theme} toggleTheme={() => setTheme(t => t === "dark" ? "light" : "dark")} onShowcase={() => { setShowcaseMotion("return"); setSplashDone(false); }} logoReady={splashDone || showcaseMotion === "enter"} />
       {routeTransitionId > 0 && <div key={`wipe-${routeTransitionId}`} className="route-wipe" aria-hidden="true" style={{ visibility: splashDone ? "visible" : "hidden" }} />}
@@ -1833,7 +1841,7 @@ export default function App() {
         {page === "gallery" && <GalleryPage setPage={navigate} onOpen={openGallery} onDelete={id => { if (result?.gallery_id === id) setResult(null); }} />}
       </div>
     </div>
-    {assist && <WhaleCompanion page={page} active={splashDone && settled} visionEnabled={assistVision} onNavigate={navigate} />}
+    {assist && companionWanted && <WhaleCompanion page={page} active={splashDone && settled} visionEnabled={assistVision} onNavigate={navigate} />}
   </div>;
 }
 
