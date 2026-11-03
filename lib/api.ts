@@ -119,40 +119,54 @@ async function apiError(res: Response) {
   // status：调用方据此区分“服务明确拒绝”与“断网 / 超时、结果未知”（见 lib/world.ts 的提交找回）
   return Object.assign(new Error(detail || (res.status === 401 || res.status === 403 ? "后端拒绝访问，请检查服务端的访问设置。" : res.status === 413 ? "图片太大，请选择 20MB 以内的照片。" : res.status === 429 ? "当前任务较多，请稍后重试。" : "服务请求失败（" + res.status + "），请稍后重试。")), { status: res.status });
 }
+/** Bounded wait for read retries; recovery wakes the wait without replaying any POST. */
+export function waitForReadRetry(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
+      if (typeof window !== 'undefined') window.removeEventListener('online', resume);
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', visible);
+    };
+    const finish = () => { cleanup(); resolve(); };
+    const cancel = () => { cleanup(); reject(abortReason(signal)); };
+    const resume = () => { if (typeof navigator === 'undefined' || navigator.onLine !== false) finish(); };
+    const visible = () => { if (document.visibilityState === 'visible') resume(); };
+    const timer = setTimeout(finish, typeof navigator !== 'undefined' && navigator.onLine === false ? 30000 : milliseconds);
+    if (typeof window !== 'undefined') window.addEventListener('online', resume);
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', visible);
+    if (signal?.aborted) cancel(); else signal?.addEventListener('abort', cancel, { once: true });
+  });
+}
 async function request<T>(path: string, init: RequestInit = {}, base = getBase(), timeout = 30000): Promise<T> {
   const url = endpoint(path, base);
-  let res: Response;
-  let requestSignal: ReturnType<typeof createAbortSignal> | undefined;
-  try {
+  // Never replay generation, chat, tickets or other POSTs, including lost responses.
+  const attempts = !init.method || init.method.toUpperCase() === 'GET' ? 3 : 1;
+  for (let attempt = 0; ; attempt++) {
+    const scoped = createAbortSignal([init.signal], timeout);
     try {
-      // Retry only reads. Replaying generation/edit POSTs could create duplicate paid work.
-      const attempts = !init.method || init.method === 'GET' ? 3 : 1;
-      for (let attempt = 0; ; attempt++) {
-        requestSignal?.dispose();
-        requestSignal = createAbortSignal([init.signal], timeout);
-        res = await fetch(url, { ...init, signal: requestSignal.signal });
-        if (attempt + 1 >= attempts || ![502, 503, 504].includes(res.status)) break;
-        await res.body?.cancel();
-        requestSignal.dispose();
-        await new Promise(resolve => setTimeout(resolve, 800 * (attempt + 1)));
-      }
+      const res = await fetch(url, { ...init, signal: scoped.signal });
+      if (!res.ok) throw await apiError(res);
+      return await res.json();
     } catch (error) {
       if (init.signal?.aborted) throw abortReason(init.signal);
-      if (requestSignal?.timedOut || error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name)) throw new Error("等待服务响应超时。首次启动可能较慢，请稍后重试。");
-      throw new Error("无法连接后端，请检查地址、网络和服务是否已部署。");
-    }
-    if (!res.ok) {
-      const error = await apiError(res);
-      if (init.signal?.aborted) throw abortReason(init.signal);
-      if (requestSignal?.timedOut) throw new Error("等待服务响应超时。首次启动可能较慢，请稍后重试。");
-      throw error;
-    }
-    try { return await res.json(); } catch {
-      if (init.signal?.aborted) throw abortReason(init.signal);
-      if (requestSignal?.timedOut) throw new Error("等待服务响应超时。首次启动可能较慢，请稍后重试。");
-      throw new Error("后端返回了无效响应，请确认填写的是 API 网关地址。");
-    }
-  } finally { requestSignal?.dispose(); }
+      const status = (error as { status?: number } | null)?.status;
+      const timedOut = scoped.timedOut || error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name);
+      const transient = status ? [502, 503, 504].includes(status) : timedOut || error instanceof TypeError;
+      // 断网时立刻报错，交给调用方显示「网络中断」并等 online；超时已经等满 timeout，不再加倍
+      const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+      const retry = status ? transient : error instanceof TypeError && !timedOut && !offline;
+      if (!retry || attempt + 1 >= attempts) {
+        if (status) throw error;
+        throw Object.assign(new Error(timedOut
+          ? '等待服务响应超时。首次启动可能较慢，请稍后重试。'
+          : offline ? '网络连接中断，请恢复网络后重试。'
+          : error instanceof TypeError ? '无法连接后端，请检查网络后重试。'
+          : '后端返回了无效响应，请稍后重试。'), { transient });
+      }
+    } finally { scoped.dispose(); }
+    await waitForReadRetry(800 * (attempt + 1), init.signal || undefined);
+  }
 }
 
 /** 扩展接口（「走进世界」，见 lib/world.ts）复用同一套请求、重试与作品凭证 */
@@ -189,7 +203,14 @@ function uploadWithProgress<T>(path: string, body: FormData, base: string, onPro
     const xhr = new XMLHttpRequest();
     const started = performance.now();
     let idle: ReturnType<typeof setTimeout> | undefined;
-    const arm = (ms: number, message: string) => { clearTimeout(idle); idle = setTimeout(() => { xhr.abort(); reject(new Error(message)); }, ms); };
+    let settled = false;
+    // 上传接口非幂等：失败只报错、不重放，由用户决定是否重新提交
+    const lost = '上传连接中断，请检查网络后重新提交。';
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true; clearTimeout(idle); reject(error); xhr.abort();
+    };
+    const arm = (ms: number, message: string) => { if (settled) return; clearTimeout(idle); idle = setTimeout(() => fail(new Error(message)), ms); };
     arm(60000, "上传长时间没有进展，请检查网络后重试。");
     xhr.upload.onprogress = event => {
       arm(60000, "上传长时间没有进展，请检查网络后重试。");
@@ -198,11 +219,13 @@ function uploadWithProgress<T>(path: string, body: FormData, base: string, onPro
     };
     // 照片传完后，服务端还要存档并排队，留足时间
     xhr.upload.onload = () => arm(120000, "等待服务响应超时。首次启动可能较慢，请稍后重试。");
-    xhr.onerror = () => { clearTimeout(idle); reject(new Error("无法连接后端，请检查地址、网络和服务是否已部署。")); };
+    xhr.onerror = () => fail(new Error(lost));
+    xhr.onabort = () => fail(new Error(lost));
     xhr.onload = () => {
-      clearTimeout(idle);
-      const response = new Response(xhr.responseText, { status: xhr.status });
-      if (xhr.status < 200 || xhr.status >= 300) { void apiError(response).then(reject); return; }
+      if (settled) return;
+      settled = true; clearTimeout(idle);
+      if (xhr.status === 0) { reject(new Error(lost)); return; }
+      if (xhr.status < 200 || xhr.status >= 300) { void apiError(new Response(xhr.responseText, { status: xhr.status })).then(reject); return; }
       try { resolve(JSON.parse(xhr.responseText)); } catch { reject(new Error("后端返回了无效响应，请确认填写的是 API 网关地址。")); }
     };
     xhr.open("POST", url);

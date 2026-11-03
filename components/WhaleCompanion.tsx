@@ -75,6 +75,8 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
   const [items, setItems] = useState<ChatItem[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [sendFailed, setSendFailed] = useState(false);
+  const ticketSending = useRef(false);
   const [reveal, setReveal] = useState<{ id: number; count: number } | null>(null);
   const [unseenError, setUnseenError] = useState(false);
   const [hidden, setHidden] = useState(false);
@@ -214,6 +216,8 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
   }, [note, reduced, page]);
   // 用户确认后才提交：她起草的内容 + 页面报错 + 环境诊断 + 最近几条对话（网关再脱敏一次，不含照片和作品文件）
   const fileTicket = async (ticket: TicketDraft) => {
+    if (ticketSending.current) return;
+    ticketSending.current = true;
     const now = Date.now();
     const conversation = items.filter(m => !m.local).slice(-8).map(m => ({ role: m.role, content: m.content.slice(0, 600) }));
     const lastUser = [...items].reverse().find(m => m.role === "user")?.content || "";
@@ -224,8 +228,9 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
       });
       note(`↪ 工单已提交（编号 ${id}），开发者会根据它排查和修复`);
     } catch (error) {
-      note(`↪ 工单没有提交成功：${error instanceof Error ? error.message : "请稍后再试"}`);
-    }
+      note(`↪ 工单没有提交成功：${(error instanceof Error ? error.message : "网络连接中断").replace(/[。.]$/, "")}。草稿已保留，可以再提交一次。`);
+      setPending({ id: nextId.current++, label: ticket.title, ticket });
+    } finally { ticketSending.current = false; }
   };
   const confirmPending = (yes: boolean) => {
     const current = pending;
@@ -253,7 +258,7 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
     sending.current = true;
     const user: ChatItem = { id: nextId.current++, role: "user", content: content.slice(0, 1200) };
     const history = [...items, user];
-    setItems(history); setInput(""); setBusy(true); setPending(null);
+    setItems(history); setInput(""); setSendFailed(false); setBusy(true); setPending(null);
     stageRef.current?.setMood("think");
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -282,8 +287,10 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
       }
     } catch (error) {
       if (controller.signal.aborted) return;
-      const message = error instanceof Error ? error.message : "大肥鱼暂时回不了话，请稍后再试。";
+      const message = error instanceof Error ? error.message : "回复中断，请恢复网络后重试。";
+      setInput(content); setSendFailed(true);
       setItems(list => [...list, { id: nextId.current++, role: "assistant", content: message, local: true }]);
+      if (!openRef.current) say({ text: message, mood: "worry", actions: [{ label: "查看并重试", run: () => openChat() }] });
       stageRef.current?.setMood("worry");
     } finally {
       sending.current = false;
@@ -614,7 +621,7 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
             // Chinese IME: Enter confirms a candidate while composing; never send then.
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(input, true); }
           }} />
-        <button type="submit" disabled={busy || (!input.trim() && !screen && !pageImage)}>发送</button>
+        <button type="submit" disabled={busy || (!input.trim() && !screen && !pageImage)}>{sendFailed ? "重试发送" : "发送"}</button>
       </form>
       <footer className={styles.credit}>
         模型 <a href="https://space.bilibili.com/11272072" target="_blank" rel="noopener noreferrer">B站 @氵六青</a> · 形象 上善无形 / ZipZipPipe ·{" "}

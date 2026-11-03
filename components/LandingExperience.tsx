@@ -8,13 +8,14 @@ import { DESKTOP_DOWNLOAD, DESKTOP_DOWNLOAD_GITHUB, DESKTOP_RELEASES, isDesktopA
 import WindowControls from "@/components/WindowControls";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import dynamic from "next/dynamic";
+import { retryImport } from "@/lib/lazy-retry";
 import type { LandingLoadProgress, LandingSceneStatus } from "./LandingSplat";
 import BrandMark from "./BrandMark";
 import { LANDING_SCENES, SCENE_DWELL_MS } from "@/lib/landing-scenes";
 import { preloadScene } from "@/lib/landing-preload";
 import styles from "./LandingExperience.module.css";
 
-const LandingSplat = dynamic(() => import("./LandingSplat"), { ssr: false });
+const LandingSplat = dynamic(retryImport(() => import("./LandingSplat")), { ssr: false });
 
 export default function LandingExperience({ onEnter, onExitStart, exitDuration = 540 }: { onEnter: () => void; onExitStart?: () => void; exitDuration?: number }) {
   // 客户端里和手机上不显示下载入口

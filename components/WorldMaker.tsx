@@ -8,11 +8,12 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
+import { retryImport } from "@/lib/lazy-retry";
 import LiquidSegmented from "@/components/LiquidSegmented";
 import { createWorld, estimateProgress, expectedSeconds, forgetWorld, prefetchWorld, probeWorldRoute, routeWorldUrl, stageIndex, useWorldTask, WORLD_MODELS, WORLD_STAGES, type WorldModel } from "@/lib/world";
 import styles from "./WorldMaker.module.css";
 
-const WorldWalk = dynamic(() => import("@/components/WorldWalk"), { ssr: false });
+const WorldWalk = dynamic(retryImport(() => import("@/components/WorldWalk")), { ssr: false });
 
 const MODEL_KEY = "ruhua-world-model";
 const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;

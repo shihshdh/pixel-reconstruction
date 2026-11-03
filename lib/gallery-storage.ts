@@ -1,5 +1,5 @@
 // The gallery owns durable metadata and binary assets. No automatic expiry or count limit.
-import { fileUrl, registerJobAccess, downloadJobFile, prepareMobilePreview, type JobResult } from './api';
+import { fileUrl, registerJobAccess, downloadJobFile, prepareMobilePreview, waitForReadRetry, type JobResult } from './api';
 import { isDesktopApp, saveWorkFile, workFolder } from './desktop';
 import type { PhotoMeta } from './photo-meta';
 
@@ -252,12 +252,30 @@ export async function cacheGalleryItem(input: GalleryInput, options: { quality?:
     // Current signed links can be used immediately; the downloader renews them only on 403.
     try { item.persistent = await navigator.storage?.persist?.() || false; } catch { item.persistent = false; }
     const errors: string[] = [];
+    const download = async (filename: string) => {
+      for (let attempt = 0; ; attempt++) {
+        stillPresent();
+        try {
+          return await downloadJobFile(item.job_id, filename, item.backend_url, { signal: controller.signal });
+        } catch (error) {
+          stillPresent();
+          // The downloader owns Range/ETag resume. Only retry an exhausted read,
+          // never restart an active transfer or discard a completed IndexedDB asset.
+          const transient = error instanceof TypeError || !!(error as { transient?: boolean } | null)?.transient
+            || error instanceof Error && /连接中断|暂时中断|没有进展|等待服务响应超时|无法连接/.test(error.message);
+          if (!transient || attempt >= 2) throw error;
+          item.cacheError = navigator.onLine === false ? '网络中断 · 恢复后自动继续保存' : '下载中断 · 正在重新连接';
+          await writeMetadata(item, controller);
+          await waitForReadRetry(2000 * (attempt + 1), controller.signal);
+        }
+      }
+    };
     const save = async (kind: AssetKind, filename: string, ready: 'originalReady' | 'plyReady' | 'viewerReady' | 'mobileReady' | 'videoReady') => {
       stillPresent();
       try {
         let blob = await getGalleryAsset(item.id, kind, filename);
         if (!blob) {
-          blob = kind !== 'original' && options.sceneBlob ? options.sceneBlob : await downloadJobFile(item.job_id, filename, item.backend_url, { signal: controller.signal }); stillPresent(); await putAsset(item.id, kind, blob, controller, filename);
+          blob = kind !== 'original' && options.sceneBlob ? options.sceneBlob : await download(filename); stillPresent(); await putAsset(item.id, kind, blob, controller, filename);
           const diskName = DISK_NAMES[kind];
           if (diskName && isDesktopApp()) void saveWorkFile(workFolder(item.job_id), diskName, blob);
         }

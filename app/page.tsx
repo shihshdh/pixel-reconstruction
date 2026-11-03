@@ -4,30 +4,31 @@
 
 import { useState, useEffect, useRef, useCallback, type CSSProperties, type ElementType, type ReactNode } from "react";
 import dynamic from "next/dynamic";
-const DemoCheck = dynamic(() => import("@/components/DemoCheck"), { ssr: false });
-const DevelopPainting = dynamic(() => import("@/components/DevelopPainting"));
-const CompanionPageImage = dynamic(() => import("@/components/CompanionPageImage"));
+import { retryImport } from "@/lib/lazy-retry";
+const DemoCheck = dynamic(retryImport(() => import("@/components/DemoCheck")), { ssr: false });
+const DevelopPainting = dynamic(retryImport(() => import("@/components/DevelopPainting")));
+const CompanionPageImage = dynamic(retryImport(() => import("@/components/CompanionPageImage")));
 import { preparePhoto, readLocalPhoto } from "@/lib/photo-prep";
 import { lookupPlace, photoCoords, photoDevice, photoSettings, readPhotoMeta, type PhotoMeta } from "@/lib/photo-meta";
 import { announceMoment, isDevelopablePhoto, UPLOAD_REQUEST_EVENT, type UploadRequest } from "@/lib/companion-moments";
 import { useScenePoster } from "@/components/ScenePoster";
 import { cacheGalleryItem, deleteGalleryItem, galleryId, isSameGalleryScene, getGalleryAsset, getGalleryScene, listGallery, setGalleryFavorite, setGalleryPhoto, subscribeGallery, type GalleryItem } from "@/lib/gallery-storage";
 import type { DoubaoPreferences } from "@/components/DoubaoSettings";
-const DoubaoSettings = dynamic(() => import("@/components/DoubaoSettings"));
-const EditPromptPicker = dynamic(() => import("@/components/EditPromptPicker"));
+const DoubaoSettings = dynamic(retryImport(() => import("@/components/DoubaoSettings")));
+const EditPromptPicker = dynamic(retryImport(() => import("@/components/EditPromptPicker")));
 import BrandMark from "@/components/BrandMark";
 import InteriorStyles from "@/components/InteriorStyles";
-const WorkflowPreview = dynamic(() => import("@/components/WorkflowPreview"));
+const WorkflowPreview = dynamic(retryImport(() => import("@/components/WorkflowPreview")));
 import ShowcaseTransition from "@/components/ShowcaseTransition";
 import BrandIntro from "@/components/BrandIntro";
 import PixelLoader from "@/components/PixelLoader";
 import { MorphIcon } from "morphicons/react";
 import { ICON } from "@/lib/icons";
 import AuthorContact from "@/components/AuthorContact";
-const DiscShelf = dynamic(() => import("@/components/DiscShelf")) as typeof import("@/components/DiscShelf").default;
-const SceneWall = dynamic(() => import("@/components/SceneWall"));
-const LineSculpture = dynamic(() => import("@/components/LineSculpture"));
-const GlassInvite = dynamic(() => import("@/components/GlassInvite"));
+const DiscShelf = dynamic(retryImport(() => import("@/components/DiscShelf"))) as typeof import("@/components/DiscShelf").default;
+const SceneWall = dynamic(retryImport(() => import("@/components/SceneWall")));
+const LineSculpture = dynamic(retryImport(() => import("@/components/LineSculpture")));
+const GlassInvite = dynamic(retryImport(() => import("@/components/GlassInvite")));
 import { OPEN_CHECK_EVENT, REPAIR_SCENE_EVENT } from "@/lib/companion-repair";
 import { DESKTOP_DOWNLOAD, DESKTOP_DOWNLOAD_GITHUB, DESKTOP_RELEASES, isDesktopApp, openWorksFolder, setFullscreen, titleBarMouseDown } from "@/lib/desktop";
 import WindowControls from "@/components/WindowControls";
@@ -55,13 +56,13 @@ function LandingFallback() {
     <p>正在准备三维展示<span aria-hidden="true">…</span><noscript> · 请启用 JavaScript 以浏览三维场景</noscript></p>
   </div>;
 }
-const LandingExperience = dynamic(() => import("@/components/LandingExperience"), { ssr: false, loading: LandingFallback });
-const SplatViewer = dynamic(() => import("@/components/SplatViewer"), { ssr: false });
-const WorldMaker = dynamic(() => import("@/components/WorldMaker"), { ssr: false });
+const LandingExperience = dynamic(retryImport(() => import("@/components/LandingExperience")), { ssr: false, loading: LandingFallback });
+const SplatViewer = dynamic(retryImport(() => import("@/components/SplatViewer")), { ssr: false });
+const WorldMaker = dynamic(retryImport(() => import("@/components/WorldMaker")), { ssr: false });
 // Site companion; the module itself waits for the first settled workspace entry.
-const WhaleCompanion = dynamic(() => import("@/components/WhaleCompanion"), { ssr: false });
+const WhaleCompanion = dynamic(retryImport(() => import("@/components/WhaleCompanion")), { ssr: false });
 // 画质“极致”档（独立显卡）的界面光追背景；其他档位不加载。
-const RayTracedBackdrop = dynamic(() => import("@/components/RayTracedBackdrop"), { ssr: false });
+const RayTracedBackdrop = dynamic(retryImport(() => import("@/components/RayTracedBackdrop")), { ssr: false });
 
 // Public gateway URLs only; no Beam account token is needed in the browser.
 const BEAM_URL = getDefaultBase();
@@ -1727,7 +1728,7 @@ export default function App() {
     const timer = setTimeout(() => setEngineWanted(true), 1200);
     // 各页的按需模块在空闲时预取，第一次切到创作、修图、作品库不用等下载
     const prefetch = setTimeout(() => {
-      const load = () => { void Promise.all([import("@/components/DevelopPainting"), import("@/components/CompanionPageImage"), import("@/components/EditPromptPicker"), import("@/components/DoubaoSettings"), import("@/components/DiscShelf"), import("@/components/SplatViewer")]).catch(() => {}); };
+      const load = () => { void Promise.all([import("@/components/DevelopPainting"), import("@/components/CompanionPageImage"), import("@/components/EditPromptPicker"), import("@/components/DoubaoSettings"), import("@/components/DiscShelf"), import("@/components/SplatViewer"), import("@/components/WorldMaker"), import("@/components/WhaleCompanion")]).catch(() => {}); };
       if ("requestIdleCallback" in window) requestIdleCallback(load, { timeout: 4000 }); else load();
     }, 2500);
     return () => { clearTimeout(timer); clearTimeout(prefetch); };
