@@ -1,6 +1,6 @@
 [package]
 name = "pixel-reconstruction"
-version = "1.9.4"
+version = "1.9.5"
 description = "Pixel Reconstruction Windows 客户端"
 edition = "2021"
 
