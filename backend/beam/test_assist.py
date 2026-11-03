@@ -1,5 +1,6 @@
 """Offline checks for the whale companion chat. No network: DeepSeek is mocked."""
 import json
+import re
 import os
 import base64
 import io
@@ -359,6 +360,18 @@ class AssistTests(unittest.TestCase):
         self.assertEqual(assist.clean_repair({"fix": "world_relay", "note": "改走中转"}), {"type": "repair", "fix": "world_relay", "note": "改走中转"})
         for bad in ({"fix": "eval"}, {"fix": "rm -rf"}, {}, "world_relay", None):
             self.assertIsInstance(assist.clean_repair(bad), str)
+
+    def test_mood_tag_variants(self):
+        self.assertEqual(assist.parse_reply("<mood:think>\n好的"), ("好的", "think"))
+        self.assertEqual(assist.parse_reply("<mood>think</mood>\n看你的显卡是核显"), ("看你的显卡是核显", "think"))
+        self.assertEqual(assist.parse_reply("开头 <mood>sad</mood> 中间"), ("开头  中间", "neutral"))
+
+    def test_repair_list_matches_the_browser(self):
+        # lib/companion-repair.ts 执行这些动作：编号和“是否需确认”两边必须一致
+        source = (Path(__file__).resolve().parents[2] / "lib" / "companion-repair.ts").read_text(encoding="utf-8")
+        browser = dict(re.findall(r"^\s+(\w+): \{ label: \"[^\"]*\", confirm: (true|false) \}", source, re.M))
+        self.assertEqual(set(browser), set(assist.REPAIRS))
+        self.assertEqual({k for k, v in browser.items() if v == "true"}, set(assist.CONFIRM_REPAIRS))
 
     def test_ticket_is_validated_and_scrubbed(self):
         ticket = assist.clean_ticket({"title": "走进世界一直卡在载入", "summary": "点进去后进度停在 40%",

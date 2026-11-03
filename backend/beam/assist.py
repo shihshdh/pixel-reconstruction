@@ -188,6 +188,7 @@ REPAIRS = {
     "open_check": "打开自检面板，逐项检查网关、显卡、导出、世界线路、作品库（原因不明时）",
     "reload_page": "重新载入页面（界面卡死、状态错乱）；需用户确认",
 }
+CONFIRM_REPAIRS = ("clear_world_cache", "quality_down", "reload_page")  # 与 lib/companion-repair.ts 的 confirm 一致
 TICKET_CATEGORIES = ("upload", "reconstruct", "download", "studio", "export", "world", "edit", "gallery", "assistant", "performance", "display", "other")
 REPAIR_TOOL = {"type": "function", "function": {
     "name": "repair_site",
@@ -448,12 +449,13 @@ def allow_chat(client_host, forwarded_for=""):
 def parse_reply(content):
     text = str(content or "").strip()
     mood = "neutral"
-    match = re.match(r"^\s*<\s*mood\s*[:：]\s*([a-z]+)\s*>\s*", text, re.I)
+    # <mood:think>，也接受模型偶尔写成的 <mood>think</mood>
+    match = re.match(r"^\s*<\s*mood\s*(?:[:：]\s*([a-z]+)\s*>|>\s*([a-z]+)\s*<\s*/\s*mood\s*>)\s*", text, re.I)
     if match:
-        candidate = match.group(1).lower()
+        candidate = (match.group(1) or match.group(2)).lower()
         mood = candidate if candidate in MOODS else "neutral"
         text = text[match.end():]
-    text = re.sub(r"<\s*mood\s*[:：][^>]*>", "", text, flags=re.I).strip()
+    text = re.sub(r"<\s*mood\s*[:：][^>]*>|<\s*mood\s*>[^<]{0,20}<\s*/\s*mood\s*>", "", text, flags=re.I).strip()
     if len(text) > MAX_REPLY:
         text = sentence_cut(text[:MAX_REPLY])
     return text, mood
@@ -634,7 +636,9 @@ def ask_deepseek(messages, context_text, screen=None, page_image=None, tools=Tru
                     result = {"ok": False, "error": "本轮操作步数已用完"}
                 else:
                     actions.append(action)
-                    result = {"ok": True, "status": "已交给用户的浏览器执行（需确认的会先问用户）。请在回答里说明做了什么，并请用户再试一次、告诉你结果；不要声称已经修好。"}
+                    asks = action["fix"] in CONFIRM_REPAIRS
+                    result = {"ok": True, "status": ("浏览器会先请用户确认，用户点「执行」后才生效。" if asks else "浏览器会直接执行，不需要用户确认。")
+                              + "请在回答里说明做了什么，并请用户再试一次、告诉你结果；不要声称已经修好。"}
             elif name == "submit_ticket":
                 action = clean_ticket(arguments)
                 if isinstance(action, str):

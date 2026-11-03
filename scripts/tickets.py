@@ -21,6 +21,10 @@ import urllib.error
 import urllib.request
 
 root = Path(__file__).resolve().parents[1]
+try:
+    sys.stdout.reconfigure(encoding="utf-8")  # Windows 控制台默认 GBK，中文会乱码
+except (AttributeError, ValueError):
+    pass
 
 
 def gateway():
