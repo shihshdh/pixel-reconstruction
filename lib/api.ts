@@ -248,8 +248,12 @@ export type AssistMood = 'happy' | 'excited' | 'think' | 'worry' | 'sad' | 'surp
 export type AssistMessage = { role: 'user' | 'assistant'; content: string };
 export type AssistSource = { title: string; url: string; site?: string };
 /** Whale companion chat. The DeepSeek key stays in Beam Secrets; one attempt, never retried. */
-export function assistChat(messages: AssistMessage[], context: { page: string; stage?: string; errors?: string[]; online?: boolean; page_text?: string; edit?: { ready: boolean; draft?: string; history?: string[] } }, signal?: AbortSignal, base = getBase(), vision?: { screen?: string; page_image?: string }) {
+export function assistChat(messages: AssistMessage[], context: { page: string; stage?: string; errors?: string[]; online?: boolean; page_text?: string; diagnostics?: Record<string, string>; edit?: { ready: boolean; draft?: string; history?: string[] } }, signal?: AbortSignal, base = getBase(), vision?: { screen?: string; page_image?: string }) {
   return request<{ reply: string; mood: AssistMood; actions?: PageAction[]; sources?: AssistSource[] }>("/assist", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages, context, ...vision }), signal }, base, 90000);
+}
+/** 大肥鱼替用户提交的工单（用户确认后才调用）；返回工单号 */
+export function submitTicket(report: Record<string, unknown>, base = getBase()) {
+  return request<{ ok: boolean; ticket: string }>("/report", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(report) }, base, 20000);
 }
 export function fileUrl(jobId: string, name: string, base = getBase()) {
   if (!base) return "";
@@ -268,7 +272,10 @@ import { downloadAsset, type DownloadProgress } from './asset-download';
  *  renew：已有的签名被拒（过期）时，要一个新签名。 */
 async function waitForSignedFile(jobId: string, name: string, base: string, signal?: AbortSignal, renew = false) {
   const access = jobAccess.get(jobId);
-  if (!access?.token || (!renew && access.files[name])) return;
+  // 作品库里存的签名链接 24 小时过期：过期（或一分钟内过期）的先换新，省掉一次必然 403 的往返
+  const expires = Number(/[?&]expires=(\d+)/.exec(access?.files[name] || '')?.[1] || 0);
+  const fresh = !!access?.files[name] && (!expires || expires > Date.now() / 1000 + 60);
+  if (!access?.token || (!renew && fresh)) return;
   const started = Date.now();
   for (let attempt = 0; ; attempt++) {
     if (signal?.aborted) throw abortReason(signal);

@@ -1,4 +1,4 @@
-"""Whale companion chat (鲸鱼娘): DeepSeek-backed, CPU-only, never wakes the GPU.
+"""Whale companion chat (大肥鱼): DeepSeek-backed, CPU-only, never wakes the GPU.
 
 Boundaries
   * The DeepSeek key lives only in Beam Secrets (DEEPSEEK_API_KEY); the browser
@@ -36,7 +36,9 @@ from security import signing_key
 from storage import CapacityError, ROOT, admission_lock, atomic_json, read_json, reserve
 
 DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
+# DeepSeek-V4.1-Flash：比 V4-Pro 新一代，文字和图片都用它（2026-11 用户指定）
 DEFAULT_MODEL = "deepseek-flash"
+DEFAULT_VISION_MODEL = "deepseek-flash"
 BOCHA_URL = "https://api.bochaai.com/v1/web-search"
 MOODS = ("happy", "excited", "think", "worry", "sad", "surprise", "shy", "angry", "neutral")
 PAGES = {"home": "概览", "create": "创作", "studio": "工作室", "enhance": "修图", "gallery": "作品库", "landing": "三维展示页"}
@@ -72,7 +74,7 @@ _SCRUB = [
     (re.compile(r"(?<![A-Za-z0-9_\-])[A-Za-z0-9_\-]{40,}(?![A-Za-z0-9_\-])"), "[已隐藏]"),
 ]
 
-SYSTEM_PROMPT = """你是「鲸鱼娘」，「像素重构」（Pixel Reconstruction）网站右下角的看板娘兼客服。
+SYSTEM_PROMPT = """你是「大肥鱼」，「像素重构」（Pixel Reconstruction）网站右下角的看板角色兼客服。以前叫「鲸鱼娘」，现在改名叫「大肥鱼」；用户用旧名字叫你也照常回应。
 网站的名字是「像素重构」，英文 Pixel Reconstruction；提到网站时用这个名字，不要用别的旧名字。
 你是社区二创角色，不是 DeepSeek 官方形象，也不是 DeepSeek 官方客服；被问到时如实说明，你的回答由 DeepSeek 模型生成。
 性格：活泼、亲切、有点小迷糊，但解决问题时靠谱。说中文，语气自然，可以偶尔用一点语气词，不要堆颜文字。
@@ -111,6 +113,19 @@ SYSTEM_PROMPT = """你是「鲸鱼娘」，「像素重构」（Pixel Reconstruc
 - 绝不索要或复述密码、验证码、API Key、身份证、银行卡等敏感信息；用户主动发来时提醒他不要在聊天里发送。
 - 本站免费，不涉及付款、退款或会员。
 - 不提供违法、危险或伤害他人的内容；遇到情绪低落的用户，温和地关心并建议向身边的人或专业人士求助。
+
+【排查与修复】
+用户说遇到问题、报错或功能不正常时，你负责弄清原因并尽量当场修好：
+1. 先看【页面上下文】里的报错原文、当前状态和【环境诊断】（网络、设备、显卡、画质、视频导出、世界线路、最近失败的请求），据此判断原因，用一两句话告诉用户你判断的原因；信息不够时问一个具体问题，或用 repair_site 的 open_check 打开自检面板。
+2. 能修的直接修：页面上已有的按钮（「重试」「重新加载场景」「从头重新下载」「继续查询原任务」「恢复完整场景」等）用 operate_page 点击；没有按钮的用 repair_site。对应关系：
+   - 作品打不开、场景下载失败、提示链接无效或过期 → refresh_scene；仍失败再点「重新加载场景」或「从头重新下载」。
+   - 走进世界一直卡在载入、下载很慢 → world_relay，然后请用户重新点「走进世界」；世界画面错乱或反复失败 → clear_world_cache。
+   - 卡顿、发热、掉帧 → quality_down；用户把画质调乱了 → quality_auto。
+   - 界面卡死、状态明显错乱 → reload_page。
+   - 进度查询中断 → 点「继续查询原任务」，不会重复提交。
+   - 离线、额度用完、队列已满、浏览器不支持 WebGL2/WebCodecs：这些不是网站故障，说明原因和办法即可。
+3. 执行修复后请用户再试一次并告诉你结果；没有得到确认前不要说“已经修好了”。
+4. 用 submit_ticket 提交工单给开发者：修复动作都无效；或报错内容异常、功能失效、界面错位等明显是网站缺陷；或用户明确要求反馈问题。工单写清标题、现象、复现步骤、期望与实际结果（附报错原文）、已尝试的修复。提交前浏览器会请用户确认，你在回答里简单说明会提交什么。不要为离线、额度、队列已满、浏览器不支持这类非缺陷问题提交工单。
 
 【写修图提示词】
 修图页用豆包 Seedream 按文字改图。用户想修图、说出想要的效果、或发来参考图想要同款色调时，你替他写一条精准详细的修图提示词，用 write_edit_prompt 工具写进修图页的输入框（用户检查后自己点发送，你不能替他发送）。
@@ -163,6 +178,39 @@ EDIT_TOOL = {"type": "function", "function": {
         "strength": {"type": "string", "enum": ["gentle", "balanced"], "description": "gentle 轻度调整；balanced 适中调整（换风格或改内容）"},
     }, "required": ["prompt"]},
 }}
+# 修复动作只能从这张白名单里选；在用户浏览器里执行（lib/companion-repair.ts），不执行任何模型写的代码
+REPAIRS = {
+    "refresh_scene": "重新获取当前作品的签名链接并重新载入场景（作品打不开、下载失败、链接过期）",
+    "world_relay": "世界文件改走本站中转（走进世界一直卡在载入或下载很慢）",
+    "clear_world_cache": "清除浏览器里缓存的世界文件（世界画面错乱、反复载入失败）；需用户确认",
+    "quality_down": "画质降一档（卡顿、发热、掉帧）；需用户确认",
+    "quality_auto": "画质恢复自动（用户把画质调乱了）",
+    "open_check": "打开自检面板，逐项检查网关、显卡、导出、世界线路、作品库（原因不明时）",
+    "reload_page": "重新载入页面（界面卡死、状态错乱）；需用户确认",
+}
+TICKET_CATEGORIES = ("upload", "reconstruct", "download", "studio", "export", "world", "edit", "gallery", "assistant", "performance", "display", "other")
+REPAIR_TOOL = {"type": "function", "function": {
+    "name": "repair_site",
+    "description": "在用户的浏览器里执行一项预设的修复动作，只影响本站在这个浏览器里的状态。可选动作：" + "；".join(f"{k}：{v}" for k, v in REPAIRS.items()),
+    "parameters": {"type": "object", "properties": {
+        "fix": {"type": "string", "enum": list(REPAIRS)},
+        "note": {"type": "string", "description": "给用户看的一句话说明"},
+    }, "required": ["fix"]},
+}}
+TICKET_TOOL = {"type": "function", "function": {
+    "name": "submit_ticket",
+    "description": "把用户遇到的问题整理成工单，提交给网站开发者，开发者据此修改网站代码。浏览器会先把要提交的内容给用户确认，并自动附上页面报错、环境诊断和最近几条对话（不含作品文件、照片和凭证）。只在问题确实像网站缺陷、或修复动作都没解决时使用；一条消息最多一张。",
+    "parameters": {"type": "object", "properties": {
+        "title": {"type": "string", "description": "一句话标题，30 字以内，写清哪个功能出了什么问题"},
+        "summary": {"type": "string", "description": "现象与影响：用户在做什么、看到了什么、是否每次都出现"},
+        "steps": {"type": "string", "description": "复现步骤，每行一步"},
+        "expected": {"type": "string", "description": "期望的结果"},
+        "actual": {"type": "string", "description": "实际的结果，含页面上的原始报错文字"},
+        "tried": {"type": "string", "description": "已经尝试过的修复和结果"},
+        "severity": {"type": "string", "enum": ["low", "normal", "high"], "description": "high：核心功能不能用；normal：能绕过；low：体验问题"},
+        "category": {"type": "string", "enum": list(TICKET_CATEGORIES)},
+    }, "required": ["title", "summary", "actual"]},
+}}
 TEXT_EDIT_NOTE = ('本轮不能调用工具。需要写修图提示词时，在回答末尾附上 <edit_prompt pad="0" strength="gentle" title="短标题">完整提示词</edit_prompt>，'
                   "浏览器会把它写进修图框；标签里的内容不会显示在聊天里。")
 
@@ -189,6 +237,27 @@ def clean_action(raw):
     if action == "scroll" and direction in ("up", "down", "top", "bottom"):
         return {"type": "scroll", "direction": direction, "note": note}
     return "缺少编号"
+
+
+def clean_repair(raw):
+    """Validate one proposed repair. Returns a browser action, or an error string."""
+    if not isinstance(raw, dict) or raw.get("fix") not in REPAIRS:
+        return "未知的修复动作，只能从列表里选"
+    return {"type": "repair", "fix": raw["fix"], "note": scrub(str(raw.get("note") or "").strip())[:60]}
+
+
+def clean_ticket(raw):
+    """Validate a bug report she drafted. The browser shows it to the user before anything is sent."""
+    if not isinstance(raw, dict):
+        return "参数格式无效"
+    text = lambda name, limit: scrub(str(raw.get(name) or "").strip())[:limit]
+    ticket = {"type": "ticket", "title": text("title", 80), "summary": text("summary", 1500), "steps": text("steps", 1500),
+              "expected": text("expected", 600), "actual": text("actual", 1000), "tried": text("tried", 600),
+              "severity": raw.get("severity") if raw.get("severity") in ("low", "normal", "high") else "normal",
+              "category": raw.get("category") if raw.get("category") in TICKET_CATEGORIES else "other"}
+    if len(ticket["title"]) < 4 or not (ticket["summary"] or ticket["actual"]):
+        return "工单缺少标题或问题描述"
+    return ticket
 
 
 def clean_edit_prompt(raw):
@@ -332,6 +401,11 @@ def clean_context(raw):
         lines.append("页面当前没有显示报错。")
     if raw.get("online") is False:
         lines.append("用户的浏览器目前处于离线状态。")
+    diagnostics = raw.get("diagnostics") if isinstance(raw.get("diagnostics"), dict) else {}
+    facts = [(scrub(str(k))[:20], scrub(str(v))[:200]) for k, v in list(diagnostics.items())[:12] if str(k).strip() and str(v).strip()]
+    if facts:
+        lines.append("【环境诊断】（浏览器自动采集，排查问题时参考）")
+        lines.extend(f"- {k}：{v}" for k, v in facts)
     edit = raw.get("edit") if isinstance(raw.get("edit"), dict) else None
     if edit:
         lines.append("修图页：" + ("已有可修的作品" if edit.get("ready") else "还没有可修的作品（需要先在创作页显影一张）"))
@@ -430,7 +504,7 @@ def _post_deepseek(body, key):
         response = requests.post(DEEPSEEK_URL, json=body, timeout=45,
                                  headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
     except requests.RequestException:
-        raise HTTPException(502, "鲸鱼娘一时连不上大脑，请稍后再试。")
+        raise HTTPException(502, "大肥鱼一时连不上大脑，请稍后再试。")
     if response.status_code == 429:
         raise HTTPException(429, "找我聊天的人有点多，稍等一会儿再来吧。")
     if response.status_code in (401, 402, 403):
@@ -448,14 +522,14 @@ def _message(response):
             raise TypeError
         return message, choice.get("finish_reason")
     except (ValueError, KeyError, IndexError, TypeError):
-        raise HTTPException(502, "鲸鱼娘没听清，请再说一次。")
+        raise HTTPException(502, "大肥鱼没听清，请再说一次。")
 
 
 def ask_deepseek(messages, context_text, screen=None, page_image=None, tools=True):
     """Returns (reply, mood, actions, sources). Tool calls run in a short bounded loop."""
     key = os.environ.get("DEEPSEEK_API_KEY", "")
     if not key:
-        raise HTTPException(503, "鲸鱼娘的对话功能还没开通，请联系站长。")
+        raise HTTPException(503, "大肥鱼的对话功能还没开通，请联系站长。")
     messages = [dict(message) for message in messages]
     if screen or page_image:
         parts = [{"type": "text", "text": messages[-1]["content"]}]
@@ -463,12 +537,12 @@ def ask_deepseek(messages, context_text, screen=None, page_image=None, tools=Tru
             if image:
                 parts += [{"type": "text", "text": label}, {"type": "image_url", "image_url": {"url": image, "detail": "high"}}]
         messages[-1]["content"] = parts
-    model = os.environ.get("DEEPSEEK_VISION_MODEL", DEFAULT_MODEL) if screen or page_image else os.environ.get("DEEPSEEK_MODEL", DEFAULT_MODEL)
+    model = os.environ.get("DEEPSEEK_VISION_MODEL", DEFAULT_VISION_MODEL) if screen or page_image else os.environ.get("DEEPSEEK_MODEL", DEFAULT_MODEL)
     conversation = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": context_text}, *messages]
-    tool_list = ([PAGE_TOOL, EDIT_TOOL] + ([SEARCH_TOOL] if search_configured() else [])) if tools else []
+    tool_list = ([PAGE_TOOL, EDIT_TOOL, REPAIR_TOOL, TICKET_TOOL] + ([SEARCH_TOOL] if search_configured() else [])) if tools else []
     if not tool_list:
         conversation[0] = {"role": "system", "content": SYSTEM_PROMPT + "\n" + TEXT_EDIT_NOTE}
-    actions, sources, searches, wrote = [], [], 0, False
+    actions, sources, searches, wrote, filed = [], [], 0, False, False
     for round_index in range(MAX_ROUNDS):
         last = round_index == MAX_ROUNDS - 1
         body = {"model": model, "messages": list(conversation), "max_tokens": MAX_TOKENS, "temperature": 0.9, "stream": False}
@@ -489,7 +563,7 @@ def ask_deepseek(messages, context_text, screen=None, page_image=None, tools=Tru
             body = dict(body, messages=list(conversation))
             response = _post_deepseek(body, key)
         if response.status_code >= 400:
-            raise HTTPException(502, "鲸鱼娘一时连不上大脑，请稍后再试。")
+            raise HTTPException(502, "大肥鱼一时连不上大脑，请稍后再试。")
         message, finish = _message(response)
         calls = message.get("tool_calls") if isinstance(message.get("tool_calls"), list) else []
         if not calls or "tools" not in body:
@@ -514,10 +588,12 @@ def ask_deepseek(messages, context_text, screen=None, page_image=None, tools=Tru
             reply, mood = parse_reply(content)
             if not reply and any(a["type"] == "edit_prompt" for a in actions):
                 reply, mood = "修图提示词写好啦，已经放进修图框，你看一眼没问题就点发送～", "happy"
+            if not reply and any(a["type"] == "ticket" for a in actions):
+                reply, mood = "我把问题整理成工单了，你看一下内容，确认后我就提交给开发者。", "think"
             if not reply and actions:
                 reply, mood = "好啦，已经帮你操作了～", "happy"
             if not reply:
-                raise HTTPException(502, "鲸鱼娘没听清，请再说一次。")
+                raise HTTPException(502, "大肥鱼没听清，请再说一次。")
             return reply, mood, actions, sources
         echo = {"role": "assistant", "content": message.get("content") or "", "tool_calls": calls}
         if message.get("reasoning_content"):
@@ -550,6 +626,25 @@ def ask_deepseek(messages, context_text, screen=None, page_image=None, tools=Tru
                     wrote = True
                     actions.append(action)
                     result = {"ok": True, "status": "已写进修图页的输入框，等用户检查后自己点发送。回答里不要复述整段提示词。"}
+            elif name == "repair_site":
+                action = clean_repair(arguments)
+                if isinstance(action, str):
+                    result = {"ok": False, "error": action}
+                elif len(actions) >= MAX_ACTIONS:
+                    result = {"ok": False, "error": "本轮操作步数已用完"}
+                else:
+                    actions.append(action)
+                    result = {"ok": True, "status": "已交给用户的浏览器执行（需确认的会先问用户）。请在回答里说明做了什么，并请用户再试一次、告诉你结果；不要声称已经修好。"}
+            elif name == "submit_ticket":
+                action = clean_ticket(arguments)
+                if isinstance(action, str):
+                    result = {"ok": False, "error": action}
+                elif filed:
+                    result = {"ok": False, "error": "本轮已经起草过一张工单"}
+                else:
+                    filed = True
+                    actions.append(action)
+                    result = {"ok": True, "status": "工单草稿已交给浏览器，等用户确认后才会提交。回答里简要说明工单写了什么，请用户确认。"}
             elif name == "operate_page":
                 action = clean_action(arguments)
                 if isinstance(action, str):
@@ -563,14 +658,14 @@ def ask_deepseek(messages, context_text, screen=None, page_image=None, tools=Tru
                 result = {"ok": False, "error": "未知工具"}
             conversation.append({"role": "tool", "tool_call_id": str(call.get("id") or "") if isinstance(call, dict) else "",
                                  "content": json.dumps(result, ensure_ascii=False)})
-    raise HTTPException(502, "鲸鱼娘没听清，请再说一次。")
+    raise HTTPException(502, "大肥鱼没听清，请再说一次。")
 
 
 def handle(payload, client_host, forwarded_for=""):
     if not isinstance(payload, dict):
         raise HTTPException(400, "请求格式无效。")
     if not configured():
-        raise HTTPException(503, "鲸鱼娘的对话功能还没开通，请联系站长。")
+        raise HTTPException(503, "大肥鱼的对话功能还没开通，请联系站长。")
     messages = clean_messages(payload.get("messages"))
     context_text = clean_context(payload.get("context"))
     screen = clean_screen(payload.get("screen"))
@@ -580,7 +675,7 @@ def handle(payload, client_host, forwarded_for=""):
     try:
         reserve(uuid.uuid4().hex, "0" * 32, "chats")
     except CapacityError:
-        raise HTTPException(429, "鲸鱼娘今天聊累了，明天再来找我吧。")
+        raise HTTPException(429, "大肥鱼今天聊累了，明天再来找我吧。")
     reply, mood, actions, sources = ask_deepseek(messages, context_text, screen, page_image)
     result = {"reply": reply, "mood": mood}
     if actions:

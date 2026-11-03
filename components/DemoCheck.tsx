@@ -12,7 +12,7 @@ const checks = [
 const actions = [
   ['gpu', '唤醒云端 GPU', check.wakeGpu], ['landing', '缓存展示页场景', check.cacheLanding],
   ['worldCache', '缓存最近的世界', () => check.cacheRecentWorld()], ['offline', '离线保存作品', check.saveGallery],
-  ['assist', '测试鲸鱼娘', (_update: check.Progress, signal: AbortSignal) => check.testAssist(signal)],
+  ['assist', '测试大肥鱼', (_update: check.Progress, signal: AbortSignal) => check.testAssist(signal)],
 ] as const;
 const labels = { ok: '就绪', warn: '需处理', fail: '失败', idle: '未检查', running: '进行中' };
 export default function DemoCheck({ onClose }: { onClose: () => void }) {

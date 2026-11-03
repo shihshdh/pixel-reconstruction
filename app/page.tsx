@@ -28,6 +28,7 @@ const DiscShelf = dynamic(() => import("@/components/DiscShelf")) as typeof impo
 const SceneWall = dynamic(() => import("@/components/SceneWall"));
 const LineSculpture = dynamic(() => import("@/components/LineSculpture"));
 const GlassInvite = dynamic(() => import("@/components/GlassInvite"));
+import { OPEN_CHECK_EVENT, REPAIR_SCENE_EVENT } from "@/lib/companion-repair";
 import { DESKTOP_DOWNLOAD, DESKTOP_DOWNLOAD_GITHUB, DESKTOP_RELEASES, isDesktopApp, openWorksFolder, setFullscreen, titleBarMouseDown } from "@/lib/desktop";
 import WindowControls from "@/components/WindowControls";
 import { computeUiZoom } from "@/lib/ui-scale";
@@ -1141,7 +1142,7 @@ function StudioPage({ result, setPage, conn, device, onLoadFull, worldLive }) {
 
       {/* 画面区：3D 模式由 SplatViewer 自己管布局；视频模式用深色圆角盒 */}
       {tab === "splat" ? (
-        <SplatViewer key={result.job_id} plyUrl={viewerHref} posterUrl={poster} previewQuality={isMobilePreview ? "mobile" : "full"} onAssetLoaded={blob => { if (!viewerHref.startsWith('blob:')) void cacheGalleryItem(result, { quality: "full", sceneBlob: blob }); }} sceneFormat={sceneFormat} jobId={result.job_id} backendUrl={result.backend_url}
+        <SplatViewer key={`${result.job_id}:${result.repair_round || 0}`} plyUrl={viewerHref} posterUrl={poster} previewQuality={isMobilePreview ? "mobile" : "full"} onAssetLoaded={blob => { if (!viewerHref.startsWith('blob:')) void cacheGalleryItem(result, { quality: "full", sceneBlob: blob }); }} sceneFormat={sceneFormat} jobId={result.job_id} backendUrl={result.backend_url}
           lead={<WorldMaker job={result} poster={poster} scene={viewerHref ? { href: viewerHref, format: sceneFormat } : undefined} live={worldLive} title={result.title} />} />
       ) : (
         <div style={{ borderRadius: 28, overflow: "hidden", border: "1px solid var(--line)", boxShadow: "var(--shadow)", background: "#04060a" }}>
@@ -1204,7 +1205,7 @@ function EnhancePage({ result, setPage, onRerenderDone, doubao, onDoubaoChange }
   useEffect(() => { if (result) void refreshEditLinks(result).then(changed => { if (changed) relinked(n => n + 1); }); }, [key]);
   // 回到页面时对话停在最新一条。
   useEffect(() => { const el = logRef.current; if (el) el.scrollTop = el.scrollHeight; }, [key, chat.length, aiBusy]);
-  // 鲸鱼娘刚写好提示词：把输入框带到眼前。
+  // 大肥鱼刚写好提示词：把输入框带到眼前。
   useEffect(() => {
     if (!session.delivered || Date.now() - session.delivered > 8000) return;
     const el = inputRef.current;
@@ -1299,7 +1300,7 @@ function EnhancePage({ result, setPage, onRerenderDone, doubao, onDoubaoChange }
           )}
           {chat.length === 0 && !aiBusy && (
             <div style={{ color: "var(--ink3)", fontSize: 15, textAlign: "center", padding: "30px 0" }}>
-              点上面的预设，或在下方直接描述你想怎么改 —— 也可以让右下角的鲸鱼娘照你的要求或参考图写提示词
+              点上面的预设，或在下方直接描述你想怎么改 —— 也可以让右下角的大肥鱼照你的要求或参考图写提示词
             </div>
           )}
         </div>
@@ -1312,7 +1313,7 @@ function EnhancePage({ result, setPage, onRerenderDone, doubao, onDoubaoChange }
           <button onClick={() => setDraft({ base: "" })} style={{ border: 0, background: "none", color: "var(--accent)", fontSize: 17, lineHeight: 1, cursor: "pointer" }}>×</button>
         </div>
       )}
-      {session.delivered > 0 && input && <p className="compute-note">鲸鱼娘写好了{session.deliveredTitle ? `「${session.deliveredTitle}」` : "一条修图提示词"}，检查一下，可以直接改，满意再点发送。</p>}
+      {session.delivered > 0 && input && <p className="compute-note">大肥鱼写好了{session.deliveredTitle ? `「${session.deliveredTitle}」` : "一条修图提示词"}，检查一下，可以直接改，满意再点发送。</p>}
       {/* 输出分辨率：用户自己切换，按作品记住 */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginTop: 18 }}>
         <span style={{ fontSize: 13.5, color: "var(--ink2)" }}>输出分辨率</span>
@@ -1672,8 +1673,26 @@ export default function App() {
   // 后端接入了 World Labs 世界模型（/healthz 的 world）；没接入时「走进世界」走演示模式；undefined 是还没问到
   const [worldLive, setWorldLive] = useState<boolean | undefined>(undefined);
   const [result, setResult] = useState(null);
-  // 鲸鱼娘写修图提示词时写进这件作品的修图草稿
+  // 大肥鱼写修图提示词时写进这件作品的修图草稿
   useEffect(() => { setActiveEditJob(result?.job_id ? result : null); }, [result?.job_id, result?.backend_url]);
+  // 大肥鱼的修复动作（lib/companion-repair.ts）：打开自检面板；重新取签名链接并重新载入当前作品
+  const resultRef = useRef(result);
+  resultRef.current = result;
+  useEffect(() => {
+    const openCheck = () => setCheckMode(true);
+    const refreshScene = async () => {
+      const current = resultRef.current;
+      if (!current?.job_id || current.offline_viewer_url || current.offline_ply_url) return;
+      try {
+        registerJobAccess(current.job_id, current.job_token, current.file_urls);
+        const files = await refreshJobAccess(current.job_id, current.backend_url || backend);
+        setResult(latest => latest?.job_id === current.job_id ? { ...latest, file_urls: files || latest.file_urls, repair_round: (latest.repair_round || 0) + 1 } : latest);
+      } catch {}
+    };
+    window.addEventListener(OPEN_CHECK_EVENT, openCheck);
+    window.addEventListener(REPAIR_SCENE_EVENT, refreshScene);
+    return () => { window.removeEventListener(OPEN_CHECK_EVENT, openCheck); window.removeEventListener(REPAIR_SCENE_EVENT, refreshScene); };
+  }, [backend]);
   const [creating, setCreating] = useState(false);
   const [incoming, setIncoming] = useState<{ file: File; id: number } | null>(null);
   const takeIncoming = useCallback(() => setIncoming(null), []);
@@ -1688,7 +1707,7 @@ export default function App() {
   // 放在开屏时和展示页抢显卡，实测展示页帧率减半。离开展示页之后才用得到它；
   // 这期间提交的照片会等它启动（见 CreatePage），不会悄悄改交云端。
   const [engineWanted, setEngineWanted] = useState(false);
-  // 进入主界面后错峰唤醒：转场（约 1 秒）结束、画面静下来之后，在浏览器空闲时先唤醒鲸鱼娘
+  // 进入主界面后错峰唤醒：转场（约 1 秒）结束、画面静下来之后，在浏览器空闲时先唤醒大肥鱼
   // （Live2D 模型解析、纹理解码与上传，实测首帧约 80ms），再晚一点启动本机引擎（起 Python、读权重）。
   // 原来这些都在转场结束的同一刻开始，主界面刚出现就连着卡几帧。
   const [settled, setSettled] = useState(false);

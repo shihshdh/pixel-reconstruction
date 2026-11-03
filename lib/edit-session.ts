@@ -1,6 +1,6 @@
 // 修图对话：每件作品一份，存在 localStorage（只存文字与版本文件名，图片本身在云端作品目录里）。
 // 请求也在这里跑，不跟着修图页的生命周期走：切到别的页面、再切回来，改图结果照样落进对话；
-// 从作品库重新打开同一件作品，以前修过的每一版都还在。鲸鱼娘写的提示词也直接写进这里的草稿。
+// 从作品库重新打开同一件作品，以前修过的每一版都还在。大肥鱼写的提示词也直接写进这里的草稿。
 import { useSyncExternalStore } from "react";
 import { checkStatus, downloadJobFile, editImage, getBase, refreshJobAccess, requestRerender, warmGpu, type EditResolution } from "./api";
 import { isDesktopApp, saveWorkFile, workFolder } from "./desktop";
@@ -18,7 +18,7 @@ export type EditSession = {
   base: string;
   editing: boolean;
   rerendering: boolean;
-  /** 鲸鱼娘写入草稿的时刻；修图页据此把输入框滚到眼前并聚焦。 */
+  /** 大肥鱼写入草稿的时刻；修图页据此把输入框滚到眼前并聚焦。 */
   delivered: number;
   deliveredTitle: string;
 };
@@ -76,19 +76,19 @@ export function setEditDraft(key: string, change: Partial<Pick<EditSession, "dra
   update(key, () => change);
 }
 
-/** 当前打开的作品（由应用根组件设置），鲸鱼娘据此判断能不能写修图提示词。 */
+/** 当前打开的作品（由应用根组件设置），大肥鱼据此判断能不能写修图提示词。 */
 export function setActiveEditJob(job: Job | null) {
   active = job?.job_id ? { key: editKey(job), job } : null;
 }
 
-/** 给鲸鱼娘的上下文：只含文字，不含图片或链接。 */
+/** 给大肥鱼的上下文：只含文字，不含图片或链接。 */
 export function editContext() {
   if (!active) return { ready: false };
   const session = load(active.key);
   return { ready: true, draft: session.draft.slice(0, 1500) || undefined, history: session.history.slice(-6) };
 }
 
-/** 鲸鱼娘写好的提示词：写进当前作品的修图草稿。没有可修的作品时返回 false。 */
+/** 大肥鱼写好的提示词：写进当前作品的修图草稿。没有可修的作品时返回 false。 */
 export function deliverEditPrompt(action: { prompt: string; pad?: number; strength?: EditStrength; note?: string }) {
   if (!active) return false;
   update(active.key, () => ({

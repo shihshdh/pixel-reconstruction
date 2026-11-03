@@ -541,6 +541,8 @@ def create_app():
                 "assist_vision": bool(os.environ.get("DEEPSEEK_API_KEY")),
                 "assist_actions": bool(os.environ.get("DEEPSEEK_API_KEY")),
                 "assist_search": bool(os.environ.get("DEEPSEEK_API_KEY") and os.environ.get("BOCHA_API_KEY")),
+                # 大肥鱼可以替用户提交工单（POST /report）
+                "tickets": configured,
                 # 「走进世界」：World Labs 世界模型已配置（前端据此从演示模式切到正式生成）
                 "world": world_api.configured(), **storage.hot_status()}
 
@@ -559,6 +561,51 @@ def create_app():
             raise HTTPException(400, "请求格式无效。")
         return await run_in_threadpool(handle, payload, request.client.host if request.client else "",
                                       request.headers.get("x-forwarded-for", ""))
+
+    @app.post("/report")
+    async def report(request: Request):
+        # 工单：大肥鱼在用户确认后提交的问题报告。只写 tickets/，不碰作品、文件和 GPU 队列。
+        from tickets import MAX_TICKET_BODY, TicketRejected, file_report, parse
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > MAX_TICKET_BODY:
+                raise HTTPException(413, "工单内容过大。")
+            body.extend(chunk)
+        try:
+            payload = parse(bytes(body))
+            return await run_in_threadpool(file_report, payload, request.client.host if request.client else "",
+                                           request.headers.get("x-forwarded-for", ""))
+        except TicketRejected as error:
+            raise HTTPException(error.status, str(error))
+
+    # 站长读取、关闭工单（scripts/tickets.py）；凭据由服务端 BEAM_API_TOKEN 派生，浏览器拿不到
+    @app.get("/tickets")
+    def tickets_list(status: str = "open", days: int = 14, admin: str = Header(default="", alias="X-Ruhua-Admin")):
+        from tickets import TicketRejected, authorize_admin, list_reports
+        try:
+            authorize_admin(admin)
+            return list_reports(status, days)
+        except TicketRejected as error:
+            raise HTTPException(error.status, str(error))
+
+    @app.get("/tickets/{ticket_id}")
+    def tickets_get(ticket_id: str, admin: str = Header(default="", alias="X-Ruhua-Admin")):
+        from tickets import TicketRejected, authorize_admin, get_report
+        try:
+            authorize_admin(admin)
+            return get_report(ticket_id)
+        except TicketRejected as error:
+            raise HTTPException(error.status, str(error))
+
+    @app.post("/tickets/{ticket_id}")
+    async def tickets_update(ticket_id: str, request: Request, admin: str = Header(default="", alias="X-Ruhua-Admin")):
+        from tickets import TicketRejected, authorize_admin, parse, update_report
+        try:
+            authorize_admin(admin)
+            change = parse(await request.body())
+            return update_report(ticket_id, change.get("status") if isinstance(change, dict) else "", change.get("note", "") if isinstance(change, dict) else "")
+        except TicketRejected as error:
+            raise HTTPException(error.status, str(error))
 
     @app.post("/warm")
     def warm(request: Request):

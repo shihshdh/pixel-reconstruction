@@ -1,6 +1,6 @@
 // 现场演示前的端到端验收：按演示顺序把每个功能真实跑一遍，逐项判定通过 / 失败，记录耗时、截图和页面报错。
 //   node scripts/perf/e2e-demo.cjs --url <站点> [--phone] [--skip-upload] [--skip-export] [--out artifacts/perf/e2e]
-// 会真的花一点钱：上传一张照片走云端重建（GPU 十几秒），鲸鱼娘问一句（DeepSeek）。不花 World Labs 额度：
+// 会真的花一点钱：上传一张照片走云端重建（GPU 十几秒），大肥鱼问一句（DeepSeek）。不花 World Labs 额度：
 // 走进世界用 artifacts/world-live-task.json 里已有的世界；修图不实际提交。
 const fs = require('node:fs');
 const path = require('node:path');
@@ -161,26 +161,26 @@ const visibleButton = (page, text) => page.evaluate(t => {
     log('修图页打开', await page.evaluate(() => /豆包修图|修图/.test(document.body.innerText) && !!document.querySelector('textarea, input[type=text]')));
     await shot('07-edit');
 
-    // 7 鲸鱼娘问答（DeepSeek）
-    const chip = page.locator('[aria-label="展开鲸鱼娘并聊天"], [aria-label*="鲸鱼娘"]').first();
+    // 7 大肥鱼问答（DeepSeek）
+    const chip = page.locator('[aria-label="展开大肥鱼并聊天"], [aria-label*="大肥鱼"]').first();
     await chip.waitFor({ state: 'attached', timeout: 20000 }).catch(() => {});
     if (await chip.count()) {
       await chip.evaluate(el => el.click()); await page.waitForTimeout(1500);
-      const box2 = page.getByRole('textbox', { name: '给鲸鱼娘的消息' });
+      const box2 = page.getByRole('textbox', { name: '给大肥鱼的消息' });
       await box2.fill('怎么把场景导出成视频？'); await box2.press('Enter');
       const qs = Date.now();
       try {
         // 对话记录里出现一条不是提问本身、且提到导出相关内容的回复
         await page.waitForFunction(() => {
           const log = document.querySelector('[aria-labelledby="whale-title"] [aria-live="polite"]');
-          if (!log || log.querySelector('[aria-label="鲸鱼娘正在输入"]')) return false;
+          if (!log || log.querySelector('[aria-label="大肥鱼正在输入"]')) return false;
           const lines = [...log.querySelectorAll('p')].map(p => p.textContent || '').filter(t => t && t !== '怎么把场景导出成视频？');
           return lines.some(t => /导出|mp4|运镜|序列|WebCodecs/.test(t) && t.length > 12);
         }, null, { timeout: 90000 });
-        log('鲸鱼娘回答', true, `${((Date.now() - qs) / 1000).toFixed(1)} s`);
-      } catch { log('鲸鱼娘回答', false, '90 s 内没有相关回答'); }
+        log('大肥鱼回答', true, `${((Date.now() - qs) / 1000).toFixed(1)} s`);
+      } catch { log('大肥鱼回答', false, '90 s 内没有相关回答'); }
       await page.waitForTimeout(2000); await shot('08-assistant');
-    } else log('鲸鱼娘回答', false, '没有找到鲸鱼娘入口');
+    } else log('大肥鱼回答', false, '没有找到大肥鱼入口');
   } catch (error) {
     log('脚本异常', false, String(error.message || error).slice(0, 200));
     await shot('99-error');

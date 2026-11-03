@@ -54,8 +54,8 @@ const OUT = arg('--out', `artifacts/perf/tour-${desktop ? 'desktop' : W}-${theme
     const h = await page.evaluate(() => document.documentElement.scrollHeight);
     if (h > H * 1.3) { await page.evaluate(top => scrollTo({ top, behavior: 'instant' }), h); await page.waitForTimeout(1200); await shot(`tab-${tab}-bottom`.replace(/[^\w-]/g, '')); }
   }
-  // 鲸鱼娘面板
-  await page.evaluate(() => document.querySelector('[aria-label*="鲸鱼娘"]')?.click());
+  // 大肥鱼面板
+  await page.evaluate(() => document.querySelector('[aria-label*="大肥鱼"]')?.click());
   await page.waitForTimeout(2000); await shot('whale-open');
   // 横向溢出检查
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);

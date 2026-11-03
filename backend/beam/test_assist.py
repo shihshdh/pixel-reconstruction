@@ -1,4 +1,5 @@
 """Offline checks for the whale companion chat. No network: DeepSeek is mocked."""
+import json
 import os
 import base64
 import io
@@ -244,7 +245,7 @@ class AssistTests(unittest.TestCase):
         rejected = post.call_args_list[2].kwargs["json"]["messages"][-1]["content"]
         self.assertIn("编号无效", rejected)
         # No search tool offered without a Bocha key.
-        self.assertEqual([t["function"]["name"] for t in body["tools"]], ["operate_page", "write_edit_prompt"])
+        self.assertEqual([t["function"]["name"] for t in body["tools"]], ["operate_page", "write_edit_prompt", "repair_site", "submit_ticket"])
 
     # ---- retouch prompts and long replies ----
     def test_edit_prompt_tool_is_validated_and_returned_once(self):
@@ -352,6 +353,44 @@ class AssistTests(unittest.TestCase):
             context = assist.clean_context({"page": "home"})
         self.assertIn("当前北京时间：", context)
         self.assertIn("联网搜索：可用", context)
+
+    # ---- 排查、修复与工单 ----
+    def test_repairs_are_a_fixed_whitelist(self):
+        self.assertEqual(assist.clean_repair({"fix": "world_relay", "note": "改走中转"}), {"type": "repair", "fix": "world_relay", "note": "改走中转"})
+        for bad in ({"fix": "eval"}, {"fix": "rm -rf"}, {}, "world_relay", None):
+            self.assertIsInstance(assist.clean_repair(bad), str)
+
+    def test_ticket_is_validated_and_scrubbed(self):
+        ticket = assist.clean_ticket({"title": "走进世界一直卡在载入", "summary": "点进去后进度停在 40%",
+                                      "actual": f"报错 https://x.app.beam.cloud/file/{JOB}/a.spz?sig={'f' * 64} {TOKEN}",
+                                      "severity": "urgent", "category": "world"})
+        self.assertEqual(ticket["type"], "ticket")
+        self.assertEqual(ticket["severity"], "normal")
+        self.assertEqual(ticket["category"], "world")
+        self.assertNotIn(TOKEN, str(ticket))
+        self.assertNotIn("f" * 64, str(ticket))
+        self.assertIsInstance(assist.clean_ticket({"title": "", "summary": "x"}), str)
+        self.assertIsInstance(assist.clean_ticket({"title": "标题足够长"}), str)
+
+    def test_repair_and_ticket_tool_calls_become_browser_actions(self):
+        calls = [{"id": "1", "type": "function", "function": {"name": "repair_site", "arguments": json.dumps({"fix": "refresh_scene"})}},
+                 {"id": "2", "type": "function", "function": {"name": "repair_site", "arguments": json.dumps({"fix": "format_disk"})}},
+                 {"id": "3", "type": "function", "function": {"name": "submit_ticket", "arguments": json.dumps({"title": "场景下载失败", "summary": "一直显示恢复下载", "actual": "403"})}},
+                 {"id": "4", "type": "function", "function": {"name": "submit_ticket", "arguments": json.dumps({"title": "第二张工单", "summary": "x", "actual": "y"})}}]
+        first = deepseek_ok("")
+        first.json.return_value = {"choices": [{"message": {"role": "assistant", "content": "", "tool_calls": calls}, "finish_reason": "tool_calls"}]}
+        with patch.object(assist.requests, "post", side_effect=[first, deepseek_ok("<mood:think>\n我先刷新链接，再把问题记成工单")]):
+            result = assist.handle({"messages": [{"role": "user", "content": "作品打不开"}], "context": {"page": "studio"}}, "203.0.113.9")
+        self.assertEqual([a["type"] for a in result["actions"]], ["repair", "ticket"])
+        self.assertEqual(result["actions"][0]["fix"], "refresh_scene")
+        self.assertEqual(result["actions"][1]["title"], "场景下载失败")
+
+    def test_context_carries_diagnostics(self):
+        context = assist.clean_context({"page": "studio", "diagnostics": {"网络": "在线 · 4g", "最近失败的请求": f"403 file/{JOB}/a.splat?sig={'e' * 64}"}})
+        self.assertIn("【环境诊断】", context)
+        self.assertIn("网络：在线 · 4g", context)
+        self.assertNotIn("e" * 64, context)
+
 
 if __name__ == "__main__":
     unittest.main()

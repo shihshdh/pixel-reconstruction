@@ -1217,7 +1217,7 @@ button { font-family: inherit; }
 }
 
 
-/* The companion (鲸鱼娘) pointing at something on the page: lib/companion-actions.ts sets this for ~3s. */
+/* The companion (大肥鱼) pointing at something on the page: lib/companion-actions.ts sets this for ~3s. */
 [data-assist-highlight] { outline: 2px solid #5f8fb4 !important; outline-offset: 4px; animation: assistPoint 1.3s cubic-bezier(.4,0,.2,1) 2; }
 @keyframes assistPoint { 0% { box-shadow: 0 0 0 0 #5f8fb466; } 100% { box-shadow: 0 0 0 12px #5f8fb400; } }
 @media (prefers-reduced-motion: reduce) { [data-assist-highlight] { animation: none; } }

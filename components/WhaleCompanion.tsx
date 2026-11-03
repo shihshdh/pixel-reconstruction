@@ -1,15 +1,16 @@
 "use client";
 
-// 鲸鱼娘：the site's companion. A Live2D figure in the corner that notices the
+// 大肥鱼：the site's companion. A Live2D figure in the corner that notices the
 // errors the page already shows (role="alert"), offers to explain them, and
 // chats through the Beam gateway (/assist → DeepSeek, key stays server-side).
 //
-// Model 《DeepSeek 鲸鱼娘》 by Bilibili @氵六青 · character by 上善无形 / ZipZipPipe ·
+// Model 《DeepSeek 大肥鱼》 by Bilibili @氵六青 · character by 上善无形 / ZipZipPipe ·
 // CC BY-NC-SA 4.0 · a community fan character, not an official DeepSeek product.
 
 import { useCallback, useEffect, useRef, useState, type ComponentType, type RefAttributes } from "react";
-import { assistChat, type AssistMessage, type AssistMood, type AssistSource } from "@/lib/api";
-import { PAGE_NAMES, SCROLL_WORDS, findRef, highlight, isDisabled, isRisky, labelOf, scrollPage, type PageAction } from "@/lib/companion-actions";
+import { assistChat, submitTicket, type AssistMessage, type AssistMood, type AssistSource } from "@/lib/api";
+import { PAGE_NAMES, SCROLL_WORDS, findRef, highlight, isDisabled, isRisky, labelOf, scrollPage, type PageAction, type TicketDraft } from "@/lib/companion-actions";
+import { REPAIRS, diagnostics, runRepair, watchFailures, type RepairId } from "@/lib/companion-repair";
 import type { WhaleStageHandle } from "./WhaleStage";
 import PixelLoader from "./PixelLoader";
 import CompanionVision from './CompanionVision';
@@ -23,7 +24,8 @@ type StageProps = { width: number; height: number; paused: boolean; reducedMotio
 type StageComponent = ComponentType<StageProps & RefAttributes<WhaleStageHandle>>;
 type ChatItem = { id: number; role: "user" | "assistant"; content: string; local?: boolean; sources?: AssistSource[] };
 /** A click she prepared that needs the user's yes (delete, upload, generate, download, leave the site). */
-type Pending = { id: number; ref: string; label: string };
+// 等用户点头的一步：点击危险按钮、需确认的修复动作，或提交工单
+type Pending = { id: number; label: string; ref?: string; repair?: RepairId; ticket?: TicketDraft };
 /** itemId: the chat reply this bubble shows, so it types out in step with the chat and her mouth. */
 type Bubble = { text: string; mood?: AssistMood; actions?: { label: string; run: () => void }[]; itemId?: number } | null;
 
@@ -152,8 +154,10 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
   const context = useCallback(() => {
     const now = Date.now();
     const errors = errorsRef.current.filter(e => now - e.at < ERROR_MEMORY_MS).slice(-5).map(e => e.text);
-    return { page, stage: stageTextRef.current || undefined, errors, online: navigator.onLine, edit: editContext() };
+    return { page, stage: stageTextRef.current || undefined, errors, online: navigator.onLine, diagnostics: diagnostics(), edit: editContext() };
   }, [page]);
+  // 记下本站请求失败，排查问题时随消息带上（见 lib/companion-repair.ts）
+  useEffect(() => { watchFailures(); }, []);
   const note = useCallback((content: string) => {
     setItems(list => [...list, { id: nextId.current++, role: "assistant", content, local: true }]);
   }, []);
@@ -169,6 +173,18 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
         note(`↪ 已把修图提示词${action.note ? `「${action.note}」` : ""}写进修图框${action.pad ? `（含扩图 ${Math.round(action.pad * 100)}%）` : ""}，检查后点「发送」`);
         touchedPage = true; continue;
       }
+      if (action.type === "repair") {
+        const repair = REPAIRS[action.fix];
+        if (!repair) continue;
+        if (repair.confirm) { setPending({ id: nextId.current++, label: repair.label, repair: action.fix }); return false; }
+        note("↪ " + await runRepair(action.fix));
+        touchedPage = true; await wait(300); continue;
+      }
+      if (action.type === "ticket") {
+        const ticket: TicketDraft = { title: action.title, summary: action.summary, steps: action.steps, expected: action.expected, actual: action.actual, tried: action.tried, severity: action.severity, category: action.category };
+        setPending({ id: nextId.current++, label: ticket.title, ticket });
+        return false;
+      }
       if (action.type === "navigate") {
         if (!navigateRef.current || !PAGE_NAMES[action.page]) continue;
         navigateRef.current(action.page); note(`↪ 已切换到「${PAGE_NAMES[action.page]}」`);
@@ -179,7 +195,7 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
         await wait(350); continue;
       }
       const el = action.ref ? findRef(action.ref) : null;
-      if (!el) { note("↪ 没找到她说的那个位置，页面可能已经变了，可以再问她一次。"); continue; }
+      if (!el) { note("↪ 没找到要操作的位置，页面可能已经变了，可以再问大肥鱼一次。"); continue; }
       const label = labelOf(el);
       touchedPage = true;
       if (action.type !== "click") { highlight(el, reduced); note(`↪ 已标出「${label}」`); await wait(350); continue; }
@@ -196,11 +212,29 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
     }
     return touchedPage;
   }, [note, reduced, page]);
+  // 用户确认后才提交：她起草的内容 + 页面报错 + 环境诊断 + 最近几条对话（网关再脱敏一次，不含照片和作品文件）
+  const fileTicket = async (ticket: TicketDraft) => {
+    const now = Date.now();
+    const conversation = items.filter(m => !m.local).slice(-8).map(m => ({ role: m.role, content: m.content.slice(0, 600) }));
+    const lastUser = [...items].reverse().find(m => m.role === "user")?.content || "";
+    try {
+      const { ticket: id } = await submitTicket({
+        ...ticket, user_note: lastUser.slice(0, 1200), page, ua: navigator.userAgent,
+        errors: errorsRef.current.filter(e => now - e.at < ERROR_MEMORY_MS).map(e => e.text), diagnostics: diagnostics(), conversation,
+      });
+      note(`↪ 工单已提交（编号 ${id}），开发者会根据它排查和修复`);
+    } catch (error) {
+      note(`↪ 工单没有提交成功：${error instanceof Error ? error.message : "请稍后再试"}`);
+    }
+  };
   const confirmPending = (yes: boolean) => {
     const current = pending;
     setPending(null);
     if (!current) return;
     if (!yes) { note(`↪ 已取消「${current.label}」`); return; }
+    if (current.repair) { void runRepair(current.repair).then(text => note("↪ " + text)); return; }
+    if (current.ticket) { void fileTicket(current.ticket); return; }
+    if (!current.ref) return;
     const el = findRef(current.ref);
     if (!el || isDisabled(el)) { note(`↪「${current.label}」已经不在页面上或不可用了。`); return; }
     // Runs inside the user's own click, so a file picker opened by this button is allowed to open.
@@ -248,7 +282,7 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
       }
     } catch (error) {
       if (controller.signal.aborted) return;
-      const message = error instanceof Error ? error.message : "鲸鱼娘暂时回不了话，请稍后再试。";
+      const message = error instanceof Error ? error.message : "大肥鱼暂时回不了话，请稍后再试。";
       setItems(list => [...list, { id: nextId.current++, role: "assistant", content: message, local: true }]);
       stageRef.current?.setMood("worry");
     } finally {
@@ -384,7 +418,7 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
     if (session.greeted) return;
     writeJson(() => sessionStorage, SESSION_KEY, { ...session, greeted: true });
     stageRef.current?.greet();
-    say({ text: "你好呀，我是鲸鱼娘～遇到报错或者想聊天，都可以点我。", mood: "happy" });
+    say({ text: "你好呀，我是大肥鱼～遇到报错或者想聊天，都可以点我。", mood: "happy" });
   }, [stageState, say]);
 
   // ---- dragging (the whole figure), tap to open ----
@@ -541,7 +575,7 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
 
     {open && <section ref={trapRef} className={styles.panel} style={{ maxHeight: panelMax }} role="dialog" aria-modal="false" aria-labelledby="whale-title">
       <header className={styles.panelHead}>
-        <div><strong id="whale-title">鲸鱼娘</strong><span>DeepSeek 驱动 · 社区二创角色</span></div>
+        <div><strong id="whale-title">大肥鱼</strong><span>DeepSeek 驱动 · 社区二创角色</span></div>
         <div className={styles.headActions}>
           <button type="button" onClick={() => { abortRef.current?.abort(); setItems([]); setBusy(false); setReveal(null); setScreen(null); setPageImage(null); setPending(null); }} disabled={!items.length && !busy && !screen && !pageImage}>清空</button>
           <button type="button" onClick={closeChat} aria-label="关闭对话"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="m2.5 2.5 7 7m0-7-7 7" /></svg></button>
@@ -562,15 +596,19 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
           <div><button type="button" onClick={() => void look(offer.kind)}>给你看</button><button type="button" onClick={() => { rememberLook(true); void look(offer.kind); }}>以后直接看</button><button type="button" onClick={() => setOffer(null)}>不用啦</button></div>
         </div>}
         {pending && <div className={styles.confirm} role="group" aria-label="确认操作">
-          <span>要我点击「{short(pending.label, 18)}」吗？这一步可能会上传、生成、删除或离开本页。</span>
-          <div><button type="button" onClick={() => confirmPending(true)}>确认点击</button><button type="button" onClick={() => confirmPending(false)}>取消</button></div>
+          {pending.ticket
+            ? <span>提交工单给开发者：<strong>{pending.ticket.title}</strong><br />{short(pending.ticket.summary || pending.ticket.actual, 120)}<br />会附上页面报错、环境诊断（浏览器、显卡、网络）和最近几条对话；不含照片、作品文件和凭证。</span>
+            : pending.repair
+              ? <span>要执行「{pending.label}」吗？</span>
+              : <span>要我点击「{short(pending.label, 18)}」吗？这一步可能会上传、生成、删除或离开本页。</span>}
+          <div><button type="button" onClick={() => confirmPending(true)}>{pending.ticket ? "提交工单" : pending.repair ? "执行" : "确认点击"}</button><button type="button" onClick={() => confirmPending(false)}>取消</button></div>
         </div>}
-        {busy && <p className={styles.typing} role="status" aria-label="鲸鱼娘正在输入"><PixelLoader size={12} /></p>}
+        {busy && <p className={styles.typing} role="status" aria-label="大肥鱼正在输入"><PixelLoader size={12} /></p>}
       </div>
       {items.length === 0 && <div className={styles.suggest}>{suggestions.map(s => <button key={s} type="button" onClick={() => void send(s, true)}>{s}</button>)}</div>}
       <CompanionVision enabled={visionEnabled} busy={busy} screen={screen} onScreen={setScreen} pageImage={pageImage} onPageImage={setPageImage} autoLook={autoLook} onAutoLook={rememberLook} />
       <form className={styles.form} onSubmit={event => { event.preventDefault(); void send(input, true); }}>
-        <textarea ref={inputRef} rows={1} value={input} maxLength={1200} placeholder="和鲸鱼娘说点什么…" aria-label="给鲸鱼娘的消息"
+        <textarea ref={inputRef} rows={1} value={input} maxLength={1200} placeholder="和大肥鱼说点什么…" aria-label="给大肥鱼的消息"
           onChange={event => setInput(event.target.value)}
           onKeyDown={event => {
             // Chinese IME: Enter confirms a candidate while composing; never send then.
@@ -595,18 +633,18 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
     </div>}
 
     {prefs.collapsed || stageState === "failed"
-      ? <button type="button" className={styles.chip} onClick={() => { setPrefs(p => ({ ...p, collapsed: false })); openChat(); }} aria-label="展开鲸鱼娘并聊天">
-          <span className={styles.chipDot} data-alert={unseenError || undefined} />鲸鱼娘
+      ? <button type="button" className={styles.chip} onClick={() => { setPrefs(p => ({ ...p, collapsed: false })); openChat(); }} aria-label="展开大肥鱼并聊天">
+          <span className={styles.chipDot} data-alert={unseenError || undefined} />大肥鱼
         </button>
       : <div className={styles.figure} data-figure data-no-press data-walking={walking ? "" : undefined} style={{ width: stageSize.width, height: stageSize.height }}
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
           {Stage && <Stage key={compact ? "c" : "w"} ref={stageRef} width={stageSize.width} height={stageSize.height}
             paused={hidden || !!prefs.collapsed} reducedMotion={reduced}
-            onReady={() => setStageState("ready")} onError={reason => { console.warn("[鲸鱼娘] Live2D 形象未能加载，改用小按钮：", reason); setStageState("failed"); }} />}
+            onReady={() => setStageState("ready")} onError={reason => { console.warn("[大肥鱼] Live2D 形象未能加载，改用小按钮：", reason); setStageState("failed"); }} />}
           {stageState !== "ready" && <span className={styles.placeholder} data-state={stageState}><PixelLoader size={12} /></span>}
           <button ref={hitRef} type="button" className={styles.hit} onClick={onFigureClick} aria-expanded={open}
-            aria-label={open ? "收起和鲸鱼娘的对话" : "和鲸鱼娘聊天"} />
-          <button type="button" className={styles.collapse} onClick={() => { setOpen(false); setBubble(null); setPrefs(p => ({ ...p, collapsed: true })); }} aria-label="收起鲸鱼娘"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6h7" /></svg></button>
+            aria-label={open ? "收起和大肥鱼的对话" : "和大肥鱼聊天"} />
+          <button type="button" className={styles.collapse} onClick={() => { setOpen(false); setBubble(null); setPrefs(p => ({ ...p, collapsed: true })); }} aria-label="收起大肥鱼"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6h7" /></svg></button>
           {unseenError && !open && <span className={styles.alertDot} aria-hidden="true" />}
         </div>}
   </div>;

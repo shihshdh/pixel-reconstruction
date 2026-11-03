@@ -12,7 +12,7 @@ export const failure = (error: unknown): CheckResult => ({ state: 'fail', text: 
 export async function checkGateway(): Promise<CheckResult> {
   const start = performance.now(), health = await ping(), ms = Math.round(performance.now() - start);
   return { state: !health.ok ? 'fail' : health.world && health.assist ? 'ok' : 'warn', ms,
-    text: `${ms} ms · ${health.ok ? '已连接' : '未连接'} · 走进世界${health.world ? '可用' : '不可用'} · 鲸鱼娘${health.assist ? '可用' : '不可用'} · ${health.serverless ? '云端 GPU 按需启动' : '固定 GPU 服务'}` };
+    text: `${ms} ms · ${health.ok ? '已连接' : '未连接'} · 走进世界${health.world ? '可用' : '不可用'} · 大肥鱼${health.assist ? '可用' : '不可用'} · ${health.serverless ? '云端 GPU 按需启动' : '固定 GPU 服务'}` };
 }
 export async function checkLocalEngine(): Promise<CheckResult> {
   if (!isDesktopApp()) return { state: 'ok', text: '网页版不使用本机引擎' };

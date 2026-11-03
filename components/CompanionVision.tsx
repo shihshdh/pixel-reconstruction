@@ -74,10 +74,10 @@ export default function CompanionVision({ enabled, busy, screen, onScreen, pageI
   return <div className={styles.vision}>
     <details open={attached > 0 || undefined}>
       <summary>
-        <span className={styles.notice}>鲸鱼娘会读取当前页面内容</span>
+        <span className={styles.notice}>大肥鱼会读取当前页面内容</span>
         <span className={styles.tray}>{attached ? `图片 · 已附 ${attached}` : '图片'}<svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 4.5 3 3 3-3" /></svg></span>
       </summary>
-      <p>{enabled ? '每条消息会自动带上页面文字和按钮名称（不含输入框、密码和图片），方便她帮你看、帮你点。图片只在你在这里附上后随消息发送。' : '图片查看等待后端更新；页面文字仍会随消息发送。'}</p>
+      <p>{enabled ? '每条消息会自动带上页面文字和按钮名称（不含输入框、密码和图片），方便大肥鱼帮你看、帮你点。图片只在你在这里附上后随消息发送。' : '图片查看等待后端更新；页面文字仍会随消息发送。'}</p>
       <div className={styles.visionActions}>
         {supported && <button type="button" disabled={!enabled || busy || capturing} onClick={() => void capture()}>{capturing ? '正在读取…' : '截取屏幕'}</button>}
         <button type="button" disabled={!enabled || busy || capturing} onClick={() => input.current?.click()}>上传图片 / 参考图</button>
@@ -89,7 +89,7 @@ export default function CompanionVision({ enabled, busy, screen, onScreen, pageI
         {pageImage && <span><img src={pageImage.image} alt={`待发送的 ${pageImage.count} 张页面图片`} /><button type="button" disabled={busy} onClick={() => onPageImage(null)}>移除页面图片</button></span>}
       </div>}
       {(screen || pageImage) && <p>图片只随你下一条消息交给 DeepSeek。截图里的隐私文字不会自动遮挡，请先检查。</p>}
-      {autoLook && <p>本次访问中，你上传的照片和显影结果她会直接看。<button type="button" className={styles.linkish} onClick={() => onAutoLook?.(false)}>改回每次先问</button></p>}
+      {autoLook && <p>本次访问中，你上传的照片和显影结果大肥鱼会直接看。<button type="button" className={styles.linkish} onClick={() => onAutoLook?.(false)}>改回每次先问</button></p>}
       {error && <p role="status">{error}</p>}
     </details>
   </div>;

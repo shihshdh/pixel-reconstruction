@@ -158,7 +158,7 @@ async function measure(page, cdp, name, seconds, act) {
         const onDone = request => { const timing = request.timing(); net.push({ url: request.url().replace(/\?.*/, '').slice(-80), start: +((request.__t - t) / 1000).toFixed(2), end: +((Date.now() - t) / 1000).toFixed(2), size: 0 }); };
         page.on('request', onReq); page.on('requestfinished', onDone); page.on('requestfailed', onDone);
         await page.evaluate(() => { window.__worldT0 = performance.now(); });
-        // 鲸鱼娘的聊天气泡可能正好盖在按钮上：直接触发按钮的 click
+        // 大肥鱼的聊天气泡可能正好盖在按钮上：直接触发按钮的 click
         await page.locator('#world-card').getByRole('button', { name: /走进世界/ }).last().evaluate(element => element.click());
         await page.waitForFunction(() => document.querySelector('[role=dialog][aria-label="走进世界"]')?.hasAttribute('data-ready'), null, { timeout: 180000 });
         const readySeconds = (Date.now() - t) / 1000;

@@ -1,7 +1,7 @@
 "use client";
 
 // Live2D renderer for the whale companion. Client-only, loaded after idle.
-// Model: 《DeepSeek 鲸鱼娘》 by Bilibili @氵六青, CC BY-NC-SA 4.0, used unmodified.
+// Model: 《DeepSeek 大肥鱼》 by Bilibili @氵六青, CC BY-NC-SA 4.0, used unmodified.
 // Cubism Core is Live2D proprietary software, self-hosted under its redistribution terms.
 
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";

@@ -3,12 +3,20 @@
 // uploads, spends generation quota, downloads or leaves the site is only prepared: the user confirms
 // it in the chat first. She never types, never picks files and never touches her own panel.
 
+import type { RepairId } from "@/lib/companion-repair";
+
 export type PageAction =
   | { type: "navigate"; page: string; note?: string }
   | { type: "scroll"; ref?: string; direction?: "up" | "down" | "top" | "bottom"; note?: string }
   | { type: "highlight" | "click"; ref: string; note?: string }
   /** A retouch prompt she wrote: it goes into the retouch box; the user reviews it and presses send. */
-  | { type: "edit_prompt"; prompt: string; pad: number; strength: "gentle" | "balanced"; note?: string };
+  | { type: "edit_prompt"; prompt: string; pad: number; strength: "gentle" | "balanced"; note?: string }
+  /** One of the fixed repairs in lib/companion-repair.ts. */
+  | { type: "repair"; fix: RepairId; note?: string }
+  /** A bug report she drafted; the user reads it and confirms before it is sent to the maintainer. */
+  | ({ type: "ticket" } & TicketDraft);
+
+export type TicketDraft = { title: string; summary: string; steps: string; expected: string; actual: string; tried: string; severity: "low" | "normal" | "high"; category: string };
 
 export const PAGE_NAMES: Record<string, string> = { home: "概览", create: "创作", studio: "工作室", enhance: "修图", gallery: "作品库" };
 

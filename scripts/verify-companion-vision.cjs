@@ -19,12 +19,12 @@ const target = process.env.TEST_URL || 'http://127.0.0.1:3000';
    });
    await page.goto(target+'/?nointro');
    await page.getByRole('button',{name:'直接进入'}).click();
-   await page.getByRole('button',{name:'展开鲸鱼娘并聊天'}).click();
+   await page.getByRole('button',{name:'展开大肥鱼并聊天'}).click();
    const ask=async text=>{
     const n=requests.length;
-    await page.getByLabel('给鲸鱼娘的消息').fill(text);
+    await page.getByLabel('给大肥鱼的消息').fill(text);
     await page.getByRole('button',{name:'发送',exact:true}).click();
-    await page.waitForFunction(()=>!document.querySelector('[aria-label="鲸鱼娘正在输入"]'));
+    await page.waitForFunction(()=>!document.querySelector('[aria-label="大肥鱼正在输入"]'));
     assert.equal(requests.length,n+1);
     return requests.at(-1);
    };
@@ -35,7 +35,7 @@ const target = process.env.TEST_URL || 'http://127.0.0.1:3000';
    await page.locator('main input[type=file]').setInputFiles('public/author/avatar.jpg');
    await page.locator('.develop-painting canvas').waitFor();
    await page.waitForTimeout(800);
-   await page.getByRole('button',{name:'和鲸鱼娘聊天',exact:true}).click();
+   await page.getByRole('button',{name:'和大肥鱼聊天',exact:true}).click();
    await page.getByLabel('允许查看当前网页').check();
    await page.evaluate(()=>{
     const main=document.querySelector('.develop-painting').closest('main');

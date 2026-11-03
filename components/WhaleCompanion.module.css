@@ -1,4 +1,4 @@
-/* 鲸鱼娘 companion. Paper, warm light and charcoal like the rest of the workspace; every surface
+/* 大肥鱼 companion. Paper, warm light and charcoal like the rest of the workspace; every surface
    uses the theme tokens from InteriorStyles, so light and dark follow the site automatically. */
 
 .root{position:fixed;z-index:950;display:flex;flex-direction:column;align-items:flex-end;gap:10px;pointer-events:none;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink)}

@@ -360,7 +360,7 @@ export function probeWorldRoute(sample?: string): Promise<void> {
   })();
   return routeProbe;
 }
-/** 鲸鱼娘的修复动作：本次会话改走中转（直连能连上但很慢、或探测结果不准时） */
+/** 大肥鱼的修复动作：本次会话改走中转（直连能连上但很慢、或探测结果不准时） */
 export function forceWorldRelay() {
   route = "relay"; routeProbe = null;
   try { sessionStorage.setItem("ruhua-world-route", "relay"); } catch {}
