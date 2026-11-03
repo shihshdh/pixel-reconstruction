@@ -162,11 +162,15 @@ const visibleButton = (page, text) => page.evaluate(t => {
     await shot('07-edit');
 
     // 7 大肥鱼问答（DeepSeek）
-    const chip = page.locator('[aria-label="展开大肥鱼并聊天"], [aria-label*="大肥鱼"]').first();
+    // 大肥鱼在主界面静下来后才加载（最长约 7 秒）；点人物或收起后的小标签打开对话，没打开就再点一次
+    const chip = page.locator('[aria-label="和大肥鱼聊天"], [aria-label="展开大肥鱼并聊天"]').first();
     await chip.waitFor({ state: 'attached', timeout: 20000 }).catch(() => {});
     if (await chip.count()) {
-      await chip.evaluate(el => el.click()); await page.waitForTimeout(1500);
       const box2 = page.getByRole('textbox', { name: '给大肥鱼的消息' });
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await chip.evaluate(el => el.click());
+        if (await box2.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false)) break;
+      }
       await box2.fill('怎么把场景导出成视频？'); await box2.press('Enter');
       const qs = Date.now();
       try {
