@@ -166,7 +166,7 @@ export default function WorldMaker({ job, poster, scene, live, title }: {
         </>}
 
         {done && task.world && <>
-          <h3 className={styles.title}>世界已经长好了。</h3>
+          <h3 className={styles.title}>世界已生成。</h3>
           {task.world.caption && <blockquote className={styles.caption} lang={/[一-鿿]/.test(task.world.caption) ? "zh" : "en"}>{task.world.caption}</blockquote>}
           <p className={styles.lede}>{task.world.demo
             ? "演示模式：你会走进这件作品自己的场景。后端接入 World Labs 之后，这里会是从照片补全出来的完整世界。"

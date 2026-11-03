@@ -20,7 +20,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { MeshBVH } from "three-mesh-bvh";
 import type { WalkMode, WorldAssets, WorldEngine, WorldEngineOptions, WorldQuality } from "../../lib/world-engine-types";
 
-export const version = "1.1.0";
+export const version = "1.1.1";
 
 const ORDER: WorldQuality[] = ["100k", "500k", "full_res"];
 const RADIUS = .38, STEP = .35, GRAVITY = 9.8;
@@ -218,22 +218,31 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
     const extent = mesh ? new THREE.Box3().setFromPoints(samples).getSize(new THREE.Vector3()).length() : 0;
     const flips: THREE.Matrix4[] = [];
     for (const x of [1, -1]) for (const y of [1, -1]) for (const z of [1, -1]) flips.push(new THREE.Matrix4().makeScale(x, y, z));
-    const candidates = [...flips.map(f => placement.clone().multiply(f)), ...flips];
+    // 单位缩放、零偏移时两组候选重复，避免重复做最近点查询。
+    const candidates = [...new Map([...flips.map(f => placement.clone().multiply(f)), ...flips]
+      .map(matrix => [matrix.elements.join(","), matrix])).values()];
     let best: { matrix: THREE.Matrix4; score: number } | null = null;
     const local = new THREE.Vector3(), hit = { point: new THREE.Vector3(), distance: 0, faceIndex: 0 };
+    let sliceStart = performance.now();
     for (const matrix of candidates) {
       if (!samples.length) break;
       const inverse = matrix.clone().invert();
       const scale = new THREE.Vector3().setFromMatrixScale(matrix).x;
-      const distances = samples.map(p => {
+      const distances: number[] = [];
+      for (const p of samples) {
         local.copy(p).applyMatrix4(inverse);
         const r = rawBvh.closestPointToPoint(local, hit as never);
-        return r ? r.distance * scale : Infinity;
-      }).sort((a, b) => a - b);
+        distances.push(r ? r.distance * scale : Infinity);
+        if (performance.now() - sliceStart > 8) {
+          await new Promise(resolve => setTimeout(resolve, 0));
+          if (disposed) { raw.dispose(); return; }
+          sliceStart = performance.now();
+        }
+      }
+      distances.sort((a, b) => a - b);
       const score = distances[distances.length >> 1];
       if (!best || score < best.score) best = { matrix, score };
     }
-    rawBvh.geometry.dispose();
     // 没有高斯点可比（不该发生）时按文档的约定；中位距离超过场景尺度的 4% 说明哪种都对不上，按无碰撞处理
     const chosen = !samples.length ? placement : best && best.score < Math.max(.08, extent * .04) ? best.matrix : null;
     if (!chosen) { raw.dispose(); console.warn("[world] 碰撞网格与画面对不上，按无碰撞处理", best?.score); return; }
@@ -253,7 +262,7 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
   const velocity = new THREE.Vector3();
   let vy = 0, grounded = false;
   let home = eye.clone();
-  const bounds = assets.collider ? null : (options.bounds ?? { radius: 6 });
+  const bounds = options.bounds ?? { radius: 6 };
   const speedScale = bounds ? Math.min(1, bounds.radius / 3) : 1;
   /** 有碰撞网格时把出生点放到地面上 */
   const settleSpawn = () => {
@@ -283,7 +292,7 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
     }
   };
   const keyUp = (event: KeyboardEvent) => { keys.delete(event.code); wake(); };
-  const blur = () => { keys.clear(); wake(); };
+  const blur = () => { keys.clear(); external.x = external.y = 0; drag = null; wake(); };
   let drag: { id: number; x: number; y: number } | null = null;
   const look = (dx: number, dy: number) => {
     const k = LOOK_SPEED * (camera.fov / 62);
@@ -321,6 +330,7 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
   canvas.addEventListener("pointermove", pointerMove);
   canvas.addEventListener("pointerup", pointerUp);
   canvas.addEventListener("pointercancel", pointerUp);
+  canvas.addEventListener("lostpointercapture", pointerUp);
   canvas.addEventListener("wheel", wheel, { passive: false });
 
   // ---------- 物理 ----------
@@ -366,7 +376,7 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
     }
   };
   const softBounds = (dt: number) => {
-    if (!bounds) return;
+    if (bvh) return;
     const dx = eye.x - home.x, dz = eye.z - home.z;
     const d = Math.hypot(dx, dz), R = bounds.radius;
     if (d > R) {
@@ -474,7 +484,7 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
       if (ready && !sharp && stillRatio > ratio + .01 && !busy()) {
         sharp = true; setRatio(stillRatio); renderer.render(scene, camera); lastRender = now;
       }
-      if (!busy()) { renderer.setAnimationLoop(null); looping = false; }
+      if (!busy()) { renderer.setAnimationLoop(null); looping = false; lastMoveRender = 0; }
       return;
     }
     // 帧率上限（手机、核显 60fps）：物理每帧照算，画面隔帧画
@@ -487,7 +497,7 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
     if (cameraMoved) {
       shownPosition.copy(camera.position); shownQuaternion.copy(camera.quaternion);
       // 连续移动中的帧间隔才算数（刚开始动、停了又动的第一帧不算）
-      if (lastMoveRender && now - lastMoveRender < 120 && interval > 0) adapt(interval);
+      if (lastMoveRender && interval > 0) adapt(interval);
       lastMoveRender = now;
     }
     statFrames++; statTime += interval;
@@ -500,7 +510,7 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
   const budget = () => Math.max(1000 / (options.maxFps || 60), 1000 / 120);
   const adapt = (interval: number) => {
     moveIntervals.push(interval); if (moveIntervals.length > 90) moveIntervals.shift();
-    const slowMs = budget() * 1.35, fastMs = budget() * .8;
+    const slowMs = budget() * 1.35, fastMs = budget() * 1.08;
     if (interval > slowMs) { slow += interval; fast = 0; } else if (interval < fastMs) { fast += interval; slow = 0; } else { slow = fast = 0; }
     if (slow > 1500) {
       slow = 0;
@@ -510,7 +520,7 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
     if (fast > 4000 && ratio < maxRatio - .01) { ratio = Math.min(maxRatio, ratio + .25); setRatio(ratio); fast = 0; }
   };
   const start = () => { last = 0; looping = true; renderer.setAnimationLoop(frame); };
-  const visibility = () => { if (document.hidden) { renderer.setAnimationLoop(null); looping = false; } else if (!paused && !disposed) wake(); };
+  const visibility = () => { if (document.hidden) { blur(); renderer.setAnimationLoop(null); looping = false; lastMoveRender = 0; } else if (!paused && !disposed) wake(); };
   document.addEventListener("visibilitychange", visibility);
   start();
 
@@ -534,7 +544,7 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
     const url = assets.splats[quality]!;
     const report = (p: number) => {
       if (token !== loadToken) return;
-      if (initial) options.onProgress?.(Math.max(0, Math.min(1, p)));
+      if (initial) options.onProgress?.(Math.max(0, Math.min(.9, p * .9)));
       else { upgrading = { level, progress: p }; reportQuality(); }
     };
     report(0);
@@ -553,7 +563,7 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
     // 新旧两份同时在场景里画两帧，排序换到新的之后再撤掉旧的，换档时不闪
     if (old) setTimeout(() => { scene.remove(old); old.dispose(); wake(); }, 120);
     wake(8);
-    report(1);
+    if (initial) report(1);
     reportQuality();
     return true;
   }
@@ -609,10 +619,12 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
     for (let level = goal; level > first; level--) if (await cached(assets.splats[levels[level]]!)) { first = level; break; }
     if (!await loadLevel(first, true)) return;
     if (disposed) return;
+    options.onProgress?.(.95);
     await Promise.race([attachCollider(), new Promise(resolve => setTimeout(resolve, 1500))]);
     if (disposed) return;
     if (!bvh) settleSpawn();
     ready = true;
+    options.onProgress?.(1);
     options.onReady?.();
     wake();
     void climb();
@@ -627,7 +639,18 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
       if (disposed || !levels.length) return;
       auto = false;
       goal = cap = levelAtMost(levels, quality);
-      if (goal !== shown) await loadLevel(goal, false);
+      // 点击当前档也必须撤销后台升级，避免稍后被自动换档覆盖。
+      loadToken++;
+      upgrading = null;
+      reportQuality();
+      if (goal !== shown) {
+        const request = loadLevel(goal, false), token = loadToken;
+        try { await request; }
+        catch (error) {
+          if (token === loadToken) { upgrading = null; goal = cap = Math.max(0, shown); reportQuality(); }
+          throw error;
+        }
+      }
     },
     setAutoQuality(on) { auto = on; if (on) { cap = levels.length - 1; reportQuality(); } },
     setMode(next) {
@@ -635,11 +658,12 @@ const camera = new THREE.PerspectiveCamera(62, 1, .1, 2000);
       mode = next; vy = 0;
       // 从飞行切回行走：落到脚下的地面（没有碰撞网格就回到出生高度）
       if (mode === "walk" && bvh) { const floor = groundBelow(eye.x, eye.y, eye.z, 200); if (floor !== null) eye.y = floor + eyeHeight; }
+      wake();
     },
     setPixelRatio(next) { ratio = Math.max(minRatio, Math.min(maxRatio, next)); sharp = false; setRatio(ratio); wake(); },
     resetView() {
       if (!ready) return;
-      if (reduced) { settleSpawn(); return; }
+      if (reduced) { settleSpawn(); wake(); return; }
       reset = { from: eye.clone(), yaw, pitch, t: 0 };
       velocity.set(0, 0, 0); vy = 0;
       wake();

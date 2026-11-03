@@ -263,11 +263,31 @@ export function fileUrl(jobId: string, name: string, base = getBase()) {
 }
 
 import { downloadAsset, type DownloadProgress } from './asset-download';
-export function downloadJobFile(jobId: string, name: string, base = getBase(), options: { signal?: AbortSignal; onProgress?: (progress: DownloadProgress) => void; restart?: boolean } = {}) {
+/** 云端刚报完成时，网关那边的存储可能还没同步出新生成的文件，/files 暂时不给它签名。
+ *  这时先等签名出现（最多约 90 秒），不拿未签名的地址去下载：那只会得到 403，重试几次后就停住。
+ *  renew：已有的签名被拒（过期）时，要一个新签名。 */
+async function waitForSignedFile(jobId: string, name: string, base: string, signal?: AbortSignal, renew = false) {
+  const access = jobAccess.get(jobId);
+  if (!access?.token || (!renew && access.files[name])) return;
+  const started = Date.now();
+  for (let attempt = 0; ; attempt++) {
+    if (signal?.aborted) throw abortReason(signal);
+    const files = await refreshJobAccess(jobId, base);
+    if (files?.[name]) return;
+    if (Date.now() - started > 90000) throw new Error('云端结果文件仍在同步，请稍后从作品库重新打开。');
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => { signal?.removeEventListener('abort', stop); resolve(); }, Math.min(5000, 1000 * (attempt + 1)));
+      const stop = () => { clearTimeout(timer); reject(abortReason(signal!)); };
+      signal?.addEventListener('abort', stop, { once: true });
+    });
+  }
+}
+export async function downloadJobFile(jobId: string, name: string, base = getBase(), options: { signal?: AbortSignal; onProgress?: (progress: DownloadProgress) => void; restart?: boolean } = {}) {
+  await waitForSignedFile(jobId, name, base, options.signal);
   return downloadAsset(fileUrl(jobId, name, base), {
     ...options,
     key: `${normalizeBase(base)}::${jobId}::${name}`,
-    refreshUrl: async () => { await refreshJobAccess(jobId, base); return fileUrl(jobId, name, base); },
+    refreshUrl: async () => { await waitForSignedFile(jobId, name, base, options.signal, true); return fileUrl(jobId, name, base); },
   });
 }
 

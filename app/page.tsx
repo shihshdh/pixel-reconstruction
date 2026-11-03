@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useRef, useCallback, type CSSProperties, type ElementType, type ReactNode } from "react";
 import dynamic from "next/dynamic";
+const DemoCheck = dynamic(() => import("@/components/DemoCheck"), { ssr: false });
 const DevelopPainting = dynamic(() => import("@/components/DevelopPainting"));
 const CompanionPageImage = dynamic(() => import("@/components/CompanionPageImage"));
 import { preparePhoto, readLocalPhoto } from "@/lib/photo-prep";
@@ -934,18 +935,27 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
     }
   }
   function beginPolling(task: { id: string; base: string; started: number }, token: number) {
-    let failures = 0;
+    let failures = 0, failingSince = 0, waiting = false;
     const local = isEngineAddress(task.base);
     const budget = (handoffFile.current?.renderVideo ? 240 : 120) * 1000;
     clockRef.current = setInterval(() => setElapsed(Math.floor((Date.now() - task.started) / 1000)), 1000);
+    const next = (ms: number) => { waiting = true; pollRef.current = setTimeout(poll, ms); };
+    // 网络一恢复就立刻重查，不等下一轮
+    const resume = () => {
+      if (token !== generation.current) { window.removeEventListener("online", resume); return; }
+      if (waiting) { clearTimeout(pollRef.current); next(300); }
+    };
+    window.addEventListener("online", resume);
     const poll = async () => {
-      if (token !== generation.current) return;
+      waiting = false;
+      if (token !== generation.current) { window.removeEventListener("online", resume); return; }
       if (Date.now() - task.started > 25 * 60 * 1000) { fail("等待超过 25 分钟。任务可能仍在云端运行，可继续查询原任务。"); return; }
       if (local && handoffFile.current && Date.now() - task.started > budget) { void handoffToCloud("处理时间过长", token); return; }
       try {
         const st = await checkStatus(task.id, task.base);
         if (token !== generation.current) return;
-        failures = 0;
+        failures = 0; failingSince = 0;
+        if (st.status === "done" || st.status === "error") window.removeEventListener("online", resume);
         if (st.status === "done") {
           stopTimers(); busyRef.current = false; pendingRef.current = null; setPhase("done");
           onDone?.({ ...st, backend_url: task.base, photo: photoMeta.current }); return;
@@ -959,13 +969,20 @@ function CreatePage({ source, setSource, conn, device, onDone, onReconnect, back
       } catch (e) {
         if (token !== generation.current) return;
         failures++;
-        if (failures >= 4 && local && handoffFile.current) { void handoffToCloud("显卡引擎无响应", token); return; }
-        if (failures >= 4) { fail("暂时无法获取进度。可继续查询原任务，不会重复提交。" ); return; }
-        setStage("连接暂时中断 · 正在重新查询");
+        if (failures >= 4 && local && handoffFile.current) { window.removeEventListener("online", resume); void handoffToCloud("显卡引擎无响应", token); return; }
+        // 服务明确拒绝（4xx）：连续 4 次就停。断网、超时、5xx 结果未知，任务仍在云端运行：按时间算，3 分钟内一直自动重查
+        const status = (e as { status?: number } | null)?.status;
+        if (status && status < 500 ? failures >= 4 : Date.now() - (failingSince ||= Date.now()) > 180000) {
+          window.removeEventListener("online", resume);
+          fail("暂时无法获取进度。可继续查询原任务，不会重复提交。"); return;
+        }
+        setStage(navigator.onLine === false ? "网络中断 · 恢复后自动继续" : "连接暂时中断 · 正在重新查询");
+        next(Math.min(10000, 3000 + failures * 1000));
+        return;
       }
-      pollRef.current = setTimeout(poll, 3000);
+      next(3000);
     };
-    pollRef.current = setTimeout(poll, 1500);
+    next(1500);
   }
   const readAbort = useRef<AbortController | null>(null);
   useEffect(() => () => readAbort.current?.abort(), []);
@@ -1638,6 +1655,8 @@ function HomePage({ setPage, active = true, ready = true }) {
 // 根组件：路由 + 主题
 // ============================================================
 export default function App() {
+  const [checkMode, setCheckMode] = useState(false);
+  useEffect(() => { setCheckMode(new URLSearchParams(location.search).has("check")); }, []);
   const [page, setPage] = useState("home");
   const [routeTransitionId, setRouteTransitionId] = useState(0);
   const [theme, setTheme] = useState("light");
@@ -1823,6 +1842,7 @@ export default function App() {
     navigate("studio");
   };
   return <div ref={rootRef} className="ruhua-root" data-theme={theme} data-showcase-motion={showcaseMotion || undefined}>
+    {checkMode && <DemoCheck onClose={() => setCheckMode(false)} />}
     <style dangerouslySetInnerHTML={{ __html: GLOBAL_CSS }} />
     <InteriorStyles />
     <BrandIntro />

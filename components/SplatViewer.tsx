@@ -1,6 +1,7 @@
 "use client";
 
-import { patchSplatBuffer } from "@/lib/splat-perf";
+import { patchSplatBuffer, reuseStaticSplatCenters } from "@/lib/splat-perf";
+import "./SplatViewer.css";
 import SculptureMaker from "@/components/SculptureMaker";
 import type { SculptureImage } from "@/lib/sculpture-build";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
@@ -296,6 +297,7 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
   const [recording, setRecording] = useState(false);
   const [recProgress, setRecProgress] = useState(0);
   const [exportNote, setExportNote] = useState("");
+  const [exportError, setExportError] = useState("");
   const [canRecord, setCanRecord] = useState(true);
   // 运镜面板折叠：默认收起，不挡画面；点把手展开
 
@@ -332,6 +334,11 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
     // 界面整体放大（全屏、大窗口）时画布也被放大，按同一倍数提高渲染分辨率，保持清晰
     renderer.setPixelRatio(ratio * renderZoom(mount));
     renderer.setSize(mount.clientWidth || 960, mount.clientHeight || 600);
+    const camera = viewerRef.current?.camera;
+    if (camera) {
+      camera.aspect = (mount.clientWidth || 960) / (mount.clientHeight || 600);
+      camera.updateProjectionMatrix();
+    }
     viewerRef.current?.forceRenderNextFrame?.();
     setPerfInfo(info => ({ tier: profileRef.current?.tier || info?.tier || "", ratio }));
   };
@@ -345,6 +352,9 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
   function choosePerf(choice: PerfChoice) { savePerfChoice(choice); }
   function applyPerf(choice: PerfChoice) {
     setPerfChoice(choice);
+    // The global quality selector remains available during export. Apply its
+    // new render dimensions only after the fixed-size encoding target is released.
+    if (recordingRef.current) return;
     const profile = perfProfile(choice);
     profileRef.current = profile;
     governorRef.current?.set(profile.maxPixelRatio);
@@ -563,7 +573,7 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
         assetLoaded?.(asset);
         setLoadPhase('decode');
         // Paint the phase label before the CPU decoder starts.
-        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        await new Promise<void>(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
         if (disposed || !mountRef.current) return;
         threeRef.current = THREE;
 
@@ -607,18 +617,24 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
           freeIntermediateSplatData: true,
           halfPrecisionCovariancesOnGPU: false,
           inMemoryCompressionLevel: 0,
+          // Uncompressed studio data gains nothing from re-bucketing every point.
+          // Decode directly, retaining all points/SH precision; the sort tree is still built.
+          optimizeSplatData: false,
           selfDrivenMode: true,
           // 按需渲染：镜头不动就不画（自由查看时的收尾帧、静止补画由下面 tick 安排）
           renderMode: GS.RenderMode.OnChange,
+          sceneRevealMode: GS.SceneRevealMode.Instant,
         });
         viewerRef.current = viewer;
         ownedViewer = viewer;
+        reuseStaticSplatCenters(viewer.splatMesh);
 
         const ro = new ResizeObserver(() => {
+          if (recordingRef.current) return; // Keep export dimensions fixed until encoding finishes.
           const w = mount.clientWidth || 960;
           const h = mount.clientHeight || 600;
           // 进出全屏时界面缩放倍数会变：按新的倍数补偿渲染分辨率
-          if (!recordingRef.current) renderer.setPixelRatio((governorRef.current?.ratio ?? dpr) * renderZoom(mount));
+          renderer.setPixelRatio((governorRef.current?.ratio ?? dpr) * renderZoom(mount));
           renderer.setSize(w, h);
           if (viewer.camera) {
             viewer.camera.aspect = w / h;
@@ -647,7 +663,12 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
         } finally { clearTimeout(decodeTimer); URL.revokeObjectURL(sceneObjectUrl); sceneObjectUrl = ''; }
         if (disposed) return;
 
-        viewer.start();
+        // 0.4.7's Instant mode only disables the shader mask; its fade timer keeps
+        // OnChange drawing until the radius converges. Complete that timer too.
+        viewer.splatMesh.visibleRegionFadeStartRadius = viewer.splatMesh.visibleRegionRadius;
+        // Compile before the first draw so shader linking does not block pointer input.
+        await renderer.compileAsync(viewer.splatMesh, viewer.camera);
+        if (disposed || released) return;
         // 库在 window 上挂了调试快捷键（F/G 改焦距、P 点云、方向键翻滚…），会和 WASD 冲突
         if (viewer.keyDownListener) window.removeEventListener('keydown', viewer.keyDownListener);
         viewer.controls && (viewer.controls.target = new THREE.Vector3(0, 0, -TARGET_Z));
@@ -680,6 +701,9 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
           viewer.camera.up.set(0, 1, 0);
           viewer.camera.updateProjectionMatrix();
         }
+        viewer.update();
+        viewer.render();
+        viewer.start();
         setReady(true);
         setSceneInfo({ points: viewer.splatMesh.getSplatCount(), bytes: asset.size });
         clearInterval(elapsedTimer);
@@ -853,6 +877,7 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
   }
   /** 先缩成圆点再消失（CSS chipToDot），结束后才移出列表，后面的片段随即依次补位 */
   function removeFromSeq(k: number) {
+    if (seqPlaying) selectPreset("free");
     setSeqPlaying(false);
     if (prefersReduced()) return commitRemove(k);
     setLeaving((set) => new Set(set).add(k));
@@ -893,7 +918,7 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
   // ---- 录制导出 ----
   async function record() {
     const viewer = viewerRef.current;
-    if (!viewer?.camera || recording || exportSeq.length === 0) return;
+    if (!viewer?.camera || recordingRef.current || exportSeq.length === 0 || !canRecord) return;
 
     const tl = buildTimeline(exportSeq, true);
     const fps = (profileRef.current || perfProfile()).exportFps;
@@ -907,45 +932,50 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
     const cssW = canvas.clientWidth || mountRef.current?.clientWidth || 960;
     const cssH = canvas.clientHeight || mountRef.current?.clientHeight || 600;
     const liveRatio = governorRef.current?.ratio ?? profile.maxPixelRatio;
-    // 先按目标分辨率试画几帧估算总耗时：超出本档的时间预算就降到后备宽度，
-    // 高画质不能以等很久为代价。编码在显卡上与绘制并行，按绘制耗时 ×1.3 估算。
-    let exportWidth = profile.exportWidth;
-    rendererRef.current?.setPixelRatio(exportWidth / cssW);
-    rendererRef.current?.setSize(cssW, cssH);
-    {
-      const started = performance.now();
-      for (let i = 0; i < 4; i++) { viewer.update(); viewer.render(); }
-      rendererRef.current?.getContext().finish();
-      const perFrame = (performance.now() - started) / 4;
-      // 动态模糊会给快速运镜的帧多渲染几张子帧，按整条时间轴的平均子帧数计入
-      let rendered = total;
-      if (profile.tier === "ultra" || profile.tier === "high") { rendered = 0; for (let i = 0; i < total; i++) rendered += blurSamples(tl, i / fps, fps); }
-      const estimate = perFrame * 1.3 * rendered / 1000;
-      if (estimate > profile.exportBudgetSeconds && profile.fallbackExportWidth < exportWidth) {
-        exportWidth = profile.fallbackExportWidth;
-        rendererRef.current?.setPixelRatio(exportWidth / cssW);
-        rendererRef.current?.setSize(cssW, cssH);
-        setExportNote(`按 ${profile.exportWidth} 宽预计需要约 ${Math.round(estimate)} 秒，已改为 ${exportWidth} 宽导出`);
-      } else setExportNote("");
-    }
-    const w = Math.floor(exportWidth / 2) * 2;
-    const h = Math.floor((exportWidth * cssH / cssW) / 2) * 2;
-
-    const area = w * h;
-    // H.264 级别按每秒宏块数选：2560 宽 60fps 超出 5.1 级上限，需要 5.2
-    const macroblocksPerSecond = Math.ceil(w / 16) * Math.ceil(h / 16) * fps;
-    let codec = "avc1.42001f";
-    if (macroblocksPerSecond > 983_040) codec = "avc1.420034";
-    else if (area > 2_097_152) codec = "avc1.420033";
-    else if (area > 921_600) codec = "avc1.420028";
-
+    recordingRef.current = true;
     setRecording(true);
     setRecProgress(0);
-    recordingRef.current = true;
+    setExportError("");
+    setExportNote("正在准备编码器");
+    viewer.stop();
+    if (viewer.controls) viewer.controls.enabled = false;
     let encoder: VideoEncoder | null = null;
     let encodeError: Error | null = null;
-
     try {
+      // Paint feedback before allocating the export target or waiting for the GPU.
+      await new Promise(resolve => setTimeout(resolve, 0));
+      // 先按目标分辨率试画几帧估算总耗时：超出本档的时间预算就降到后备宽度，
+      // 高画质不能以等很久为代价。编码在显卡上与绘制并行，按绘制耗时 ×1.3 估算。
+      let exportWidth = profile.exportWidth;
+      rendererRef.current?.setPixelRatio(exportWidth / cssW);
+      rendererRef.current?.setSize(cssW, cssH);
+      {
+        const started = performance.now();
+        for (let i = 0; i < 4; i++) { viewer.update(); viewer.render(); await new Promise(resolve => setTimeout(resolve, 0)); }
+        rendererRef.current?.getContext().finish();
+        const perFrame = (performance.now() - started) / 4;
+        // 动态模糊会给快速运镜的帧多渲染几张子帧，按整条时间轴的平均子帧数计入
+        let rendered = total;
+        if (profile.tier === "ultra" || profile.tier === "high") { rendered = 0; for (let i = 0; i < total; i++) rendered += blurSamples(tl, i / fps, fps); }
+        const estimate = perFrame * 1.3 * rendered / 1000;
+        if (estimate > profile.exportBudgetSeconds && profile.fallbackExportWidth < exportWidth) {
+          exportWidth = profile.fallbackExportWidth;
+          rendererRef.current?.setPixelRatio(exportWidth / cssW);
+          rendererRef.current?.setSize(cssW, cssH);
+          setExportNote(`按 ${profile.exportWidth} 宽预计需要约 ${Math.round(estimate)} 秒，已改为 ${exportWidth} 宽导出`);
+        } else setExportNote("");
+      }
+      const w = Math.floor(exportWidth / 2) * 2;
+      const h = Math.floor((exportWidth * cssH / cssW) / 2) * 2;
+
+      const area = w * h;
+      // H.264 级别按每秒宏块数选：2560 宽 60fps 超出 5.1 级上限，需要 5.2
+      const macroblocksPerSecond = Math.ceil(w / 16) * Math.ceil(h / 16) * fps;
+      let codec = "avc1.42001f";
+      if (macroblocksPerSecond > 983_040) codec = "avc1.420034";
+      else if (area > 2_097_152) codec = "avc1.420033";
+      else if (area > 921_600) codec = "avc1.420028";
+
       const { Muxer, ArrayBufferTarget } = await import("mp4-muxer");
       const muxer = new Muxer({
         target: new ArrayBufferTarget(),
@@ -959,7 +989,7 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
       let config: VideoEncoderConfig = { ...base, hardwareAcceleration: "prefer-hardware" };
       if (!(await VideoEncoder.isConfigSupported(config)).supported) config = base;
       if (!(await VideoEncoder.isConfigSupported(config)).supported) {
-        throw new Error("当前设备不支持此尺寸的 H.264 编码，请缩小窗口后重试。");
+        throw new Error("当前设备不支持此尺寸的 H.264 编码，请选择较低画质后重试。");
       }
       encoder = new VideoEncoder({
         output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
@@ -978,11 +1008,15 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
         viewer.render();
       };
       // 编码积压时只等队列降下来，不整体 flush（flush 会让整条流水线停住）
-      const drainTo = (limit: number) => new Promise<void>((resolve) => {
-        if (!encoder || encoder.encodeQueueSize <= limit) return resolve();
-        const check = () => { if (!encoder || encoder.encodeQueueSize <= limit) { encoder?.removeEventListener("dequeue", check); resolve(); } };
-        encoder.addEventListener("dequeue", check);
-      });
+      const drainTo = async (limit: number) => {
+        const started = performance.now();
+        while (encoder && encoder.encodeQueueSize > limit) {
+          if (encodeError) throw encodeError;
+          if (!recordingRef.current || viewerRef.current !== viewer) return;
+          if (performance.now() - started > 30000) throw new Error("编码器响应超时，请重试。");
+          await new Promise(resolve => setTimeout(resolve, 8));
+        }
+      };
       const direct = w === canvas.width && h === canvas.height;
 
       // 动态模糊（高、极致档）：像电影摄影机的 180° 快门，在每帧前后各 1/4 帧的时间里渲染多张子帧再平均。
@@ -995,6 +1029,7 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
       if (gradeCtx) gradeCtx.filter = grade;
       const accumulator = blurOn ? new OffscreenCanvas(w, h) : null;
       const acc = accumulator?.getContext("2d") || null;
+      let lastYield = performance.now();
       for (let i = 0; i < total; i++) {
         if (!recordingRef.current || viewerRef.current !== viewer) return;
         if (encodeError) throw encodeError;
@@ -1036,10 +1071,15 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
         if (percent !== Math.round((i / total) * 100)) setRecProgress(percent);
         await drainTo(6);
         // 偶尔让出主线程，进度条和界面才能刷新
-        if (i % 6 === 5) await new Promise((r) => setTimeout(r, 0));
+        if (performance.now() - lastYield >= 12) {
+          await new Promise((r) => setTimeout(r, 0));
+          lastYield = performance.now();
+        }
       }
 
+      setExportNote("正在完成编码与封装");
       await encoder.flush();
+      if (!recordingRef.current || viewerRef.current !== viewer) return;
       muxer.finalize();
 
       const names = exportSeq.map(nameOf);
@@ -1057,19 +1097,24 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 4000);
     } catch (e: any) {
-      setErr("录制失败：" + (e?.message || e));
+      if (viewerRef.current === viewer) setExportError("导出失败：" + (e?.message || e));
     } finally {
       if (encoder && encoder.state !== "closed") encoder.close();
       recordingRef.current = false;
-      applyPixelRatio(liveRatio);
-      setSplat(1);
-      selectPreset(exportSeq[exportSeq.length - 1] ?? "free");
+      if (viewerRef.current === viewer) {
+        if (readPerfChoice() !== perfChoice) applyPerf(readPerfChoice());
+        else applyPixelRatio(liveRatio);
+        setSplat(1);
+        selectPreset("free");
+        if (viewer.controls) viewer.controls.enabled = true;
+        viewer.start();
+      }
       setRecording(false);
     }
   }
 
   return (
-    <div className="screen" data-scene-ready={ready || undefined} data-scene-points={sceneInfo.points || undefined} data-scene-bytes={sceneInfo.bytes || undefined}>
+    <div className="screen studio-viewer" data-scene-ready={ready || undefined} data-scene-points={sceneInfo.points || undefined} data-scene-bytes={sceneInfo.bytes || undefined}>
       <div className="stage">
         <div ref={mountRef} className="viewer-mount" />
         {ready && !recording && <div className="fly-hint" aria-hidden="true"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移动 · <kbd>空格</kbd> 上升 · <kbd>Shift</kbd> 下降 · 拖动转向</div>}
@@ -1096,13 +1141,14 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
         )}
 
         {recording && (
-          <div className="rec-overlay">
+          <div className="rec-overlay" role="status" aria-live="polite">
             <div className="stagename">导 出 中</div>
             <div className="clock">{recProgress}%</div>
-            <div className="bar" style={{ width: 230 }}>
+            <div className="bar" role="progressbar" aria-label="视频导出" aria-valuenow={recProgress} aria-valuemin={0} aria-valuemax={100} style={{ width: 230, maxWidth: '100%' }}>
               <i style={{ width: `${recProgress}%`, animation: "none", transform: "none" }} />
             </div>
             <div className="note">粒子开场 + {exportSeq.map(nameOf).join(" → ")}，正在你的显卡上逐帧编码，请勿切走标签页。{exportNote && <><br />{exportNote}</>}</div>
+            <button className="key" onClick={() => { recordingRef.current = false; }}>取消导出</button>
           </div>
         )}
       </div>
@@ -1202,7 +1248,7 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
                   <button className="key ghost" onClick={toggleSeqPreview} disabled={!ready || recording}>
                     {seqPlaying ? "■ 停止预览" : "▶ 预览序列"}
                   </button>
-                  <button className="key ghost" onClick={() => { setSeq([]); setSeqPlaying(false); }} disabled={recording}>
+                  <button className="key ghost" onClick={() => { setSeq([]); selectPreset("free"); }} disabled={recording}>
                     清空
                   </button>
                 </>
@@ -1231,6 +1277,9 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
               )}
               <span className="prog-label">{recording ? `导出中… ${recProgress}%` : "⏺ 导出 mp4"}</span>
             </button>
+            {recording && <button className="key ghost" onClick={() => { recordingRef.current = false; }}>取消导出</button>}
+            {exportError && <div className="rig-warn" role="alert">{exportError}</div>}
+            {recording && exportNote && <div className="export-hint">{exportNote}</div>}
             {!canRecord
               ? <div className="rig-warn">当前浏览器不支持 WebCodecs，请用最新版 Chrome / Edge 导出</div>
               : exportSeq.length === 0

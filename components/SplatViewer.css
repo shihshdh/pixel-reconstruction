@@ -1,0 +1,32 @@
+/* Studio-only overrides: keep the shared theme and other pages intact. */
+.studio-viewer { min-width: 0; padding-bottom: 24px; }
+.studio-viewer .rig, .studio-viewer .rig-card, .studio-viewer .rig-grid { min-width: 0; }
+.studio-viewer .rig button, .studio-viewer .rec-overlay button { min-height: 40px; min-width: 40px; }
+.studio-viewer .look-row input[type=range] { height: 40px; }
+.studio-viewer .rig .chip { padding: 0 0 0 8px; gap: 6px; }
+.studio-viewer .rig .chip button { width: 40px; height: 40px; flex-shrink: 0; }
+.studio-viewer .rec-overlay { box-sizing: border-box; padding: 16px; gap: 12px; }
+.studio-viewer .rec-overlay .stagename { font-size: 16px; }
+.studio-viewer .rec-overlay .stagename { color: var(--accent); background: none; -webkit-text-fill-color: currentColor; }
+.studio-viewer .rec-overlay { background: color-mix(in srgb, var(--card) 90%, transparent); color: var(--ink); }
+.studio-viewer .rec-overlay .note, .studio-viewer .rec-overlay .clock { color: var(--ink); }
+.studio-viewer .rec-overlay .clock { font-size: clamp(24px, 5vw, 48px); }
+.studio-viewer .rec-overlay .note { overflow-wrap: anywhere; }
+.studio-viewer .rec-overlay .key { color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 24px; padding: 8px 18px; cursor: pointer; }
+.studio-viewer .export-card > .key + .key { margin-top: 12px; }
+@media (max-width: 760px) {
+  .studio-viewer { padding-bottom: calc(144px + env(safe-area-inset-bottom, 0px)); }
+  .studio-viewer .rig-card { padding: 16px 14px; }
+  .studio-viewer .rig-card-title { gap: 8px; }
+  .studio-viewer .rig-card-title .perf-choice { width: 100%; margin-left: 0; }
+  .studio-viewer .perf-choice .lq { display: flex; width: 100%; min-width: 0; }
+  .studio-viewer .perf-choice .lq > button { flex: 1; padding-left: 6px; padding-right: 6px; font-size: 12px; }
+  .studio-viewer .rig-card-title span { margin-left: 0; }
+  .studio-viewer .look-row { grid-template-columns: 4em minmax(40px, 1fr) 4em; gap: 6px; }
+  .studio-viewer .rig-deck { gap: 8px; }
+  .studio-viewer .rig .tag, .studio-viewer .rig .key { padding: 9px 12px; }
+  .studio-viewer .pick-actions { flex-wrap: wrap; }
+  .studio-viewer .seq-hint { overflow-wrap: anywhere; min-width: 0; }
+  .studio-viewer .rec-overlay { justify-content: center; }
+  .studio-viewer .rec-overlay .note { font-size: 11px; line-height: 1.4; max-height: 4.2em; overflow-y: auto; }
+}

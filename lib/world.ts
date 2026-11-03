@@ -191,8 +191,8 @@ function confirm(jobId: string, requestId: string, operationId: string) {
   return next;
 }
 
-async function fetchWorld(task: WorldTask, worldId: string) {
-  const raw = await apiRequest<any>("/world/worlds/" + encodeURIComponent(worldId) + "?job_id=" + encodeURIComponent(task.jobId), { headers: jobAuthHeaders(task.jobId) }, task.base, 30000);
+async function fetchWorld(task: WorldTask, worldId: string, timeout = 30000) {
+  const raw = await apiRequest<any>("/world/worlds/" + encodeURIComponent(worldId) + "?job_id=" + encodeURIComponent(task.jobId), { headers: jobAuthHeaders(task.jobId) }, task.base, timeout);
   return normalizeWorld(raw?.world || raw, task.model);
 }
 
@@ -242,11 +242,11 @@ async function check(task: WorldTask) {
 }
 const notFound = new Map<string, number>();
 
-/** 打开漫游前刷新资源地址（World Labs 的下载地址带签名，会过期）；失败时沿用缓存的 */
+/** 下载失败后最多刷新一次。旧账号的世界可能返回 404；保留已完成状态与公共 CDN 地址。 */
 export async function refreshWorld(task: WorldTask): Promise<WorldTask> {
   if (task.demo || !task.world) return task;
   try {
-    const world = await fetchWorld(task, task.world.id);
+    const world = await fetchWorld(task, task.world.id, 5000);
     if (!hasSplats(world)) return task;
     const next = { ...task, world };
     put(next);
@@ -289,7 +289,7 @@ export function worldAssets(world: WorldRecord, scene?: { href: string; format: 
   return { splats, format: "spz", collider: world.collider && routeWorldUrl(world.collider), metricScale: world.metricScale, groundOffset: world.groundOffset, coordinate: "opencv" };
 }
 
-const ENGINE_URL = "/world/engine.js?v=2";
+const ENGINE_URL = "/world/engine.js?v=3";
 let enginePromise: Promise<WorldEngineModule> | null = null;
 /** 漫游引擎单独打包（world-engine/，自带 three 0.180 + Spark），第一次走进世界时才下载 */
 export function loadWorldEngine(): Promise<WorldEngineModule> {
@@ -359,6 +359,11 @@ export function probeWorldRoute(sample?: string): Promise<void> {
     try { sessionStorage.setItem("ruhua-world-route", route!); } catch {}
   })();
   return routeProbe;
+}
+/** 鲸鱼娘的修复动作：本次会话改走中转（直连能连上但很慢、或探测结果不准时） */
+export function forceWorldRelay() {
+  route = "relay"; routeProbe = null;
+  try { sessionStorage.setItem("ruhua-world-route", "relay"); } catch {}
 }
 /** World Labs 的文件地址 → 实际下载用的地址（直连不通时走本站中转） */
 export function routeWorldUrl(url: string): string {

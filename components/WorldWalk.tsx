@@ -13,9 +13,9 @@ import type { WalkMode, WorldEngine, WorldQuality, WorldQualityState } from "@/l
 import styles from "./WorldWalk.module.css";
 
 const QUALITY: { value: WorldQuality; label: string; title: string }[] = [
-  { value: "100k", label: "流畅", title: "10 万个高斯点：手机与核显" },
+  { value: "100k", label: "流畅", title: "10 万个高斯点" },
   { value: "500k", label: "标准", title: "50 万个高斯点" },
-  { value: "full_res", label: "精细", title: "全部高斯点（约 200 万）：独立显卡" },
+  { value: "full_res", label: "极致", title: "全部高斯点" },
 ];
 const ICON = {
   walk: <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.2 4.6a1.6 1.6 0 1 1 0 .01Z M10.4 20.4l2-5.2 2.6 2.4v2.8 M8.2 11.2l2.6-3.1 3.2.6 2 3 2.4.6 M12.6 15.2l-.9-5.4 M10.8 8.1 9 13.4" /></svg>,
@@ -25,15 +25,14 @@ const ICON = {
 };
 
 /**
- * 目标画质。引擎总是先用最小一档（约 1MB）一两秒内进去，再在后台逐档换到目标档；自动画质下移动时帧率有余量
- * 还会继续升到精细，持续掉帧退一档。所以这里只定“先换到哪一档”：独显直接以精细为目标；手机、核显以标准为目标，
- * 跑得动就自己升上去（静止画面另外按满档超采样补画，画质不降）。底栏点选后停在所选的档。
+ * 极致档在所有设备上都以全量点数为目标，先载入预览，再逐档补全。
+ * 移动时持续掉帧才沿引擎的自适应阶梯下调；底栏点选后停在所选的档。
  */
 function defaultQuality(): WorldQuality {
   try {
     const profile = perfProfile();
     if (profile.tier === "low") return "100k";
-    return profile.tier === "ultra" && !progressiveUltra(profile) ? "full_res" : "500k";
+    return profile.tier === "ultra" ? "full_res" : "500k";
   } catch { return "500k"; }
 }
 
@@ -89,13 +88,14 @@ export default function WorldWalk({ task, scene, poster, title, onClose }: {
   // 载入引擎与世界。不先等网关刷新资源地址（World Labs 的地址实测不带签名）：直接用记下的地址，
   // 下载真的失败了才向网关重新取一次地址再试（见 onError）。
   const refreshed = useRef(false);
+  const refreshedTask = useRef<WorldTask | null>(null);
   useEffect(() => {
     let disposed = false;
     setPhase({ kind: "loading", progress: 0 });
     setQualityState(null);
     (async () => {
       try {
-        const world = task.world!;
+        const world = (refreshedTask.current || task).world!;
         // 国内网络：先确认 World Labs 的 CDN 能不能直连，不通就走本站中转（预取时多半已经测过，这里立即返回）
         if (!world.demo) await probeWorldRoute(world.thumbnail || world.splats["100k"]);
         const assets = worldAssets(world, scene);
@@ -129,7 +129,11 @@ export default function WorldWalk({ task, scene, poster, title, onClose }: {
             // 资源地址可能变了（以后改成带签名的）：向网关重新取一次地址，再从头载入
             if (!refreshed.current && !demo && /下载世界文件失败|Failed to fetch|NetworkError|Load failed/i.test(error.message || "")) {
               refreshed.current = true;
-              void refreshWorld(task).finally(() => { if (!disposed) setAttempt(n => n + 1); });
+              void refreshWorld(refreshedTask.current || task).then(next => {
+                if (disposed) return;
+                refreshedTask.current = next;
+                setAttempt(n => n + 1);
+              });
               return;
             }
             setPhase({ kind: "error", message: error.message || "世界没能载入。" });
@@ -189,7 +193,10 @@ export default function WorldWalk({ task, scene, poster, title, onClose }: {
     const d = Math.hypot(dx, dy);
     if (d > s.r) { dx *= s.r / d; dy *= s.r / d; }
     if (knobRef.current) knobRef.current.style.transform = `translate3d(${dx}px,${dy}px,0)`;
-    engineRef.current?.setMoveInput(dx / s.r, -dy / s.r);
+    // 中心 12% 为死区，出死区后连续映射到全速，避免拇指静放时漂移。
+    const magnitude = Math.min(1, d / s.r);
+    const gain = magnitude > .12 ? (magnitude - .12) / .88 / magnitude : 0;
+    engineRef.current?.setMoveInput(dx / s.r * gain, -dy / s.r * gain);
     if (d > 6) setHint(false);
   };
   const endStick = (event: React.PointerEvent) => {
@@ -216,8 +223,8 @@ export default function WorldWalk({ task, scene, poster, title, onClose }: {
             <button className={styles.pill} data-ghost="" onClick={close}>返回工作室</button>
           </div>
         </> : <>
-          <strong>{loading && phase.progress > .98 ? "正在铺开世界" : "正在走进世界"}</strong>
-          <div className={styles.ring} style={{ ["--p" as string]: loading ? phase.progress : 1 }} aria-hidden="true"><i /></div>
+          <strong>{loading && phase.progress >= .9 ? "正在解析场景与碰撞网格" : "正在载入世界"}</strong>
+          <div className={styles.ring} style={{ ["--p" as string]: loading ? phase.progress : 1 }} role="progressbar" aria-label="世界载入进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={loading ? Math.round(phase.progress * 100) : 100}><i /></div>
           <p>{loading ? `${Math.round(phase.progress * 100)}%` : ""}{demo ? " · 演示：这件作品自己的场景" : ""}</p>
         </>}
       </div>
@@ -241,7 +248,7 @@ export default function WorldWalk({ task, scene, poster, title, onClose }: {
       <LiquidTabBar<WalkMode> tone="dark" variant="dock" ariaLabel="移动方式" value={mode} onChange={chooseMode}
         items={[{ value: "walk", label: "行走", icon: ICON.walk, title: "贴地行走，会被墙挡住" }, { value: "fly", label: "飞行", icon: ICON.fly, title: "自由飞行，仍不会穿墙" }]} />
       {!demo && <LiquidTabBar<WorldQuality> tone="dark" className={styles.quality} ariaLabel="画质" value={quality} onChange={chooseQuality}
-        items={QUALITY.map(q => ({ value: q.value, title: q.title, disabled: !task.world?.splats[q.value],
+        items={QUALITY.map(q => ({ value: q.value, title: q.title, disabled: phase.kind !== "ready" || !task.world?.splats[q.value],
           // 后台正在换上的那一档显示进度
           label: qualityState?.loading === q.value ? `${q.label} ${Math.round(qualityState.progress * 100)}%` : q.label }))} />}
       <GlassSurface tone="dark" className={styles.actions}>
@@ -251,13 +258,15 @@ export default function WorldWalk({ task, scene, poster, title, onClose }: {
     </div>
 
     {touch && phase.kind === "ready" && <div ref={stickRef} className={styles.stick}
+      role="group" aria-label="移动摇杆"
       onPointerDown={event => {
+        if (stick.current) return;
         const box = stickRef.current!.getBoundingClientRect();
         stick.current = { id: event.pointerId, cx: box.left + box.width / 2, cy: box.top + box.height / 2, r: box.width * .34 };
         stickRef.current!.setPointerCapture(event.pointerId);
         moveStick(event);
       }}
-      onPointerMove={moveStick} onPointerUp={endStick} onPointerCancel={endStick}>
+      onPointerMove={moveStick} onPointerUp={endStick} onPointerCancel={endStick} onLostPointerCapture={endStick}>
       <GlassSurface tone="dark" className={styles.stickBase}><span ref={knobRef} className={styles.knob} /></GlassSurface>
     </div>}
   </div>;

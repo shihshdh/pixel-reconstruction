@@ -38,3 +38,36 @@ export function patchSplatBuffer(GS: { SplatBuffer?: unknown }) {
     return i < table.length ? table[i] : original.call(this, section, localSplatIndex);
   };
 }
+
+type StaticMesh = {
+  dynamicMode: boolean;
+  integerBasedDistancesComputation: boolean;
+  scenes: unknown[];
+  splatDataTextures?: { baseData?: { centers?: Float32Array } };
+  getDataForDistancesComputation: (start: number, end: number) => { centers: Float32Array; sceneIndexes: Uint32Array };
+};
+
+/** Studio's static, single-scene float sort can reuse the centers just transformed
+ * for GPU upload. 0.4.7 otherwise decodes/transforms all centers a second time.
+ * Keep the worker's independent padded buffer: it may be transferred/detached.
+ * Instance-local; unsupported modes and later calls after cleanup use the library.
+ */
+export function reuseStaticSplatCenters(mesh: StaticMesh) {
+  const original = mesh.getDataForDistancesComputation;
+  mesh.getDataForDistancesComputation = function (start, end) {
+    const base = this.splatDataTextures?.baseData?.centers;
+    if (this.dynamicMode || this.integerBasedDistancesComputation || this.scenes.length !== 1
+      || !base || start < 0 || end < start || (end + 1) * 3 > base.length) {
+      return original.call(this, start, end);
+    }
+    const count = end - start + 1;
+    const centers = new Float32Array(count * 4);
+    for (let i = 0, src = start * 3; i < count; i++, src += 3) {
+      centers[i * 4] = base[src];
+      centers[i * 4 + 1] = base[src + 1];
+      centers[i * 4 + 2] = base[src + 2];
+      centers[i * 4 + 3] = 1;
+    }
+    return { centers, sceneIndexes: new Uint32Array(count) };
+  };
+}

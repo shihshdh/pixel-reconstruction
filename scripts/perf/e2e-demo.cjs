@@ -11,6 +11,7 @@ const URL_BASE = arg('--url', 'https://pixel-reconstruction.netlify.app');
 const phone = process.argv.includes('--phone');
 const skipUpload = process.argv.includes('--skip-upload');
 const skipExport = process.argv.includes('--skip-export') || phone;
+const onlyUpload = process.argv.includes('--only-upload');
 const OUT = arg('--out', `artifacts/perf/e2e-${phone ? 'phone' : 'desktop'}`);
 const PHOTO = arg('--photo', 'public/scene/london.jpg');
 
@@ -47,6 +48,8 @@ const visibleButton = (page, text) => page.evaluate(t => {
   page.setDefaultTimeout(60000);
   const errors = [];
   page.on('pageerror', e => errors.push('pageerror: ' + e.message.slice(0, 200)));
+  // 失败的 HTTP 响应记下地址（签名参数脱敏），便于定位是哪一步出错
+  page.on('response', r => { if (r.status() >= 400 && !/\/warm$/.test(r.url())) errors.push(`http ${r.status()} ${r.request().method()} ${r.url().replace(/(sig|expires)=[^&]+/g, '$1=…').slice(0, 160)}`); });
   page.on('console', m => { if (m.type() === 'error' && !/ERR_FAILED|favicon/.test(m.text())) errors.push('console: ' + m.text().slice(0, 200)); });
   // ERR_ABORTED 是页面主动取消的请求（切换页面、换场景时中止下载），不算故障
   page.on('requestfailed', r => { const why = r.failure()?.errorText || ''; if (!/\/warm$/.test(r.url()) && !/ERR_ABORTED/.test(why)) errors.push('requestfailed: ' + r.url().slice(0, 120) + ' ' + why); });
@@ -98,6 +101,7 @@ const visibleButton = (page, text) => page.evaluate(t => {
       await shot('04-studio-new');
     }
 
+    if (onlyUpload) return;
     // 4 工作室：打开预置作品，拖动、选运镜、（电脑）导出
     await visibleButton(page, '作品库'); await page.waitForTimeout(2500);
     const disc = page.getByRole('button', { name: /验收场景/ }).first();

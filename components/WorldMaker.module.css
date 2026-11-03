@@ -58,6 +58,9 @@
 .prompt input::placeholder{color:var(--ink3);opacity:.75;}
 .actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px 12px;}
 .actions a{text-decoration:none;}
+.card .actions :is(button,a),.card .enter{min-height:44px!important;}
+.body,.actions,.controls{min-width:0;}
+.caption,.actions :global(.seq-hint){overflow-wrap:anywhere;}
 
 .dots::after{content:"";display:inline-block;width:1.2em;text-align:left;animation:dots 1.8s steps(4) infinite;}
 @keyframes dots{0%{content:"";}25%{content:"·";}50%{content:"··";}75%{content:"···";}}
@@ -81,6 +84,14 @@
   display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
 
 @media(max-width:860px){.card{grid-template-columns:1fr;gap:18px;}.body{padding:0 4px 4px;}}
+@media(max-width:430px){
+  .card{padding:14px!important;gap:16px;}
+  .eyebrow{flex-wrap:wrap;gap:6px;letter-spacing:.02em;}
+  .stages li{grid-template-columns:12px minmax(0,1fr);gap:4px 8px;}
+  .stages li small{grid-column:2;}
+  .prompt input{min-width:0;font-size:16px;}
+  .row{flex-wrap:wrap;gap:5px 12px;}
+}
 @media(prefers-reduced-motion:reduce){
   .thumb,.walker,.card[data-state="pending"] .photo,.meter i::after,.dots::after,.stages li[data-state="now"] i{animation:none;}
   .focus,.meter i,.orbit .orbitRun{transition:none;}

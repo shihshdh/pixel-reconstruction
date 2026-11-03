@@ -29,7 +29,7 @@ export default function DiscShelf<T extends DiscItem>({ items, renderThumb, stat
   const n = items.length;
   const stageRef = useRef<HTMLDivElement>(null);
   const discRefs = useRef(new Map<number, HTMLButtonElement>());
-  const motion = useRef({ p: 0, v: 0, target: 0, spin: 0, last: 0 });
+  const motion = useRef({ p: 0, v: 0, target: 0, spin: 0, last: 0, held: false });
   const [current, setCurrent] = useState(0);
   const [visible, setVisible] = useState<[number, number]>([0, Math.min(n - 1, WINDOW)]);
   const reduced = useRef(false);
@@ -63,11 +63,14 @@ export default function DiscShelf<T extends DiscItem>({ items, renderThumb, stat
       raf = 0;
       const m = motion.current;
       if (!onScreen) { m.last = 0; return; }
-      const settled = Math.abs(m.target - m.p) < .0005 && Math.abs(m.v) < .0005;
+      const settled = !m.held && Math.abs(m.target - m.p) < .0005 && Math.abs(m.v) < .0005;
       if (settled && m.last && (now - m.last < ambient || ambientShouldYield(now))) { raf = requestAnimationFrame(tick); return; }
       const dt = Math.min(0.05, m.last ? (now - m.last) / 1000 : 0.016); m.last = now;
       if (reduced.current) { m.p = m.target; m.v = 0; }
-      else {
+      else if (m.held) {
+        // 手指按着：位置由拖动直接给出（见 move），这里只按手速转动盘面
+        m.spin += dt * 9 + m.v * dt * 60;
+      } else {
         // 临界阻尼附近的弹簧：快速到位、略带一点过冲
         const k = 70, c = 15;
         m.v += ((m.target - m.p) * k - m.v * c) * dt;
@@ -122,24 +125,54 @@ export default function DiscShelf<T extends DiscItem>({ items, renderThumb, stat
     return () => { stage.removeEventListener("wheel", wheel); clearTimeout(snap); };
   }, [n, go]);
 
-  // 拖动：横向拖一张光盘的距离换一张；位移很小时当作点击
-  const drag = useRef({ id: -1, x: 0, start: 0, moved: false });
+  // 拖动：光盘贴着手指走（按弧上实际的盘间距换算），按下即抓住正在转的光盘；横向拖动才接管，
+  // 竖向交给页面滚动；两端有阻尼。松手按最后约 100ms 的手速最多再多走半张，然后吸附到最近一张（快速划最多比手指多翻一张）。
+  // 位移很小时当作点击。
+  const drag = useRef({ id: -1, x: 0, y: 0, start: 0, spacing: 1, axis: "" as "" | "x" | "y", moved: false, samples: [] as { t: number; p: number }[] });
   const down = (event: React.PointerEvent) => {
     if (event.button !== 0) return;
-    drag.current = { id: event.pointerId, x: event.clientX, start: motion.current.target, moved: false };
+    const stage = stageRef.current, m = motion.current;
+    const unit = stage ? Math.min(stage.clientWidth / 1100, stage.clientHeight / 520) : 1;
+    drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, start: m.p, spacing: Math.max(40, 250 * unit), axis: "", moved: false, samples: [] };
   };
   const move = (event: React.PointerEvent) => {
     const g = drag.current;
-    if (g.id !== event.pointerId) return;
-    const dx = event.clientX - g.x;
-    if (!g.moved && Math.abs(dx) > 6) { g.moved = true; stageRef.current?.setPointerCapture(event.pointerId); }
-    if (g.moved) motion.current.target = Math.max(-.4, Math.min(n - .6, g.start - dx / 230));
+    if (g.id !== event.pointerId || g.axis === "y") return;
+    const dx = event.clientX - g.x, dy = event.clientY - g.y;
+    if (!g.axis) {
+      if (Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy)) {
+        g.axis = "x"; g.moved = true;
+        stageRef.current?.setPointerCapture(event.pointerId);
+        const m = motion.current;
+        m.held = true; m.v = 0; m.last = 0;
+        // 从当前画面位置接管，光盘不跳
+        g.start = m.p; g.x = event.clientX;
+        return;
+      }
+      if (Math.abs(dy) > 6) g.axis = "y";
+      return;
+    }
+    const m = motion.current;
+    let p = g.start - dx / g.spacing;
+    if (p < 0) p *= .35; else if (p > n - 1) p = n - 1 + (p - (n - 1)) * .35;
+    m.p = m.target = p;
+    const t = event.timeStamp;
+    g.samples.push({ t, p });
+    while (g.samples.length > 2 && t - g.samples[0].t > 100) g.samples.shift();
+    const first = g.samples[0];
+    m.v = t > first.t ? (p - first.p) / ((t - first.t) / 1000) : 0;
   };
   const up = (event: React.PointerEvent) => {
     const g = drag.current;
     if (g.id !== event.pointerId) return;
     drag.current.id = -1;
-    if (g.moved) go(Math.round(motion.current.target));
+    if (g.axis !== "x") return;
+    const m = motion.current;
+    // 停住再松手（最后一次移动已过去 80ms 以上）不带惯性
+    const last = g.samples[g.samples.length - 1];
+    const v = last && event.timeStamp - last.t < 80 ? Math.max(-10, Math.min(10, m.v)) : 0;
+    m.held = false; m.v = v;
+    go(Math.round(m.p + Math.max(-.6, Math.min(.6, v * .08))));
   };
   const clickDisc = (index: number) => {
     if (drag.current.moved) { drag.current.moved = false; return; }
