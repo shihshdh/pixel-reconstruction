@@ -535,12 +535,13 @@ def create_app():
     @app.get("/healthz")
     def healthz():
         configured = bool(os.environ.get("RUHUA_GPU_URL") and os.environ.get("BEAM_API_TOKEN"))
+        assist_on = bool(os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("ARK_API_KEY"))
         return {"ok": configured, "device": "Beam · RTX 4090 · 按需启动", "serverless": True,
                 "enhance": bool(os.environ.get("ARK_API_KEY")), "gpu_on_demand": True,
-                "assist": bool(os.environ.get("DEEPSEEK_API_KEY")),
-                "assist_vision": bool(os.environ.get("DEEPSEEK_API_KEY")),
-                "assist_actions": bool(os.environ.get("DEEPSEEK_API_KEY")),
-                "assist_search": bool(os.environ.get("DEEPSEEK_API_KEY") and os.environ.get("BOCHA_API_KEY")),
+                "assist": assist_on, "assist_vision": assist_on, "assist_actions": assist_on,
+                "assist_search": bool(assist_on and os.environ.get("BOCHA_API_KEY")),
+                # 官方 DeepSeek 接口不可用时改走火山方舟托管的同款模型
+                "assist_backup": bool(os.environ.get("ARK_API_KEY")),
                 # 大肥鱼可以替用户提交工单（POST /report）
                 "tickets": configured,
                 # 「走进世界」：World Labs 世界模型已配置（前端据此从演示模式切到正式生成）
@@ -559,8 +560,17 @@ def create_app():
             payload = json.loads(body)
         except (ValueError, UnicodeDecodeError):
             raise HTTPException(400, "请求格式无效。")
+        # 站长测试备用线路：带管理密钥时可用 X-Ruhua-Assist-Route: ark|deepseek 指定线路；普通访客的这个头被忽略
+        route = None
+        if request.headers.get("x-ruhua-assist-route"):
+            from tickets import TicketRejected, authorize_admin
+            try:
+                authorize_admin(request.headers.get("x-ruhua-admin", ""))
+                route = request.headers.get("x-ruhua-assist-route")
+            except TicketRejected:
+                route = None
         return await run_in_threadpool(handle, payload, request.client.host if request.client else "",
-                                      request.headers.get("x-forwarded-for", ""))
+                                      request.headers.get("x-forwarded-for", ""), route)
 
     @app.post("/report")
     async def report(request: Request):

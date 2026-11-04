@@ -84,6 +84,9 @@ class AssistTests(unittest.TestCase):
             patch.dict(os.environ, {"BEAM_API_TOKEN": "offline-test-only-not-a-real-token",
                                     "DEEPSEEK_API_KEY": "sk-offline-test-not-a-real-key",
                                     "RUHUA_DAILY_CHATS": "300"}),
+            # 备用线路的状态是模块级的；每个用例从「官方接口正常」开始，重试不真等
+            patch.dict(assist._route_state, {"deepseek_down_until": 0.0, "ark_model": None}),
+            patch.object(assist.time, "sleep"),
         ]
         for item in self.patches:
             item.start()
@@ -403,6 +406,90 @@ class AssistTests(unittest.TestCase):
         self.assertIn("【环境诊断】", context)
         self.assertIn("网络：在线 · 4g", context)
         self.assertNotIn("e" * 64, context)
+
+    # ---- backup line: Ark-hosted DeepSeek when api.deepseek.com is down ----
+    @staticmethod
+    def missing_model():
+        response = MagicMock(status_code=404)
+        response.json.return_value = {"error": {"code": "InvalidEndpointOrModel.NotFound", "message": "The model does not exist"}}
+        return response
+
+    def test_busy_deepseek_switches_to_ark_hosted_deepseek(self):
+        with patch.dict(os.environ, {"ARK_API_KEY": "ark-offline-test-not-real"}), \
+                patch.object(assist.requests, "post", side_effect=[MagicMock(status_code=503), deepseek_ok()]) as post:
+            reply, _, _, _ = assist.ask_deepseek([{"role": "user", "content": "嗨"}], "")
+        self.assertEqual(reply, "你好呀！")
+        first, second = post.call_args_list
+        self.assertEqual(first.args[0], assist.DEEPSEEK_URL)
+        self.assertEqual(second.args[0], assist.ARK_CHAT_URL)
+        self.assertEqual(second.kwargs["json"]["model"], assist.ARK_DEEPSEEK_MODELS[0])
+        self.assertIn("ark-offline-test-not-real", second.kwargs["headers"]["Authorization"])
+        self.assertGreater(assist._route_state["deepseek_down_until"], 0)
+
+    def test_outage_window_skips_deepseek_then_recovers(self):
+        assist._route_state["deepseek_down_until"] = assist.time.time() + 60
+        with patch.dict(os.environ, {"ARK_API_KEY": "ark-offline-test-not-real"}), \
+                patch.object(assist.requests, "post", return_value=deepseek_ok()) as post:
+            assist.ask_deepseek([{"role": "user", "content": "嗨"}], "")
+            self.assertEqual(post.call_args.args[0], assist.ARK_CHAT_URL)
+            assist._route_state["deepseek_down_until"] = assist.time.time() - 1
+            assist.ask_deepseek([{"role": "user", "content": "嗨"}], "")
+            self.assertEqual(post.call_args.args[0], assist.DEEPSEEK_URL)
+
+    def test_balance_or_key_errors_also_use_backup(self):
+        with patch.dict(os.environ, {"ARK_API_KEY": "ark-offline-test-not-real"}), \
+                patch.object(assist.requests, "post", side_effect=[MagicMock(status_code=402), deepseek_ok()]) as post:
+            assist.ask_deepseek([{"role": "user", "content": "嗨"}], "")
+        self.assertEqual([c.args[0] for c in post.call_args_list], [assist.DEEPSEEK_URL, assist.ARK_CHAT_URL])
+
+    def test_without_backup_a_busy_call_is_retried_once(self):
+        with patch.object(assist.requests, "post", side_effect=[MagicMock(status_code=503), deepseek_ok()]) as post:
+            reply, _, _, _ = assist.ask_deepseek([{"role": "user", "content": "嗨"}], "")
+        self.assertEqual(reply, "你好呀！")
+        self.assertEqual([c.args[0] for c in post.call_args_list], [assist.DEEPSEEK_URL] * 2)
+
+    def test_ark_skips_models_not_activated_and_remembers_the_working_one(self):
+        with patch.dict(os.environ, {"ARK_API_KEY": "ark-offline-test-not-real"}), \
+                patch.object(assist.requests, "post", side_effect=[self.missing_model(), deepseek_ok(), deepseek_ok()]) as post:
+            assist.ask_deepseek([{"role": "user", "content": "嗨"}], "", route="ark")
+            assist.ask_deepseek([{"role": "user", "content": "嗨"}], "", route="ark")
+        models = [c.kwargs["json"]["model"] for c in post.call_args_list]
+        self.assertEqual(models, [assist.ARK_DEEPSEEK_MODELS[0], assist.ARK_DEEPSEEK_MODELS[1], assist.ARK_DEEPSEEK_MODELS[1]])
+
+    def test_both_lines_down_gives_the_usual_message(self):
+        with patch.dict(os.environ, {"ARK_API_KEY": "ark-offline-test-not-real"}), \
+                patch.object(assist.requests, "post", return_value=MagicMock(status_code=503)):
+            with self.assertRaises(HTTPException) as caught:
+                assist.ask_deepseek([{"role": "user", "content": "嗨"}], "")
+        self.assertEqual(caught.exception.status_code, 502)
+
+    def test_ark_never_receives_deepseek_reasoning_field(self):
+        calls = [{"id": "1", "type": "function", "function": {"name": "operate_page", "arguments": json.dumps({"action": "navigate", "page": "studio"})}}]
+        first = deepseek_ok("")
+        first.json.return_value = {"choices": [{"message": {"role": "assistant", "content": "", "reasoning_content": "想一想", "tool_calls": calls}, "finish_reason": "tool_calls"}]}
+        with patch.dict(os.environ, {"ARK_API_KEY": "ark-offline-test-not-real"}), \
+                patch.object(assist.requests, "post", side_effect=[first, MagicMock(status_code=503), deepseek_ok("<mood:happy>\n到工作室啦")]) as post:
+            reply, _, actions, _ = assist.ask_deepseek([{"role": "user", "content": "去工作室"}], "")
+        self.assertEqual(reply, "到工作室啦")
+        self.assertEqual(actions[0]["type"], "navigate")
+        ark_body = post.call_args_list[2].kwargs["json"]
+        self.assertEqual(post.call_args_list[2].args[0], assist.ARK_CHAT_URL)
+        self.assertFalse(any("reasoning_content" in m for m in ark_body["messages"]))
+        self.assertTrue(any(m.get("tool_calls") for m in ark_body["messages"]))
+
+    def test_forced_route_needs_the_admin_key_and_healthz_reports_backup(self):
+        from gateway import create_app
+        from tickets import admin_key
+        client = TestClient(create_app())
+        payload = json.dumps({"messages": [{"role": "user", "content": "嗨"}]})
+        with patch.dict(os.environ, {"ARK_API_KEY": "ark-offline-test-not-real"}), \
+                patch.object(assist.requests, "post", return_value=deepseek_ok()) as post:
+            self.assertTrue(client.get("/healthz").json()["assist_backup"])
+            client.post("/assist", content=payload, headers={"X-Ruhua-Assist-Route": "ark"})
+            self.assertEqual(post.call_args.args[0], assist.DEEPSEEK_URL)
+            client.post("/assist", content=payload, headers={"X-Ruhua-Assist-Route": "ark", "X-Ruhua-Admin": admin_key()})
+            self.assertEqual(post.call_args.args[0], assist.ARK_CHAT_URL)
+        self.assertFalse(client.get("/healthz").json()["assist_backup"])
 
 
 if __name__ == "__main__":
