@@ -6,29 +6,29 @@ import { useState, useEffect, useRef, useCallback, type CSSProperties, type Elem
 import dynamic from "next/dynamic";
 import { retryImport } from "@/lib/lazy-retry";
 const DemoCheck = dynamic(retryImport(() => import("@/components/DemoCheck")), { ssr: false });
-const DevelopPainting = dynamic(retryImport(() => import("@/components/DevelopPainting")));
-const CompanionPageImage = dynamic(retryImport(() => import("@/components/CompanionPageImage")));
+const DevelopPainting = dynamic(retryImport(() => import("@/components/DevelopPainting")), { loading: () => null });
+const CompanionPageImage = dynamic(retryImport(() => import("@/components/CompanionPageImage")), { loading: () => null });
 import { preparePhoto, readLocalPhoto } from "@/lib/photo-prep";
 import { lookupPlace, photoCoords, photoDevice, photoSettings, readPhotoMeta, type PhotoMeta } from "@/lib/photo-meta";
 import { announceMoment, isDevelopablePhoto, UPLOAD_REQUEST_EVENT, type UploadRequest } from "@/lib/companion-moments";
 import { useScenePoster } from "@/components/ScenePoster";
 import { cacheGalleryItem, deleteGalleryItem, galleryId, isSameGalleryScene, getGalleryAsset, getGalleryScene, listGallery, setGalleryFavorite, setGalleryPhoto, subscribeGallery, type GalleryItem } from "@/lib/gallery-storage";
 import type { DoubaoPreferences } from "@/components/DoubaoSettings";
-const DoubaoSettings = dynamic(retryImport(() => import("@/components/DoubaoSettings")));
-const EditPromptPicker = dynamic(retryImport(() => import("@/components/EditPromptPicker")));
+const DoubaoSettings = dynamic(retryImport(() => import("@/components/DoubaoSettings")), { loading: () => null });
+const EditPromptPicker = dynamic(retryImport(() => import("@/components/EditPromptPicker")), { loading: () => null });
 import BrandMark from "@/components/BrandMark";
 import InteriorStyles from "@/components/InteriorStyles";
-const WorkflowPreview = dynamic(retryImport(() => import("@/components/WorkflowPreview")));
+const WorkflowPreview = dynamic(retryImport(() => import("@/components/WorkflowPreview")), { loading: () => null });
 import ShowcaseTransition from "@/components/ShowcaseTransition";
 import BrandIntro from "@/components/BrandIntro";
 import PixelLoader from "@/components/PixelLoader";
 import { MorphIcon } from "morphicons/react";
 import { ICON } from "@/lib/icons";
 import AuthorContact from "@/components/AuthorContact";
-const DiscShelf = dynamic(retryImport(() => import("@/components/DiscShelf"))) as typeof import("@/components/DiscShelf").default;
-const SceneWall = dynamic(retryImport(() => import("@/components/SceneWall")));
-const LineSculpture = dynamic(retryImport(() => import("@/components/LineSculpture")));
-const GlassInvite = dynamic(retryImport(() => import("@/components/GlassInvite")));
+const DiscShelf = dynamic(retryImport(() => import("@/components/DiscShelf")), { loading: () => null }) as typeof import("@/components/DiscShelf").default;
+const SceneWall = dynamic(retryImport(() => import("@/components/SceneWall")), { loading: () => null });
+const LineSculpture = dynamic(retryImport(() => import("@/components/LineSculpture")), { loading: () => null });
+const GlassInvite = dynamic(retryImport(() => import("@/components/GlassInvite")), { loading: () => null });
 import { OPEN_CHECK_EVENT, REPAIR_SCENE_EVENT } from "@/lib/companion-repair";
 import { DESKTOP_DOWNLOAD, DESKTOP_DOWNLOAD_GITHUB, DESKTOP_RELEASES, isDesktopApp, openWorksFolder, setFullscreen, titleBarMouseDown } from "@/lib/desktop";
 import WindowControls from "@/components/WindowControls";
@@ -1727,11 +1727,12 @@ export default function App() {
     if (!settled) return;
     const timer = setTimeout(() => setEngineWanted(true), 1200);
     // 各页的按需模块在空闲时预取，第一次切到创作、修图、作品库不用等下载
+    let prefetchIdle: number | undefined;
     const prefetch = setTimeout(() => {
       const load = () => { void Promise.all([import("@/components/DevelopPainting"), import("@/components/CompanionPageImage"), import("@/components/EditPromptPicker"), import("@/components/DoubaoSettings"), import("@/components/DiscShelf"), import("@/components/SplatViewer"), import("@/components/WorldMaker"), import("@/components/WhaleCompanion")]).catch(() => {}); };
-      if ("requestIdleCallback" in window) requestIdleCallback(load, { timeout: 4000 }); else load();
+      if ("requestIdleCallback" in window) prefetchIdle = requestIdleCallback(load, { timeout: 4000 }); else load();
     }, 2500);
-    return () => { clearTimeout(timer); clearTimeout(prefetch); };
+    return () => { clearTimeout(timer); clearTimeout(prefetch); if (prefetchIdle !== undefined) cancelIdleCallback(prefetchIdle); };
   }, [settled]);
   useEffect(() => engineWanted ? watchLocalEngine(setEngine) : undefined, [engineWanted]);
   // 大窗口、全屏时界面整体等比放大（见 lib/ui-scale.ts）

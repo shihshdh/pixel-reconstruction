@@ -75,7 +75,7 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
   const [items, setItems] = useState<ChatItem[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [sendFailed, setSendFailed] = useState(false);
+  const [sendFailed, setSendFailed] = useState<string | null>(null);
   const ticketSending = useRef(false);
   const [reveal, setReveal] = useState<{ id: number; count: number } | null>(null);
   const [unseenError, setUnseenError] = useState(false);
@@ -258,7 +258,7 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
     sending.current = true;
     const user: ChatItem = { id: nextId.current++, role: "user", content: content.slice(0, 1200) };
     const history = [...items, user];
-    setItems(history); setInput(""); setSendFailed(false); setBusy(true); setPending(null);
+    setItems(history); setInput(""); setSendFailed(null); setBusy(true); setPending(null);
     stageRef.current?.setMood("think");
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -288,7 +288,8 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
     } catch (error) {
       if (controller.signal.aborted) return;
       const message = error instanceof Error ? error.message : "回复中断，请恢复网络后重试。";
-      setInput(content); setSendFailed(true);
+      // Do not replace a new draft typed while the request was in flight.
+      setInput(current => current || content); setSendFailed(content);
       setItems(list => [...list, { id: nextId.current++, role: "assistant", content: message, local: true }]);
       if (!openRef.current) say({ text: message, mood: "worry", actions: [{ label: "查看并重试", run: () => openChat() }] });
       stageRef.current?.setMood("worry");
@@ -616,12 +617,12 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
       <CompanionVision enabled={visionEnabled} busy={busy} screen={screen} onScreen={setScreen} pageImage={pageImage} onPageImage={setPageImage} autoLook={autoLook} onAutoLook={rememberLook} />
       <form className={styles.form} onSubmit={event => { event.preventDefault(); void send(input, true); }}>
         <textarea ref={inputRef} rows={1} value={input} maxLength={1200} placeholder="和大肥鱼说点什么…" aria-label="给大肥鱼的消息"
-          onChange={event => setInput(event.target.value)}
+          onChange={event => { setInput(event.target.value); setSendFailed(null); }}
           onKeyDown={event => {
             // Chinese IME: Enter confirms a candidate while composing; never send then.
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(input, true); }
           }} />
-        <button type="submit" disabled={busy || (!input.trim() && !screen && !pageImage)}>{sendFailed ? "重试发送" : "发送"}</button>
+        <button type="submit" disabled={busy || (!input.trim() && !screen && !pageImage)}>{sendFailed !== null && input.trim() === sendFailed ? "重试发送" : "发送"}</button>
       </form>
       <footer className={styles.credit}>
         模型 <a href="https://space.bilibili.com/11272072" target="_blank" rel="noopener noreferrer">B站 @氵六青</a> · 形象 上善无形 / ZipZipPipe ·{" "}

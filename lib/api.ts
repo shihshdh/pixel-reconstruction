@@ -138,10 +138,11 @@ export function waitForReadRetry(milliseconds: number, signal?: AbortSignal): Pr
     if (signal?.aborted) cancel(); else signal?.addEventListener('abort', cancel, { once: true });
   });
 }
-async function request<T>(path: string, init: RequestInit = {}, base = getBase(), timeout = 30000): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, base = getBase(), timeout = 30000, retryReads = true): Promise<T> {
+  if (init.signal?.aborted) throw abortReason(init.signal);
   const url = endpoint(path, base);
   // Never replay generation, chat, tickets or other POSTs, including lost responses.
-  const attempts = !init.method || init.method.toUpperCase() === 'GET' ? 3 : 1;
+  const attempts = retryReads && (!init.method || init.method.toUpperCase() === 'GET') ? 3 : 1;
   for (let attempt = 0; ; attempt++) {
     const scoped = createAbortSignal([init.signal], timeout);
     try {
@@ -155,9 +156,9 @@ async function request<T>(path: string, init: RequestInit = {}, base = getBase()
       const transient = status ? [502, 503, 504].includes(status) : timedOut || error instanceof TypeError;
       // 断网时立刻报错，交给调用方显示「网络中断」并等 online；超时已经等满 timeout，不再加倍
       const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
-      const retry = status ? transient : error instanceof TypeError && !timedOut && !offline;
+      const retry = !timedOut && !offline && (status ? transient : error instanceof TypeError);
       if (!retry || attempt + 1 >= attempts) {
-        if (status) throw error;
+        if (status && !timedOut) throw error;
         throw Object.assign(new Error(timedOut
           ? '等待服务响应超时。首次启动可能较慢，请稍后重试。'
           : offline ? '网络连接中断，请恢复网络后重试。'
@@ -249,7 +250,8 @@ export async function submitPhoto(file: File, renderVideo: boolean, enhance: boo
 }
 export async function checkStatus(callId: string, base = getBase()): Promise<StatusResp> {
   const jobId = taskJobs.get(callId) || callId;
-  const result = await request<StatusResp>("/status/" + encodeURIComponent(callId), { headers: jobHeaders(jobId) }, base);
+  // beginPolling owns the backoff; nested read retries multiply each poll.
+  const result = await request<StatusResp>("/status/" + encodeURIComponent(callId), { headers: jobHeaders(jobId) }, base, 30000, false);
   if (result.status === 'done') {
     registerJobAccess(result.job_id, undefined, result.file_urls);
     return { ...result, job_token: jobAccess.get(result.job_id)?.token };

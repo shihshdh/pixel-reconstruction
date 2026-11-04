@@ -6,10 +6,14 @@ export function retryImport<T>(load: () => Promise<T>, budget = 180000): () => P
     const started = Date.now();
     let tries = 0;
     const attempt = () => load().then(resolve, error => {
-      if (typeof window === "undefined" || Date.now() - started > budget) { reject(error); return; }
+      const remaining = budget - (Date.now() - started);
+      if (typeof window === "undefined" || remaining <= 0) { reject(error); return; }
       tries++;
-      const go = () => { window.removeEventListener("online", go); clearTimeout(timer); attempt(); };
-      const timer = setTimeout(go, navigator.onLine === false ? 30000 : Math.min(10000, 1000 * tries));
+      const go = () => {
+        window.removeEventListener("online", go); clearTimeout(timer);
+        if (Date.now() - started >= budget) reject(error); else attempt();
+      };
+      const timer = setTimeout(go, Math.min(remaining, navigator.onLine === false ? 30000 : Math.min(10000, 1000 * tries)));
       window.addEventListener("online", go);
     });
     attempt();

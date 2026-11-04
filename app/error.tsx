@@ -2,13 +2,14 @@
 
 // 页面级兜底：组件代码长时间下载不到（断网、站点刚更新）或渲染出错时，显示可恢复的提示，
 // 代替 Next 默认的 "Application error" 白屏。网络恢复后自动重试一次。
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 export default function PageError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   const chunk = error?.name === "ChunkLoadError" || /Loading (CSS )?chunk|dynamically imported module/i.test(error?.message || "");
+  const resumed = useRef(false);
   useEffect(() => {
     console.error(error);
-    const again = () => reset();
+    const again = () => { if (!resumed.current) { resumed.current = true; reset(); } };
     window.addEventListener("online", again);
     return () => window.removeEventListener("online", again);
   }, [error, reset]);
