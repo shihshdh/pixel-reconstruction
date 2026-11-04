@@ -437,15 +437,20 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
   // The panel sits above the figure (or chip). Keep its header on screen: cap its height to the space
   // left between the top of the viewport and the figure, following the visual viewport (phone keyboard).
   const [viewHeight, setViewHeight] = useState(0);
+  // 顶栏底边：对话框不盖住顶栏（矮窗口里会挡住页面切换和主题按钮）
+  const [navBottom, setNavBottom] = useState(0);
   useEffect(() => {
     const vv = window.visualViewport;
-    const sync = () => setViewHeight(Math.round(vv?.height || window.innerHeight));
+    const sync = () => {
+      setViewHeight(Math.round(vv?.height || window.innerHeight));
+      setNavBottom(Math.round(document.querySelector(".nav-right")?.getBoundingClientRect().bottom || 0));
+    };
     sync();
     vv?.addEventListener("resize", sync); window.addEventListener("resize", sync);
     return () => { vv?.removeEventListener("resize", sync); window.removeEventListener("resize", sync); };
-  }, []);
+  }, [open]);
   const belowPanel = (prefs.collapsed || stageState === "failed" ? 44 : stageSize.height) + 10 + Math.max(compact ? 96 : 0, prefs.bottom);
-  const panelMax = viewHeight ? Math.max(220, viewHeight - belowPanel - 12) : undefined;
+  const panelMax = viewHeight ? Math.max(220, viewHeight - belowPanel - Math.max(12, navBottom + 8)) : undefined;
   const clampPos = useCallback((right: number, bottom: number) => {
     const box = rootRef.current?.querySelector<HTMLElement>("[data-figure]")?.getBoundingClientRect();
     const w = box?.width || stageSize.width, h = box?.height || stageSize.height;
@@ -483,37 +488,62 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
     if (stageState === "ready" || stageState === "failed") setPrefs(p => { const fit = clampPos(p.right, p.bottom); return fit.right === p.right && fit.bottom === p.bottom ? p : { ...p, ...fit }; });
   }, [stageState, prefs.collapsed, clampPos]);
   const [walkRound, setWalkRound] = useState(0);
+  /** 不停在按钮、链接、输入框上面：站上去以后点击会落到她身上。返回「站在 right 处会不会挡住控件」 */
+  const controlCheck = () => {
+    const figure = rootRef.current?.querySelector<HTMLElement>("[data-figure]")?.getBoundingClientRect();
+    const width = figure?.width || stageSize.width, height = figure?.height || stageSize.height;
+    const top = figure?.top ?? window.innerHeight - prefs.bottom - height;
+    const controls = [...document.querySelectorAll<HTMLElement>("button, a[href], input, select, textarea, [role=button], [role=tab]")]
+      .filter(el => !rootRef.current?.contains(el) && (el.checkVisibility?.() ?? true)).map(el => el.getBoundingClientRect()).filter(r => r.width && r.height);
+    return (right: number) => {
+      const left = window.innerWidth - right - width;
+      return controls.some(r => r.left < left + width && r.right > left && r.top < top + height && r.bottom > top);
+    };
+  };
+  // 滚动或换页后，控件可能移到了她身下：停稳半秒后若挡住了控件，马上走开
+  const hurry = useRef(false);
+  useEffect(() => {
+    if (!canWander) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const check = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (walkingRef.current || drag.current || !controlCheck()(prefs.right)) return;
+        hurry.current = true; setWalkRound(n => n + 1);
+      }, 500);
+    };
+    check();
+    document.addEventListener("scroll", check, { passive: true, capture: true });
+    return () => { clearTimeout(timer); document.removeEventListener("scroll", check, { capture: true }); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canWander, page, prefs.right]);
   useEffect(() => {
     if (!canWander) { stopWalk(); return; }
     if (walking) return;
     const timer = setTimeout(() => {
+      const urgent = hurry.current;
+      hurry.current = false;
       const figure = rootRef.current?.querySelector<HTMLElement>("[data-figure]")?.getBoundingClientRect();
       const width = figure?.width || stageSize.width, room = window.innerWidth - width - 16;
       // Not now (being dragged, or no room): try again next round instead of never walking again.
       if (drag.current || room < 80) { setWalkRound(n => n + 1); return; }
       const from = prefs.right;
-      // 不停在按钮、链接、输入框上面：站上去以后点击会落到她身上
-      const controls = [...document.querySelectorAll<HTMLElement>("button, a[href], input, select, textarea, [role=button], [role=tab]")]
-        .filter(el => !rootRef.current?.contains(el) && (el.checkVisibility?.() ?? true)).map(el => el.getBoundingClientRect()).filter(r => r.width && r.height);
-      const covers = (right: number) => {
-        const left = window.innerWidth - right - width, top = figure?.top ?? window.innerHeight - prefs.bottom - stageSize.height, bottom = top + (figure?.height || stageSize.height);
-        return controls.some(r => r.left < left + width && r.right > left && r.top < bottom && r.bottom > top);
-      };
-      // 走 120–420px；靠边时掉头；落点会挡住控件就换一个，都不行这一轮就不走
+      const covers = controlCheck();
+      // 平时走 120–420px、靠边掉头；挡住控件时在整条底边上找空位。落点会挡住控件就换一个，都不行这一轮就不走
       let to = NaN;
-      for (let attempt = 0; attempt < 6; attempt++) {
-        let next = from + (Math.random() < .5 ? -1 : 1) * (120 + Math.random() * 300);
+      for (let attempt = 0; attempt < (urgent ? 12 : 6); attempt++) {
+        let next = urgent ? 8 + Math.random() * room : from + (Math.random() < .5 ? -1 : 1) * (120 + Math.random() * 300);
         if (next < 8 || next > 8 + room) next = from - (next - from);
         next = Math.max(8, Math.min(8 + room, next));
         if (!covers(next)) { to = next; break; }
       }
-      const ms = Math.round(Math.abs(to - from) / 75 * 1000); // 约 75px/s
-      if (!(ms >= 800)) { setWalkRound(n => n + 1); return; }
+      const ms = Math.round(Math.abs(to - from) / (urgent ? 220 : 75) * 1000); // 平时约 75px/s；让开控件时快走
+      if (!(ms >= (urgent ? 1 : 800))) { setWalkRound(n => n + 1); return; }
       stageRef.current?.walk(to < from ? 1 : -1); // right 变小 = 往屏幕右边走
       setWalking({ ms });
       setPrefs(p => ({ ...p, right: Math.round(to) }));
       walkTimer.current = setTimeout(() => { walkTimer.current = null; stageRef.current?.walk(0); setWalking(null); }, ms);
-    }, 7000 + Math.random() * 9000);
+    }, hurry.current ? 300 : 7000 + Math.random() * 9000);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canWander, walking, walkRound]);
