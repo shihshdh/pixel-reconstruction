@@ -85,7 +85,7 @@ class AssistTests(unittest.TestCase):
                                     "DEEPSEEK_API_KEY": "sk-offline-test-not-a-real-key",
                                     "RUHUA_DAILY_CHATS": "300"}),
             # 备用线路的状态是模块级的；每个用例从「官方接口正常」开始，重试不真等
-            patch.dict(assist._route_state, {"deepseek_down_until": 0.0, "ark_model": None}),
+            patch.dict(assist._route_state, {"deepseek_down_until": 0.0, "ark_off_until": 0.0, "ark_model": None}),
             patch.object(assist.time, "sleep"),
         ]
         for item in self.patches:
@@ -455,6 +455,20 @@ class AssistTests(unittest.TestCase):
             assist.ask_deepseek([{"role": "user", "content": "嗨"}], "", route="ark")
         models = [c.kwargs["json"]["model"] for c in post.call_args_list]
         self.assertEqual(models, [assist.ARK_DEEPSEEK_MODELS[0], assist.ARK_DEEPSEEK_MODELS[1], assist.ARK_DEEPSEEK_MODELS[1]])
+
+    def test_backup_not_enabled_returns_to_deepseek_and_is_skipped_for_a_while(self):
+        urls = lambda post: [c.args[0] for c in post.call_args_list]
+        with patch.dict(os.environ, {"ARK_API_KEY": "ark-offline-test-not-real"}):
+            with patch.object(assist.requests, "post", side_effect=[MagicMock(status_code=503), self.missing_model(), self.missing_model(), deepseek_ok()]) as post:
+                reply, _, _, _ = assist.ask_deepseek([{"role": "user", "content": "嗨"}], "")
+            self.assertEqual(reply, "你好呀！")
+            self.assertEqual(urls(post), [assist.DEEPSEEK_URL, assist.ARK_CHAT_URL, assist.ARK_CHAT_URL, assist.DEEPSEEK_URL])
+            self.assertEqual(assist._route_state["deepseek_down_until"], 0.0)
+            self.assertGreater(assist._route_state["ark_off_until"], assist.time.time())
+            # 之后的对话不再浪费时间试方舟：官方接口忙就稍等再试一次
+            with patch.object(assist.requests, "post", side_effect=[MagicMock(status_code=503), deepseek_ok()]) as post:
+                assist.ask_deepseek([{"role": "user", "content": "嗨"}], "")
+            self.assertEqual(urls(post), [assist.DEEPSEEK_URL] * 2)
 
     def test_both_lines_down_gives_the_usual_message(self):
         with patch.dict(os.environ, {"ARK_API_KEY": "ark-offline-test-not-real"}), \

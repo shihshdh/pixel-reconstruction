@@ -47,6 +47,7 @@ ARK_CHAT_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
 ARK_DEEPSEEK_MODELS = ("deepseek-v4-1-flash-261017", "deepseek-v4-1-flash-260910")
 RETRY_STATUSES = (429, 500, 502, 503, 504)
 OUTAGE_SECONDS = 120    # 官方接口连续失败后，这段时间内的对话直接走备用线路
+ARK_OFF_SECONDS = 600   # 方舟账号没有开通候选模型时，这段时间内不再尝试备用线路
 CHAT_DEADLINE = 80      # seconds per chat message; the browser gives up at 90
 BOCHA_URL = "https://api.bochaai.com/v1/web-search"
 MOODS = ("happy", "excited", "think", "worry", "sad", "surprise", "shy", "angry", "neutral")
@@ -514,7 +515,7 @@ def clean_screen(raw):
         raise HTTPException(400, "无法读取截图，请重新选择图片。")
 
 
-_route_state = {"deepseek_down_until": 0.0, "ark_model": None}
+_route_state = {"deepseek_down_until": 0.0, "ark_off_until": 0.0, "ark_model": None}
 
 
 def _send(url, key, body, timeout):
@@ -539,13 +540,18 @@ def _fail(response):
     raise HTTPException(502, "大肥鱼一时连不上大脑，请稍后再试。")
 
 
-def _model_missing(response):
-    """Ark answers 404 / 400 for a model that does not exist or is not activated on the account."""
+def _error_code(response):
     try:
         error = response.json().get("error") or {}
-        text = (str(error.get("code") or "") + " " + str(error.get("message") or "")).lower()
+        return str(error.get("code") or "")[:80], str(error.get("message") or "")[:200]
     except (ValueError, AttributeError):
-        return response.status_code == 404
+        return "", ""
+
+
+def _model_missing(response):
+    """Ark answers 404 / 400 for a model that does not exist or is not activated on the account."""
+    code, message = _error_code(response)
+    text = (code + " " + message).lower()
     return response.status_code == 404 or any(word in text for word in (
         "notfound", "not found", "not exist", "modelnotopen", "not activated", "未开通", "不存在"))
 
@@ -559,7 +565,7 @@ def _post_ark(body, route):
         models = [preferred] + [m for m in models if m != preferred]
     # Ark rejects DeepSeek's private echo field; the conversation itself is unchanged.
     messages = [{k: v for k, v in m.items() if k != "reasoning_content"} for m in body.get("messages", [])]
-    response = None
+    response, missing = None, 0
     for name in models:
         for attempt in range(2):
             remaining = route["deadline"] - time.time()
@@ -567,7 +573,8 @@ def _post_ark(body, route):
                 return response
             response = _send(ARK_CHAT_URL, key, dict(body, model=name, messages=messages), min(45, remaining))
             if response is not None and response.status_code in (400, 404) and _model_missing(response):
-                print("assist: ark model unavailable: " + name, flush=True)
+                print("assist: ark model unavailable: %s (%s)" % (name, _error_code(response)[0] or response.status_code), flush=True)
+                missing += 1
                 break
             if response is None or response.status_code in RETRY_STATUSES:
                 if attempt == 0:
@@ -576,6 +583,9 @@ def _post_ark(body, route):
                 return response
             _route_state["ark_model"] = name
             return response
+    if missing == len(models):
+        # 账号里没有开通任何一个候选模型：10 分钟内不再尝试备用线路
+        _route_state["ark_off_until"] = time.time() + ARK_OFF_SECONDS
     return response
 
 
@@ -588,9 +598,14 @@ def _post(body, route):
         route["provider"] = "ark"
     if route["provider"] == "ark":
         response = _post_ark(body, route)
-        if _bad(response) or (response.status_code in (400, 404) and _model_missing(response)):
+        if not (_bad(response) or (response.status_code in (400, 404) and _model_missing(response))):
+            return response
+        if route["forced"] == "ark" or not os.environ.get("DEEPSEEK_API_KEY"):
             _fail(response)
-        return response
+        # 备用线路也不可用：回到官方接口，按「没有备用线路」处理（稍等再试一次）
+        _route_state["deepseek_down_until"] = 0.0
+        route["provider"], route["backup"] = "deepseek", False
+        return _post(body, route)
     key = os.environ.get("DEEPSEEK_API_KEY", "")
     response = None
     if key:
@@ -634,9 +649,9 @@ def ask_deepseek(messages, context_text, screen=None, page_image=None, tools=Tru
     if not configured():
         raise HTTPException(503, "大肥鱼的对话功能还没开通，请联系站长。")
     forced = route if route in ("deepseek", "ark") else None
+    backup = backup_configured() and forced != "deepseek" and (forced == "ark" or time.time() >= _route_state["ark_off_until"])
     route = {"provider": "ark" if forced == "ark" or not os.environ.get("DEEPSEEK_API_KEY") else "deepseek",
-             "backup": backup_configured() and forced != "deepseek", "forced": forced,
-             "deadline": time.time() + CHAT_DEADLINE}
+             "backup": backup, "forced": forced, "deadline": time.time() + CHAT_DEADLINE}
     messages = [dict(message) for message in messages]
     if screen or page_image:
         parts = [{"type": "text", "text": messages[-1]["content"]}]
