@@ -88,14 +88,14 @@ const GLOBAL_CSS = `
 :root{
   --bg:#ffffff;--bg2:#fafafa;--card:#ffffff;--track:#f0f0f3;
   --ink:#1d1d1f;--ink2:#6e6e73;--ink3:#86868b;
-  --line:#e8e8ed;--line2:#d2d2d7;--accent:#0071e3;
+  --line:#e8e8ed;--line2:#d2d2d7;--accent:#0071e3;--on-accent:#fff;
   --glass:rgba(255,255,255,0.72);--glass-brd:rgba(255,255,255,0.65);--nav-brd:rgba(0,0,0,0.08);
   --shadow:0 30px 80px -34px rgba(0,0,0,0.4);
 }
 [data-theme="dark"]{
   --bg:#000000;--bg2:#0c0b0a;--card:#181716;--track:#22211f;
   --ink:#f7f6f5;--ink2:#a1a1a6;--ink3:#6e6e73;
-  --line:rgba(255,255,255,0.10);--line2:rgba(255,255,255,0.16);--accent:#be984b;
+  --line:rgba(255,255,255,0.10);--line2:rgba(255,255,255,0.16);--accent:#be984b;--on-accent:#17130c;
   --glass:rgba(24,23,22,0.66);--glass-brd:rgba(255,255,255,0.14);--nav-brd:rgba(255,255,255,0.08);
   --shadow:0 30px 80px -30px rgba(0,0,0,0.8);
 }
@@ -213,7 +213,7 @@ const GLOBAL_CSS = `
 .install-row{display:flex;justify-content:space-between;gap:12px;font-size:11px;color:var(--ink3);font-variant-numeric:tabular-nums;}
 .install-actions{display:flex;gap:10px;margin-top:14px;align-items:center;}
 .install-actions button{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:7px 16px;font-size:12px;}
-.install-actions button.primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+.install-actions button.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent,#fff);}
 .install-actions small{font-size:11px;color:var(--ink3);}
 @media(max-width:1180px){.nav-quality>span{display:none;}.nav-quality .lq>button{padding:6px 8px;}}
 @media(max-width:980px){.nav-quality{display:none;}}
@@ -649,7 +649,7 @@ function DropZone({ onFile }) {
         onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); }} />
 
       <div className="dz-arrow" style={{
-        width: 56, height: 56, borderRadius: 999, background: "var(--accent)", color: "#fff",
+        width: 56, height: 56, borderRadius: 999, background: "var(--accent)", color: "var(--on-accent)",
         display: "grid", placeItems: "center", fontSize: 26, marginBottom: 4,
       }}>↑</div>
 
@@ -663,7 +663,7 @@ function DropZone({ onFile }) {
         <span className="on-drag">松开鼠标，上传并开始重建</span>
       </div>
 
-      <span style={{ marginTop: 10, padding: "12px 28px", borderRadius: 980, background: "var(--accent)", color: "#fff", fontSize: 15 }}>选择照片</span>
+      <span style={{ marginTop: 10, padding: "12px 28px", borderRadius: 980, background: "var(--accent)", color: "var(--on-accent)", fontSize: 15 }}>选择照片</span>
     </label>
   );
 }
@@ -793,7 +793,7 @@ function Nav({ page, setPage, theme, toggleTheme, onShowcase, logoReady = true, 
           color: "var(--ink)", display: "grid", placeItems: "center",
         }}><MorphIcon icon={theme === "dark" ? ICON.sun : ICON.moon} size={16} strokeWidth={1.6} spring={SPRING} reducedMotion="user" /></button>
         <button className="nav-cta" onClick={() => setPage("create")} style={{
-          border: 0, background: "var(--accent)", color: "#fff", fontWeight: 500, borderRadius: 980,
+          border: 0, background: "var(--accent)", color: "var(--on-accent)", fontWeight: 500, borderRadius: 980,
         }}>开始创作</button>
       </GlassSurface>
       <WindowControls />
@@ -1105,7 +1105,7 @@ function StudioPage({ result, setPage, conn, device, onLoadFull, worldLive }) {
       <main style={{ maxWidth: 900, margin: "0 auto", padding: "76px 24px 64px", textAlign: "center" }}>
         <h1 style={{ fontSize: "clamp(28px,5vw,48px)", fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 16 }}>查看与编排场景。</h1>
         <p style={{ color: "var(--ink2)", fontSize: 17, marginBottom: 32 }}>还没有显影好的场景。先去创作页上传一张照片。</p>
-        <button onClick={() => setPage("create")} style={{ border: 0, background: "var(--accent)", color: "#fff", padding: "12px 26px", borderRadius: 980, fontSize: 15 }}>去创作</button>
+        <button onClick={() => setPage("create")} style={{ border: 0, background: "var(--accent)", color: "var(--on-accent)", padding: "12px 26px", borderRadius: 980, fontSize: 15 }}>去创作</button>
       </main>
     );
   }
@@ -1166,7 +1166,7 @@ function StudioPage({ result, setPage, conn, device, onLoadFull, worldLive }) {
           <a href={videoHref} download={result.mp4_file} style={dlBtn}>下载视频</a>
         )}
         <button onClick={() => setPage("enhance")} style={{ ...dlBtn, border: "1px solid var(--line)", cursor: "pointer" }}>✦ 编辑原图</button>
-        <button onClick={() => setPage("create")} style={{ border: 0, background: "var(--accent)", color: "#fff", padding: "13px 30px", borderRadius: 980, fontSize: 15 }}>上传新照片</button>
+        <button onClick={() => setPage("create")} style={{ border: 0, background: "var(--accent)", color: "var(--on-accent)", padding: "13px 30px", borderRadius: 980, fontSize: 15 }}>上传新照片</button>
       </div>
       <p style={{ textAlign: "center", color: "var(--ink3)", fontSize: 13.5, marginTop: 28, maxWidth: "36em", marginLeft: "auto", marginRight: "auto", lineHeight: 1.7 }}>
         SHARP 是单图生成，适合在原视角附近进行小幅环绕、缓推与变焦。运镜序列与导出 mp4 在画面下方的运镜栏里操作。
@@ -1221,7 +1221,7 @@ function EnhancePage({ result, setPage, onRerenderDone, doubao, onDoubaoChange }
         <h1 style={{ fontSize: "clamp(28px,5vw,48px)", fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 16 }}>豆包修图。</h1>
         <p style={{ color: "var(--ink2)", fontSize: 17, marginBottom: 32 }}>还没有可修的场景。先去创作页显影一张。</p>
         <DoubaoSettings value={doubao} onChange={onDoubaoChange} />
-        <button onClick={() => setPage("create")} style={{ border: 0, background: "var(--accent)", color: "#fff", padding: "12px 26px", borderRadius: 980, fontSize: 15 }}>去创作</button>
+        <button onClick={() => setPage("create")} style={{ border: 0, background: "var(--accent)", color: "var(--on-accent)", padding: "12px 26px", borderRadius: 980, fontSize: 15 }}>去创作</button>
       </main>
     );
   }
@@ -1272,7 +1272,7 @@ function EnhancePage({ result, setPage, onRerenderDone, doubao, onDoubaoChange }
         <div ref={logRef} style={{ display: "flex", flexDirection: "column", gap: 24, maxHeight: "min(1400px, 150vh)", overflowY: "auto", overscrollBehavior: "contain" }}>
           {chat.map((m) =>
             m.role === "user" ? (
-              <div key={m.id} style={{ alignSelf: "flex-end", maxWidth: "78%", background: "var(--accent)", color: "#fff", padding: "13px 20px", borderRadius: "20px 20px 5px 20px", fontSize: 15.5, lineHeight: 1.5, boxShadow: "0 6px 18px -8px rgba(0,113,227,0.5)", whiteSpace: "pre-line" }}>
+              <div key={m.id} style={{ alignSelf: "flex-end", maxWidth: "78%", background: "var(--accent)", color: "var(--on-accent)", padding: "13px 20px", borderRadius: "20px 20px 5px 20px", fontSize: 15.5, lineHeight: 1.5, boxShadow: "0 6px 18px -8px rgba(0,113,227,0.5)", whiteSpace: "pre-line" }}>
                 {m.ref && <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 5 }}>↩ 基于 {versionName(m.ref)}</div>}
                 {m.text}
               </div>
@@ -1285,7 +1285,7 @@ function EnhancePage({ result, setPage, onRerenderDone, doubao, onDoubaoChange }
                   <span style={{ fontSize: 12.5, color: "var(--ink3)" }}>{versionName(m.img)}{sizes[m.img] ? ` · ${sizes[m.img]}` : ""}</span>
                   <button onClick={() => void exportImage(m.img!)} style={btn}>导出图片</button>
                   <button onClick={() => setDraft({ base: m.img })} style={btn}>引用</button>
-                  <button disabled={rerendering || aiBusy} onClick={() => void runRerender(result, m.img!, onRerenderDone)} style={{ ...btn, border: 0, background: "var(--accent)", color: "#fff", opacity: rerendering || aiBusy ? 0.5 : 1 }}>⟳ 重新渲染成 3D</button>
+                  <button disabled={rerendering || aiBusy} onClick={() => void runRerender(result, m.img!, onRerenderDone)} style={{ ...btn, border: 0, background: "var(--accent)", color: "var(--on-accent)", opacity: rerendering || aiBusy ? 0.5 : 1 }}>⟳ 重新渲染成 3D</button>
                   {saved[m.img] && <span role="status" style={{ fontSize: 12.5, color: "var(--ink3)" }}>{saved[m.img]}</span>}
                 </div>
               </div>
@@ -1334,7 +1334,7 @@ function EnhancePage({ result, setPage, onRerenderDone, doubao, onDoubaoChange }
           placeholder="把光线改成日落黄金时刻，暖一点"
           style={{ flex: 1, minWidth: 0, border: "1px solid var(--line)", borderRadius: 20, padding: "15px 18px", font: "inherit", fontSize: 14, lineHeight: 1.8, resize: "vertical", background: "var(--card)", color: "var(--ink)" }}
         />
-        <button disabled={aiBusy || rerendering || needsKey || !input.trim()} onClick={send} style={{ border: 0, background: "var(--accent)", color: "#fff", padding: "13px 22px", borderRadius: 980, fontSize: 14, whiteSpace: "nowrap", fontWeight: 500, opacity: (aiBusy || !input.trim()) ? 0.5 : 1, cursor: (aiBusy || !input.trim()) ? "default" : "pointer" }}>发送</button>
+        <button disabled={aiBusy || rerendering || needsKey || !input.trim()} onClick={send} style={{ border: 0, background: "var(--accent)", color: "var(--on-accent)", padding: "13px 22px", borderRadius: 980, fontSize: 14, whiteSpace: "nowrap", fontWeight: 500, opacity: (aiBusy || !input.trim()) ? 0.5 : 1, cursor: (aiBusy || !input.trim()) ? "default" : "pointer" }}>发送</button>
       </div>
     </main>
   );

@@ -99,7 +99,8 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
 
   // ---- environment: size class, reduced motion, saved preferences, idle gate ----
   useEffect(() => {
-    const narrow = matchMedia("(max-width: 767px)");
+    // 横屏手机等矮屏幕也用紧凑形态：完整形象会挡住大半个页面
+    const narrow = matchMedia("(max-width: 767px), (max-height: 500px)");
     const motion = matchMedia("(prefers-reduced-motion: reduce)");
     const sync = () => { setCompact(narrow.matches); setReduced(motion.matches); };
     sync();
@@ -491,12 +492,23 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
       // Not now (being dragged, or no room): try again next round instead of never walking again.
       if (drag.current || room < 80) { setWalkRound(n => n + 1); return; }
       const from = prefs.right;
-      // 走 120–420px；靠边时掉头
-      let to = from + (Math.random() < .5 ? -1 : 1) * (120 + Math.random() * 300);
-      if (to < 8 || to > 8 + room) to = from - (to - from);
-      to = Math.max(8, Math.min(8 + room, to));
+      // 不停在按钮、链接、输入框上面：站上去以后点击会落到她身上
+      const controls = [...document.querySelectorAll<HTMLElement>("button, a[href], input, select, textarea, [role=button], [role=tab]")]
+        .filter(el => !rootRef.current?.contains(el) && (el.checkVisibility?.() ?? true)).map(el => el.getBoundingClientRect()).filter(r => r.width && r.height);
+      const covers = (right: number) => {
+        const left = window.innerWidth - right - width, top = figure?.top ?? window.innerHeight - prefs.bottom - stageSize.height, bottom = top + (figure?.height || stageSize.height);
+        return controls.some(r => r.left < left + width && r.right > left && r.top < bottom && r.bottom > top);
+      };
+      // 走 120–420px；靠边时掉头；落点会挡住控件就换一个，都不行这一轮就不走
+      let to = NaN;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        let next = from + (Math.random() < .5 ? -1 : 1) * (120 + Math.random() * 300);
+        if (next < 8 || next > 8 + room) next = from - (next - from);
+        next = Math.max(8, Math.min(8 + room, next));
+        if (!covers(next)) { to = next; break; }
+      }
       const ms = Math.round(Math.abs(to - from) / 75 * 1000); // 约 75px/s
-      if (ms < 800) { setWalkRound(n => n + 1); return; }
+      if (!(ms >= 800)) { setWalkRound(n => n + 1); return; }
       stageRef.current?.walk(to < from ? 1 : -1); // right 变小 = 往屏幕右边走
       setWalking({ ms });
       setPrefs(p => ({ ...p, right: Math.round(to) }));
