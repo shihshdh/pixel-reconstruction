@@ -105,20 +105,25 @@ async function main() {
       await sleep(1500);
       await js(() => { const b = [...document.querySelectorAll('button')].find(x => /打开场景/.test(x.getAttribute('aria-label') || x.textContent)); if (b) b.click(); });
       await waitFor(() => !!document.querySelector('[class*=viewer-mount] canvas'), 90000);
-      await sleep(20000); // 场景下载和渐进加载
+      // 运镜按钮在场景载入完成前是禁用的：等它可用，说明三维场景已就绪
+      const ready = await waitFor(() => { const b = document.querySelector('.rig-deck button'); return !!b && !b.disabled; }, 180000);
+      report.sceneReady = ready; await save();
+      await sleep(4000);
       await js(() => scrollTo(0, 0));
       await sleep(1500);
       await shot('04-studio', '工作室：三维场景');
     });
     await step('camera', async () => {
-      await js(() => { const h = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '环绕'); if (h) h.scrollIntoView({ block: 'center' }); });
-      await sleep(1200);
-      await clickText('环绕'); await sleep(600);
-      await clickText('缓推'); await sleep(600);
-      await clickText('加入序列'); await sleep(2500);
-      await shot('05-camera', '工作室：运镜与序列');
-      await js(() => { const h = [...document.querySelectorAll('h2,h3,h4')].find(e => e.textContent.trim() === '运镜序列'); if (h) h.scrollIntoView({ block: 'start' }); scrollBy(0, -70); });
+      const pick = name => js(n => { const b = [...document.querySelectorAll('.rig-deck button')].find(x => x.textContent.trim() === n); if (b && !b.disabled) { b.click(); return true; } return false; }, name);
+      await js(() => { const d = document.querySelector('.rig-deck'); if (d) { d.scrollIntoView({ block: 'start' }); scrollBy(0, -150); } });
       await sleep(1500);
+      report.picked = [await pick('环绕'), await pick('弧推'), await pick('螺旋')]; await save();
+      await sleep(2500);
+      await shot('05-camera', '工作室：运镜与序列');
+      await js(() => { const b = document.querySelector('.pick-add'); if (b && !b.disabled) b.click(); });
+      await sleep(2500);
+      await js(() => { const e = document.querySelector('.pick-actions'); if (e) { e.scrollIntoView({ block: 'start' }); scrollBy(0, -60); } });
+      await sleep(1800);
       await shot('06-sequence', '工作室：运镜序列与导出');
     });
     await step('world-card', async () => {

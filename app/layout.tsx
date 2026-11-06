@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { HEAD_CLEAN, INTRO_BOOT } from "@/lib/intro";
 
@@ -7,6 +7,15 @@ export const metadata: Metadata = {
   title: "Pixel Reconstruction",
   description:
     "Pixel Reconstruction：上传一张照片，用 Apple SHARP 高斯泼溅生成三维场景，并渲染电影感运镜动画。",
+};
+
+// Safari（iOS）的状态栏和底部工具栏颜色：不声明时它取页面顶部的颜色，深色主题下会被光追背景染成橙色。
+// 站内切换主题时 app/page.tsx 会把它改成当前主题的底色。
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#000000" },
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+  ],
 };
 
 const beamBase = (process.env.NEXT_PUBLIC_BEAM_API || process.env.NEXT_PUBLIC_API_URL || "").trim();

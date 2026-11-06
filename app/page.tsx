@@ -1798,7 +1798,11 @@ export default function App() {
     return () => { probeId.current++; };
   }, [probe]);
   useEffect(() => { try { const t = localStorage.getItem("ruhua-theme-v2"); if (t === "dark" || t === "light") setTheme(t); } catch {} }, []);
-  useEffect(() => { document.documentElement.setAttribute("data-theme", theme); try { localStorage.setItem("ruhua-theme-v2", theme); } catch {} }, [theme]);
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme); try { localStorage.setItem("ruhua-theme-v2", theme); } catch {}
+    // Safari 的状态栏、工具栏跟随站内主题（见 app/layout.tsx 的 viewport.themeColor）
+    document.querySelectorAll('meta[name="theme-color"]').forEach(m => { m.setAttribute("content", theme === "dark" ? "#000000" : "#ffffff"); m.removeAttribute("media"); });
+  }, [theme]);
   const navigate = (next: string) => { if (next === page) return; setPage(next); setRouteTransitionId(id => id + 1); window.scrollTo({ top: 0, behavior: "instant" }); };
   // A photo dropped on the companion: open the create page and develop it there.
   const creatingRef = useRef(creating);
