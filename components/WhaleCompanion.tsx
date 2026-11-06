@@ -7,7 +7,7 @@
 // Model 《DeepSeek 大肥鱼》 by Bilibili @氵六青 · character by 上善无形 / ZipZipPipe ·
 // CC BY-NC-SA 4.0 · a community fan character, not an official DeepSeek product.
 
-import { useCallback, useEffect, useRef, useState, type ComponentType, type RefAttributes } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ComponentType, type RefAttributes } from "react";
 import { assistChat, submitTicket, type AssistMessage, type AssistMood, type AssistSource } from "@/lib/api";
 import { PAGE_NAMES, SCROLL_WORDS, findRef, highlight, isDisabled, isRisky, labelOf, scrollPage, type PageAction, type TicketDraft } from "@/lib/companion-actions";
 import { REPAIRS, diagnostics, runRepair, watchFailures, type RepairId } from "@/lib/companion-repair";
@@ -50,6 +50,7 @@ function scrub(text: string) {
   return text.replace(/(https?:\/\/[^\s?#]+)\?\S*/g, "$1").replace(/[A-Za-z0-9_-]{40,}/g, "…").slice(0, 300);
 }
 const short = (text: string, max = 28) => (text.length > max ? text.slice(0, max) + "…" : text);
+const useIsoLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 export default function WhaleCompanion({ page, active, visionEnabled = false, onNavigate }: { page: string; active: boolean; visionEnabled?: boolean; onNavigate?: (page: string) => void }) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -164,6 +165,58 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
   const note = useCallback((content: string) => {
     setItems(list => [...list, { id: nextId.current++, role: "assistant", content, local: true }]);
   }, []);
+  // 她标出的按钮不能压在自己（对话框、形象、气泡）下面：先整体滑到按钮的另一侧；
+  // 横向让不开（手机上位置固定在右下角）就把页面滚动，让按钮落在她上方的空白处。
+  const [gliding, setGliding] = useState(0);
+  const glideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (glideTimer.current) clearTimeout(glideTimer.current); }, []);
+  const lastTarget = useRef<HTMLElement | null>(null);
+  // 她标出的按钮不能压在自己下面（手机横屏也能左右挪开）
+  // 让位时要求窄一点的摆法（对话框叠在形象上方，而不是并排）
+  const [narrow, setNarrow] = useState(false);
+  const layoutModeRef = useRef<"stack" | "side" | "solo">("stack");
+  /** 返回 false：怎么挪都会挡住按钮，调用方应把对话框收成气泡 */
+  const uncover = useCallback(async (el: HTMLElement, settle = true) => {
+    lastTarget.current = el;
+    if (settle) await new Promise(resolve => setTimeout(resolve, reduced ? 60 : 480)); // 等 scrollIntoView 的平滑滚动停下
+    const root = rootRef.current;
+    if (!root || !el.isConnected) return true;
+    const parts = [...root.children].map(c => c.getBoundingClientRect()).filter(r => r.width && r.height);
+    const target = el.getBoundingClientRect();
+    // 宽按钮（如整行的「导出 mp4」）文字在中间：只要中间 60% 没被挡住就算看得见、点得到
+    const inset = target.width > 200 ? target.width * 0.2 : 0;
+    const core = { left: target.left + inset, right: target.right - inset, top: target.top, bottom: target.bottom };
+    if (!target.width || !parts.some(p => p.left < core.right + 6 && p.right > core.left - 6 && p.top < core.bottom + 6 && p.bottom > core.top - 6)) return true;
+    const box = root.getBoundingClientRect(), vw = window.innerWidth;
+    {
+      const place = (w: number) => vw - target.right - 16 >= w ? 8 : target.left - 16 >= w ? Math.max(8, vw - w - 8) : null;
+      let right = place(box.right - Math.min(...parts.map(p => p.left))); // 现在的宽度：最左边的部件到右边缘
+      let narrower = false;
+      if (right === null && layoutModeRef.current === "side") {
+        // 并排太宽：改成叠放（宽度只剩对话框）再试；叠放要求形象上方至少 300px
+        const figure = root.querySelector<HTMLElement>("[data-figure], button[aria-label='展开大肥鱼并聊天']")?.getBoundingClientRect();
+        if (figure && box.height - figure.height - 10 >= 300) { right = place(Math.min(348, vw - 24)); narrower = right !== null; }
+      }
+      if (right !== null) {
+        const from = vw - box.right;
+        const ms = reduced ? 0 : Math.round(Math.min(700, Math.max(260, Math.abs(right - from) * 0.6)));
+        if (glideTimer.current) clearTimeout(glideTimer.current);
+        if (narrower) setNarrow(true);
+        setGliding(ms);
+        setPrefs(p => ({ ...p, right: Math.round(right) }));
+        glideTimer.current = setTimeout(() => { glideTimer.current = null; setGliding(0); }, ms + 50);
+        return true;
+      }
+    }
+    const top = Math.min(...parts.map(p => p.top));
+    const limit = Math.max(0, document.querySelector(".nav-right")?.getBoundingClientRect().bottom || 0) + 8;
+    if (top - limit >= target.height + 16) {
+      window.scrollBy({ top: target.top - (limit + (top - limit - target.height) / 2), behavior: reduced ? "auto" : "smooth" });
+      return true;
+    }
+    return false;
+  }, [reduced]);
+  const blocked = useRef(false);
   // Carry out what she proposed, one step at a time, telling the user in the chat what happened.
   const runActions = useCallback(async (actions: PageAction[]) => {
     const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -201,11 +254,12 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
       if (!el) { note("↪ 没找到要操作的位置，页面可能已经变了，可以再问大肥鱼一次。"); continue; }
       const label = labelOf(el);
       touchedPage = true;
-      if (action.type !== "click") { highlight(el, reduced); note(`↪ 已标出「${label}」`); await wait(350); continue; }
-      if (isDisabled(el)) { highlight(el, reduced); note(`↪「${label}」现在不可用，已帮你标出来。`); continue; }
+      if (action.type !== "click") { highlight(el, reduced); note(`↪ 已标出「${label}」`); if (!await uncover(el)) blocked.current = true; continue; }
+      if (isDisabled(el)) { highlight(el, reduced); note(`↪「${label}」现在不可用，已帮你标出来。`); if (!await uncover(el)) blocked.current = true; continue; }
       if (isRisky(el)) {
         highlight(el, reduced);
         setPending({ id: nextId.current++, ref: action.ref!, label });
+        void uncover(el);
         return false; // Keep the panel open for the question; anything after it waits for the user.
       }
       highlight(el, reduced); await wait(reduced ? 80 : 420);
@@ -214,7 +268,7 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
       await wait(450);
     }
     return touchedPage;
-  }, [note, reduced, page]);
+  }, [note, reduced, page, uncover]);
   // 用户确认后才提交：她起草的内容 + 页面报错 + 环境诊断 + 最近几条对话（网关再脱敏一次，不含照片和作品文件）
   const fileTicket = async (ticket: TicketDraft) => {
     if (ticketSending.current) return;
@@ -282,9 +336,17 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
       // A reaction to a photo can arrive while the panel is closed: say it in the bubble too.
       if (!openRef.current) say({ text: reply, itemId: answer.id, mood, actions: [{ label: "展开聊聊", run: () => openChat() }, { label: "好", run: () => setBubble(null) }] }, readTime(reply));
       if (Array.isArray(actions) && actions.length) {
+        lastTarget.current = null; blocked.current = false;
         const touched = await runActions(actions);
         // On a phone the panel covers the page: step aside so the user sees what she did.
-        if (touched && compact && !controller.signal.aborted) { setOpen(false); say({ text: reply, itemId: answer.id, mood, actions: [{ label: "展开聊聊", run: () => openChat() }] }, readTime(reply)); }
+        // 电脑上挪不开、仍会挡住标出的按钮时也一样：收成气泡，点「展开聊聊」回到对话
+        if (touched && (compact || blocked.current) && !controller.signal.aborted) {
+          setOpen(false); say({ text: reply, itemId: answer.id, mood, actions: [{ label: "展开聊聊", run: () => openChat() }] }, readTime(reply));
+          // 收起后换成气泡，气泡也不能压住刚标出的按钮
+          const target = lastTarget.current;
+          // 怎么挪都挡（横屏手机上整行宽的按钮）就不弹气泡，回答留在对话里，点她就能看
+          if (target) setTimeout(() => void uncover(target, false).then(ok => { if (!ok) setBubble(null); }), 120);
+        }
       }
     } catch (error) {
       if (controller.signal.aborted) return;
@@ -298,7 +360,7 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
       sending.current = false;
       if (abortRef.current === controller) { abortRef.current = null; setBusy(false); }
     }
-  }, [busy, items, context, reduced, screen, pageImage, visionEnabled, runActions, compact, say, openChat, page]);
+  }, [busy, items, context, reduced, screen, pageImage, visionEnabled, runActions, compact, say, openChat, page, uncover]);
   const sendRef = useRef(send);
   sendRef.current = send;
 
@@ -434,23 +496,47 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
   const drag = useRef<{ id: number; x: number; y: number; right: number; bottom: number; moved: boolean } | null>(null);
   const suppressClick = useRef(false);
   const stageSize = compact ? { width: 132, height: 176 } : { width: 190, height: 254 };
-  // The panel sits above the figure (or chip). Keep its header on screen: cap its height to the space
-  // left between the top of the viewport and the figure, following the visual viewport (phone keyboard).
-  const [viewHeight, setViewHeight] = useState(0);
-  // 顶栏底边：对话框不盖住顶栏（矮窗口里会挡住页面切换和主题按钮）
-  const [navBottom, setNavBottom] = useState(0);
-  useEffect(() => {
+  // 对话框打开时，整个大肥鱼限定在「顶栏以下、键盘以上」的可见区域里（root 同时设 top 和 bottom），
+  // 对话框按剩余空间收缩：不盖住顶栏，不跑出屏幕，手机键盘弹起时也不挡输入框。
+  const [view, setView] = useState({ top: 0, lift: 0 });
+  useIsoLayoutEffect(() => { // 在首帧绘制前量好，打开时不会先闪一下盖住顶栏
+    if (!open) return;
     const vv = window.visualViewport;
     const sync = () => {
-      setViewHeight(Math.round(vv?.height || window.innerHeight));
-      setNavBottom(Math.round(document.querySelector(".nav-right")?.getBoundingClientRect().bottom || 0));
+      const vTop = vv?.offsetTop || 0, vHeight = vv?.height || window.innerHeight;
+      const nav = document.querySelector(".nav-right")?.getBoundingClientRect().bottom || 0;
+      const keyboard = window.innerHeight - (vTop + vHeight);
+      const next = { top: Math.round(Math.max(nav, vTop) + 8), lift: keyboard > 120 ? Math.round(keyboard + 8) : 0 };
+      setView(v => (v.top === next.top && v.lift === next.lift ? v : next));
     };
     sync();
-    vv?.addEventListener("resize", sync); window.addEventListener("resize", sync);
-    return () => { vv?.removeEventListener("resize", sync); window.removeEventListener("resize", sync); };
+    vv?.addEventListener("resize", sync); vv?.addEventListener("scroll", sync);
+    window.addEventListener("resize", sync); window.addEventListener("scroll", sync, { passive: true });
+    return () => {
+      vv?.removeEventListener("resize", sync); vv?.removeEventListener("scroll", sync);
+      window.removeEventListener("resize", sync); window.removeEventListener("scroll", sync);
+    };
   }, [open]);
-  const belowPanel = (prefs.collapsed || stageState === "failed" ? 44 : stageSize.height) + 10 + Math.max(compact ? 96 : 0, prefs.bottom);
-  const panelMax = viewHeight ? Math.max(220, viewHeight - belowPanel - Math.max(12, navBottom + 8)) : undefined;
+  // 摆放方式：上方空间够就叠在形象上方；矮屏幕（横屏手机、小笔记本）放在形象左边；
+  // 两样都放不下（手机键盘弹起）时先藏起形象，对话框占用整块可见区域。
+  const [layout, setLayout] = useState<{ mode: "stack" | "side" | "solo"; width?: number }>({ mode: "stack" });
+  useIsoLayoutEffect(() => {
+    if (!open) { setNarrow(false); setLayout(l => (l.mode === "stack" && !l.width ? l : { mode: "stack" })); return; }
+    const root = rootRef.current;
+    if (!root) return;
+    const box = root.getBoundingClientRect();
+    const chip = prefs.collapsed || stageState === "failed";
+    const fig = chip ? { w: 110, h: 44 } : { w: stageSize.width, h: stageSize.height };
+    const above = box.height - fig.h - 10, room = Math.floor(box.right - fig.w - 10 - 8);
+    // 手机：上方不够 400px 就先藏起形象，对话框用满整块高度（手机上对话框本来就盖住大半屏）
+    const next: typeof layout = compact && (view.lift || (above < 400 && room < 300)) ? { mode: "solo" }
+      : above >= 400 || (narrow && above >= 300) ? { mode: "stack" }
+      : room >= 300 ? { mode: "side", width: Math.min(348, room) }
+      : above >= 300 ? { mode: "stack" } : { mode: "solo" };
+    setLayout(l => (l.mode === next.mode && l.width === next.width ? l : next));
+  }, [open, view, narrow, prefs.right, prefs.bottom, prefs.collapsed, stageState, compact, stageSize.width, stageSize.height]);
+  layoutModeRef.current = open ? layout.mode : "stack";
+  const solo = open && layout.mode === "solo";
   const clampPos = useCallback((right: number, bottom: number) => {
     const box = rootRef.current?.querySelector<HTMLElement>("[data-figure]")?.getBoundingClientRect();
     const w = box?.width || stageSize.width, h = box?.height || stageSize.height;
@@ -469,6 +555,14 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
   const [walking, setWalking] = useState<{ ms: number } | null>(null);
   const walkingRef = useRef(walking);
   walkingRef.current = walking;
+  // 对话框和气泡从形象右边缘向左展开：她站得太靠左时会伸出屏幕，往右挪到刚好放得下
+  useIsoLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root || (!open && !bubble) || walking) return;
+    const left = root.getBoundingClientRect().left;
+    if (left >= 8) return;
+    setPrefs(p => ({ ...p, right: Math.max(8, Math.round(p.right - (8 - left))) }));
+  }, [open, layout, bubble, walking, prefs.right]);
   const walkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Stops where she is right now (mid-transition) and returns that position. */
   const stopWalk = useCallback(() => {
@@ -482,7 +576,8 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
     setPrefs(p => ({ ...p, ...here }));
     return here;
   }, []);
-  const canWander = stageState === "ready" && !prefs.collapsed && !open && !busy && !pending && !dropping && !hidden && !reduced;
+  // 手机和矮屏幕上不闲逛（以前靠 CSS 锁住位置，现在位置要能为标出的按钮让路）
+  const canWander = stageState === "ready" && !prefs.collapsed && !open && !busy && !pending && !dropping && !hidden && !reduced && !compact;
   // A saved spot can be off screen when the window is now narrower than when she walked there.
   useEffect(() => {
     if (stageState === "ready" || stageState === "failed") setPrefs(p => { const fit = clampPos(p.right, p.bottom); return fit.right === p.right && fit.bottom === p.bottom ? p : { ...p, ...fit }; });
@@ -559,7 +654,8 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
     if (!d || d.id !== event.pointerId) return;
     const dx = event.clientX - d.x, dy = event.clientY - d.y;
     if (!d.moved && Math.hypot(dx, dy) < 6) return;
-    if (!d.moved) { d.moved = true; (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId); }
+    // 捕获在按下的那个元素上（形象方框本身不接收点击，见 CSS 的 pointer-events）
+    if (!d.moved) { d.moved = true; (event.target as HTMLElement).setPointerCapture(event.pointerId); }
     setPrefs(p => ({ ...p, ...clampPos(d.right - dx, d.bottom - dy) }));
   };
   const onPointerUp = (event: React.PointerEvent) => {
@@ -618,13 +714,23 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
     "带我去作品库看看", "什么样的照片效果最好？", "为什么转太大角度会穿帮？",
   ].slice(0, 3);
 
+  const lift = open ? view.lift : 0;
+  const rootStyle = {
+    right: prefs.right, bottom: Math.max(prefs.bottom, lift), top: open ? view.top : undefined,
+    transition: walking ? `right ${walking.ms}ms cubic-bezier(.45,.05,.55,.95)` : gliding ? `right ${gliding}ms cubic-bezier(.16,1,.3,1)` : undefined,
+    "--whale-lift": `${lift}px`, "--panel-w": open && layout.width ? `${layout.width}px` : undefined,
+  } as React.CSSProperties;
+
   return <div ref={rootRef} className={styles.root} data-assist-private data-compact={compact || undefined} data-reduced={reduced || undefined}
-    data-dropping={dropping || undefined} style={{ right: prefs.right, bottom: prefs.bottom, transition: walking ? `right ${walking.ms}ms cubic-bezier(.45,.05,.55,.95)` : undefined }}
+    data-dropping={dropping || undefined} data-open={open || undefined} data-layout={open ? layout.mode : undefined} style={rootStyle}
     onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
     onKeyDown={event => { if (event.key === "Escape" && open) { event.stopPropagation(); closeChat(); } }}>
 
-    {open && <section ref={trapRef} className={styles.panel} style={{ maxHeight: panelMax }} role="dialog" aria-modal="false" aria-labelledby="whale-title">
-      <header className={styles.panelHead}>
+    {open && <section ref={trapRef} className={styles.panel} role="dialog" aria-modal="false" aria-labelledby="whale-title">
+      {/* 拖动标题栏可以把对话框挪开（手机上位置固定，不可拖） */}
+      <header className={styles.panelHead}
+        onPointerDown={event => { if (!(event.target as HTMLElement).closest("button")) onPointerDown(event); }}
+        onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
         <div><strong id="whale-title">大肥鱼</strong><span>DeepSeek 驱动 · 社区二创角色</span></div>
         <div className={styles.headActions}>
           <button type="button" onClick={() => { abortRef.current?.abort(); setItems([]); setBusy(false); setReveal(null); setScreen(null); setPageImage(null); setPending(null); }} disabled={!items.length && !busy && !screen && !pageImage}>清空</button>
@@ -676,6 +782,9 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
     {dropping && <div className={styles.bubble} data-drop role="status"><p>松手，我帮你把照片传到云端显影～</p></div>}
     {bubble && !open && !dropping && <div ref={trapRef} className={styles.bubble} role="status"
       onPointerEnter={holdBubble} onPointerDown={holdBubble} onPointerLeave={releaseBubble} onTouchEnd={releaseBubble}>
+      <button type="button" className={styles.bubbleClose} onClick={() => { holdBubble(); setBubble(null); }} aria-label="关闭气泡">
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 3 6 6m0-6-6 6" /></svg>
+      </button>
       <p ref={bubbleTextRef} className={styles.bubbleText}
         onScroll={event => { const el = event.currentTarget; bubbleFollow.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 24; }}>
         {bubble.itemId !== undefined && reveal?.id === bubble.itemId ? bubble.text.slice(0, reveal.count) : bubble.text}</p>
@@ -689,7 +798,7 @@ export default function WhaleCompanion({ page, active, visionEnabled = false, on
       : <div className={styles.figure} data-figure data-no-press data-walking={walking ? "" : undefined} style={{ width: stageSize.width, height: stageSize.height }}
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
           {Stage && <Stage key={compact ? "c" : "w"} ref={stageRef} width={stageSize.width} height={stageSize.height}
-            paused={hidden || !!prefs.collapsed} reducedMotion={reduced}
+            paused={hidden || !!prefs.collapsed || solo} reducedMotion={reduced}
             onReady={() => setStageState("ready")} onError={reason => { console.warn("[大肥鱼] Live2D 形象未能加载，改用小按钮：", reason); setStageState("failed"); }} />}
           {stageState !== "ready" && <span className={styles.placeholder} data-state={stageState}><PixelLoader size={12} /></span>}
           <button ref={hitRef} type="button" className={styles.hit} onClick={onFigureClick} aria-expanded={open}
