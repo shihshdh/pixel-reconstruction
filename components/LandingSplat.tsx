@@ -3,7 +3,7 @@
 import { desktopClass, perfProfile, progressiveUltra, tieredDevice } from "@/lib/perf";
 import { useEffect, useRef } from "react";
 import { INTRO_SCENE_START } from "@/lib/intro";
-import { patchSplatBuffer } from "@/lib/splat-perf";
+import { patchSplatBuffer, reuseStaticSplatCenters } from "@/lib/splat-perf";
 import { scenePath, takePreloaded } from "@/lib/landing-preload";
 
 import type { LandingScene } from "@/lib/landing-scenes";
@@ -208,7 +208,12 @@ export default function LandingSplat({ scene: SCENE, depth, reducedMotion, onSta
         // 每读一次都逼浏览器同步重算样式和布局（实测展示页 6 秒累计约 80ms）。改读下面 measure 缓存的
         // 同一组数值（ResizeObserver 在尺寸变化时更新）。
         viewer.getRenderDimensions = (out: { x: number; y: number }) => { out.x = size.w; out.y = size.h; };
-        const skipSplatTree = () => { if (viewer?.splatMesh) viewer.splatMesh.buildSplatTree = () => Promise.resolve(); };
+        const skipSplatTree = () => {
+          if (!viewer?.splatMesh) return;
+          viewer.splatMesh.buildSplatTree = () => Promise.resolve();
+          // 排序直接复制刚生成的 Float32 中心，避免再次解压、变换全部点。
+          reuseStaticSplatCenters(viewer.splatMesh);
+        };
         skipSplatTree();
         const createSplatMesh = viewer.createSplatMesh?.bind(viewer);
         if (createSplatMesh) viewer.createSplatMesh = () => { createSplatMesh(); skipSplatTree(); };
