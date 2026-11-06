@@ -545,7 +545,7 @@ def create_app():
                 # 大肥鱼可以替用户提交工单（POST /report）
                 "tickets": configured,
                 # 「走进世界」：World Labs 世界模型已配置（前端据此从演示模式切到正式生成）
-                "world": world_api.configured(), **storage.hot_status()}
+                "world": world_api.configured(), "world_accounts": world_api.accounts(), **storage.hot_status()}
 
     @app.post("/assist")
     async def assist_chat(request: Request):

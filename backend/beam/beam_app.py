@@ -67,6 +67,9 @@ if os.environ.get("RUHUA_ENABLE_SEARCH") == "1":
 # 「走进世界」World Labs world model: only attach after scripts/beam-secrets.py stored it.
 if os.environ.get("RUHUA_ENABLE_WORLD") == "1":
     API_SECRETS += ["WORLDLABS_API_KEY"]
+# 更多 World Labs 账号（密钥池，一行一个）：余额不够时自动换账号
+if os.environ.get("RUHUA_ENABLE_WORLD_POOL") == "1":
+    API_SECRETS += ["WORLDLABS_API_KEYS"]
 
 
 # Sites allowed to call the API from a browser. scripts/beam-cli.py adds the current Netlify site

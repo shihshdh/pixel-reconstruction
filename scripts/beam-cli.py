@@ -21,6 +21,8 @@ if (root / '.beam-tools/search-enabled').is_file():
     env['RUHUA_ENABLE_SEARCH'] = '1'
 if (root / '.beam-tools/world-enabled').is_file():
     env['RUHUA_ENABLE_WORLD'] = '1'
+if (root / '.beam-tools/world-pool-enabled').is_file():
+    env['RUHUA_ENABLE_WORLD_POOL'] = '1'
 # Let the browser on the current Netlify site call the API (CORS). Written by scripts/netlify-new-site.cjs.
 site_record = root / '.netlify-site.json'
 if site_record.is_file():

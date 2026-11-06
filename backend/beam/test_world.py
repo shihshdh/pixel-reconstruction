@@ -268,3 +268,92 @@ class WorldTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorldKeyPoolTests(unittest.TestCase):
+    """多个 World Labs 账号（WORLDLABS_API_KEY + WORLDLABS_API_KEYS）：按余额选账号，之后一直用同一个账号"""
+    MAIN, SECOND, THIRD = "offline-test-not-a-real-key", "offline-pool-key-two-not-real", "offline-pool-key-three-not-real"
+
+    def setUp(self):
+        WorldTests.setUp(self)  # 同样的临时目录、照片和主密钥；只复用准备工作，不重复跑上面的用例
+        self.pool = patch.dict(os.environ, {"WORLDLABS_API_KEYS": self.SECOND + "\n" + self.THIRD + "\n" + self.SECOND})
+        self.pool.start()
+
+    def tearDown(self):
+        self.pool.stop()
+        WorldTests.tearDown(self)
+
+    def accounts_upstream(self, credits, listed=None, broken=()):
+        """每个密钥一份余额；broken 里的密钥返回 401；listed: {密钥: [世界]}"""
+        def handler(method, url, json=None, timeout=None, headers=None):
+            key, path = headers["WLT-Api-Key"], url[len(world.API):]
+            if key in broken:
+                return reply(401)
+            if path == "/credits":
+                return reply(body={"remaining_credits": credits.get(key, 0)})
+            if path == "/worlds:generate":
+                return reply(body={"operation_id": OPERATION, "done": False})
+            if path == "/worlds:list":
+                return reply(body={"worlds": (listed or {}).get(key, [])})
+            if path.startswith("/operations/"):
+                return reply(body={"done": False, "metadata": {"progress": {"status": "IN_PROGRESS"}}})
+            if path.startswith("/worlds/"):
+                return reply(body={"id": WORLD})
+            return reply(404)
+        return MagicMock(side_effect=handler)
+
+    def keys_used(self, request, path):
+        return [c.kwargs["headers"]["WLT-Api-Key"] for c in request.call_args_list if c.args[1] == world.API + path]
+
+    def test_pool_is_deduplicated_and_main_key_first(self):
+        self.assertEqual(world._keys(), [self.MAIN, self.SECOND, self.THIRD])
+        self.assertEqual(world.accounts(), 3)
+
+    def test_picks_account_with_most_credits_that_covers_the_tier_and_keeps_using_it(self):
+        upstream_ = self.accounts_upstream({self.MAIN: 1000, self.SECOND: 7000, self.THIRD: 4000})
+        with patch.object(world.requests, "request", upstream_) as request:
+            result = world.generate(self.directory, JOB, {"model": "marble-1.1-plus"}, MagicMock())
+            self.assertEqual(result, {"operation_id": OPERATION})
+            self.assertEqual(self.keys_used(request, "/worlds:generate"), [self.SECOND])
+            record = storage.read_json(self.directory / "world.json")
+            self.assertEqual(record["operations"][OPERATION]["account"], world.account_of(self.SECOND))
+            self.assertNotIn(self.SECOND, json_text(record))  # 只记指纹，不记密钥
+            world.operation(self.directory, OPERATION)
+            self.assertEqual(self.keys_used(request, "/operations/" + OPERATION), [self.SECOND])
+
+    def test_all_accounts_short_is_402_with_best_balance_and_no_quota_used(self):
+        admit = MagicMock()
+        with patch.object(world.requests, "request", self.accounts_upstream({self.MAIN: 100, self.SECOND: 900, self.THIRD: 300})):
+            with self.assertRaises(HTTPException) as caught:
+                world.generate(self.directory, JOB, {"model": "marble-1.1"}, admit)
+        self.assertEqual(caught.exception.status_code, 402)
+        self.assertIn("900", caught.exception.detail)
+        admit.assert_not_called()
+
+    def test_broken_key_is_skipped(self):
+        upstream_ = self.accounts_upstream({self.SECOND: 2000, self.THIRD: 1600}, broken={self.MAIN})
+        with patch.object(world.requests, "request", upstream_) as request:
+            world.generate(self.directory, JOB, {"model": "marble-1.1"}, MagicMock())
+        self.assertEqual(self.keys_used(request, "/worlds:generate"), [self.SECOND])
+
+    def test_old_records_without_account_use_main_key(self):
+        storage.atomic_json(self.directory / "world.json", {"operations": {OPERATION: {"model": "marble-1.1", "created": 1, "world_id": WORLD}}})
+        with patch.object(world.requests, "request", self.accounts_upstream({})) as request:
+            world.world(self.directory, WORLD)
+        self.assertEqual(self.keys_used(request, "/worlds/" + WORLD), [self.MAIN])
+
+    def test_recovery_searches_every_account_and_remembers_the_owner(self):
+        found = {"world_id": WORLD, "tags": ["abc123"], "created_at": "2026-11-06T10:00:00Z", "model": "marble-1.1"}
+        upstream_ = self.accounts_upstream({}, listed={self.THIRD: [found]})
+        with patch.object(world.requests, "request", upstream_) as request:
+            result = world.lookup(self.directory, "req_abc123")
+            self.assertEqual(result["operation_id"], world.RECOVERED + WORLD)
+            record = storage.read_json(self.directory / "world.json")
+            self.assertEqual(record["operations"][world.RECOVERED + WORLD]["account"], world.account_of(self.THIRD))
+            world.operation(self.directory, world.RECOVERED + WORLD)
+            self.assertEqual(self.keys_used(request, "/worlds/" + WORLD), [self.THIRD])
+
+
+def json_text(value):
+    import json
+    return json.dumps(value, ensure_ascii=False)

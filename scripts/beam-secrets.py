@@ -59,6 +59,22 @@ if world_file.is_file():
         raise SystemExit('.beam-tools/worldlabs.env must contain one line: WORLDLABS_API_KEY=...')
     values['WORLDLABS_API_KEY'] = match.group(1)
 
+# 更多 World Labs 账号：.beam-tools/worldlabs-pool.env，一行一个密钥（也可写成 WORLDLABS_API_KEY=...），# 开头为注释
+pool_file = root / '.beam-tools/worldlabs-pool.env'
+if pool_file.is_file():
+    pool = []
+    for line in pool_file.read_text(encoding='utf-8-sig').splitlines():
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        key = line.split('=', 1)[1].strip() if '=' in line else line
+        if not re.fullmatch(r'[A-Za-z0-9_-]{24,}', key):
+            raise SystemExit('.beam-tools/worldlabs-pool.env: every line must be one World Labs key')
+        if key not in pool:
+            pool.append(key)
+    if pool:
+        values['WORLDLABS_API_KEYS'] = '\n'.join(pool)
+
 config = ConfigContext(token=token, gateway_host='gateway.beam.cloud', gateway_port=443)
 with ServiceClient(config=config) as client:
     listed = client.secret.list_secrets(ListSecretsRequest())
@@ -82,6 +98,8 @@ if 'BOCHA_API_KEY' in values or 'BOCHA_API_KEY' in existing:
     (root / '.beam-tools/search-enabled').write_text('1')
 else:
     print('No BOCHA server secret is configured; the companion answers without web search.')
+if 'WORLDLABS_API_KEYS' in values or 'WORLDLABS_API_KEYS' in existing:
+    (root / '.beam-tools/world-pool-enabled').write_text('1')
 if 'WORLDLABS_API_KEY' in values or 'WORLDLABS_API_KEY' in existing:
     (root / '.beam-tools/world-enabled').write_text('1')
 else:
