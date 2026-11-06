@@ -13,6 +13,7 @@ const SITE = arg('--url', 'https://pixel-reconstruction.netlify.app').replace(/\
 const API = arg('--api', process.env.BEAM_API || '').replace(/\/$/, '');
 const OUT = path.resolve(arg('--out', 'artifacts/perf/ios-shots'));
 const UDID = process.env.SIMULATOR_UDID || 'booted';
+const SKIP = arg('--skip', '').split(',').filter(Boolean); // 跳过的截图，如 landing,home,gallery
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
 async function reconstruct() {
@@ -74,8 +75,15 @@ async function main() {
     }
     report.shots.push({ name, note }); await save(); log('shot', name);
   };
-  const step = async (name, fn) => { try { await fn(); } catch (e) { report.errors.push({ step: name, message: String(e.message || e).slice(0, 300) }); await save(); log('step failed', name, e.message); } };
+  const step = async (name, fn) => { if (SKIP.includes(name)) { log('skip', name); return; } try { await fn(); } catch (e) { report.errors.push({ step: name, message: String(e.message || e).slice(0, 300) }); await save(); log('step failed', name, e.message); } };
 
+  // 先看纯黑页面的 Safari 工具栏颜色：判断橙色是网站造成的还是这个 Safari 的默认样式
+  await step('probe', async () => {
+    await session.get('data:text/html,' + encodeURIComponent('<!doctype html><meta name=viewport content="width=device-width"><body style="margin:0;background:#000;color:#fff;font:20px sans-serif;height:100vh">plain black page</body>'));
+    await sleep(2500); await shot('00-probe-black', '纯黑页面，无 theme-color');
+    await session.get('data:text/html,' + encodeURIComponent('<!doctype html><meta name=viewport content="width=device-width"><meta name=theme-color content="#000000"><body style="margin:0;background:#000;color:#fff;font:20px sans-serif;height:100vh">black + theme-color</body>'));
+    await sleep(2500); await shot('00-probe-theme', '纯黑页面 + theme-color');
+  });
   // 深色主题；作品库里放刚重建的作品
   await session.get(SITE + '/?shots=1');
   await js((job, api) => {
@@ -89,17 +97,15 @@ async function main() {
     await sleep(6000);
     await shot('01-landing', '展示页：单张照片重建的三维场景');
   });
-  await step('enter', async () => {
-    await waitFor(() => [...document.querySelectorAll('button')].some(b => b.textContent.includes('直接进入')), 60000);
+  {
+    await waitFor(() => [...document.querySelectorAll('button')].some(b => b.textContent.includes('直接进入')), 120000);
     await clickText('直接进入');
     await sleep(4000);
-    await shot('02-home', '概览页');
-  });
+    await step('home', () => shot('02-home', '概览页'));
+  }
   if (job) {
-    await step('gallery', async () => {
-      await clickText('作品库'); await sleep(4000);
-      await shot('03-gallery', '作品库');
-    });
+    await clickText('作品库'); await sleep(4000);
+    await step('gallery', () => shot('03-gallery', '作品库'));
     await step('studio', async () => {
       await js(() => { const b = [...document.querySelectorAll('button')].find(x => /卢浮宫/.test(x.getAttribute('aria-label') || x.textContent)); if (b) b.click(); });
       await sleep(1500);

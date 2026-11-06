@@ -11,12 +11,16 @@ on:
         description: 'Beam gateway (public, same as NEXT_PUBLIC_BEAM_API)'
         type: string
         default: 'https://ruhua-api-aa5d4d3-v37.app.beam.cloud'
+      skip:
+        description: 'Shots to skip (comma separated: probe,landing,home,gallery,studio,camera,world-card,enhance,assist)'
+        type: string
+        default: ''
 permissions:
   contents: read
 jobs:
   shots:
     runs-on: macos-15
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -53,8 +57,8 @@ jobs:
           done
           exit 1
       - name: Take screenshots
-        timeout-minutes: 25
-        run: node scripts/perf/ios-shots.mjs --url "${{ inputs.url }}" --api "${{ inputs.api }}"
+        timeout-minutes: 45
+        run: node scripts/perf/ios-shots.mjs --url "${{ inputs.url }}" --api "${{ inputs.api }}" --skip "${{ inputs.skip }}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
