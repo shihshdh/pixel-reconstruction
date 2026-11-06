@@ -102,6 +102,10 @@
   .credit a{display:inline-flex;align-items:center;min-height:40px;}
 }
 
+@media(pointer:coarse) and (min-width:768px),(pointer:coarse) and (max-height:500px){
+  .credit a{display:inline-flex;align-items:center;min-width:40px;min-height:40px;}
+}
+
 @keyframes rise{from{opacity:0;transform:translateY(14px)}}
 @keyframes pop{from{opacity:0;transform:translateY(8px) scale(.97)}}
 @keyframes enter{from{opacity:0;transform:translateY(6px)}}
