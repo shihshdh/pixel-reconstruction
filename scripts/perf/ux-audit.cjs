@@ -50,6 +50,7 @@ async function run(kind) {
   await context.addInitScript(PROBE, phone);
   // 巡检不唤醒线上 GPU：创作页进入时的预热请求直接拦掉
   await context.route('**/warm', route => route.abort());
+  await require('./mock-paid.cjs')(context);
   const page = await context.newPage();
   const cdp = await context.newCDPSession(page);
   await cdp.send('Network.enable');
@@ -118,7 +119,9 @@ async function run(kind) {
   return result;
 }
 
-(async () => {
+module.exports = { PROBE, summarizeFrames };
+
+if (require.main === module) (async () => {
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
   const results = [];
   for (const kind of ['desktop', 'phone']) if (!only || only === kind) { const r = await run(kind); results.push(r); console.log(JSON.stringify(r, null, 1)); }

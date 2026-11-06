@@ -42,10 +42,13 @@ function attribute(profile, windows, label) {
   console.log('-- inclusive (excluding roots) --'); console.log(top(inclusive, 25).join('\n'));
 }
 
-(async () => {
+module.exports = { attribute };
+
+if (require.main === module) (async () => {
   const browser = await chromium.launch({ channel: 'msedge', headless: false, args: ['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist'] });
   const context = await browser.newContext(phone ? { viewport: { width: 393, height: 852 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1' } : { viewport: { width: 1440, height: 900 } });
   await context.addInitScript(PROBE, phone);
+  await require('./mock-paid.cjs')(context);
   const page = await context.newPage();
   const cdp = await context.newCDPSession(page);
   await cdp.send('Profiler.enable');
@@ -62,17 +65,22 @@ function attribute(profile, windows, label) {
   // 对表：profile.endTime（μs，单调时钟）≈ 此刻；页面 performance.now() 此刻
   const nowPage = await page.evaluate(() => performance.now());
   const offset = profile.endTime / 1000 - nowPage; // profile 毫秒 = 页面毫秒 + offset
+  const profileOut = arg('--out', 'artifacts/perf/ux-profile');
+  require('node:fs').mkdirSync(profileOut, { recursive: true });
+  require('node:fs').writeFileSync(profileOut + '/load.cpuprofile', JSON.stringify(profile));
   const longs = await page.evaluate(() => window.__long.splice(0));
-  if (phase !== 'scroll') attribute(profile, longs.map(([s, d]) => [s + offset - profile.startTime / 1000 + profile.startTime / 1000, s + d + offset]), 'LOAD');
+  if (phase !== 'scroll') attribute(profile, longs.map(([s, d]) => [s + offset, s + d + offset]), 'LOAD');
 
   if (phase !== 'load') {
     await page.evaluate(() => [...document.querySelectorAll('button')].find(b => /直接进入/.test(b.textContent))?.click());
     await page.waitForTimeout(3000);
+    await page.evaluate(() => window.__long.splice(0));
     await cdp.send('Profiler.start');
     const height = await page.evaluate(() => document.documentElement.scrollHeight);
     for (let y = 0; y < height; y += 600) { await page.mouse.wheel(0, 600); await page.waitForTimeout(150); }
     await page.waitForTimeout(1500);
     ({ profile } = await cdp.send('Profiler.stop'));
+    require('node:fs').writeFileSync(profileOut + '/scroll.cpuprofile', JSON.stringify(profile));
     const now2 = await page.evaluate(() => performance.now());
     const off2 = profile.endTime / 1000 - now2;
     const longs2 = await page.evaluate(() => window.__long.splice(0));
