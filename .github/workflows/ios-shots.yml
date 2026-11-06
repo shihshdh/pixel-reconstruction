@@ -1,0 +1,63 @@
+name: iPhone screenshots
+# 答辩材料用的 iPhone 截图：iOS 模拟器 Safari 打开线上网站，逐个功能截原生屏幕。脚本见 scripts/perf/ios-shots.mjs。
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Site URL'
+        type: string
+        default: 'https://pixel-reconstruction.netlify.app'
+      api:
+        description: 'Beam gateway (public, same as NEXT_PUBLIC_BEAM_API)'
+        type: string
+        default: 'https://ruhua-api-aa5d4d3-v36.app.beam.cloud'
+permissions:
+  contents: read
+jobs:
+  shots:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install WebDriver only
+        run: npm install --no-save --package-lock=false --no-audit --no-fund selenium-webdriver@4.27.0
+      - name: Boot an iPhone (dark appearance, clean status bar)
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          xcrun simctl list devices available --json > "$RUNNER_TEMP/simulators.json"
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const devices = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/simulators.json")).devices;
+            const phones = Object.entries(devices).filter(([r]) => r.includes("iOS")).flatMap(([, l]) => l).filter(d => d.isAvailable && d.name.startsWith("iPhone"));
+            const want = ["iPhone 16 Pro", "iPhone 15 Pro", "iPhone 16", "iPhone 15"];
+            const phone = want.map(n => phones.find(d => d.name === n)).find(Boolean) || phones.find(d => !d.name.includes("SE")) || phones[0];
+            if (!phone) throw new Error("No available iPhone simulator");
+            fs.appendFileSync(process.env.GITHUB_ENV, `SIMULATOR_UDID=${phone.udid}\n`);
+            fs.writeFileSync(process.env.RUNNER_TEMP + "/simulator-udid", phone.udid);
+            console.log(JSON.stringify(phone));'
+          DEVICE=$(cat "$RUNNER_TEMP/simulator-udid")
+          xcrun simctl boot "$DEVICE" || true
+          python3 -c 'import subprocess,sys; subprocess.run(["xcrun","simctl","bootstatus",sys.argv[1],"-b"],check=True,timeout=400)' "$DEVICE"
+          xcrun simctl ui "$DEVICE" appearance dark || true
+          xcrun simctl status_bar "$DEVICE" override --time "9:41" --dataNetwork wifi --wifiMode active --wifiBars 3 --cellularMode active --cellularBars 4 --batteryState charged --batteryLevel 100 || true
+          python3 -c 'import subprocess,sys; subprocess.run(["xcrun","simctl","launch",sys.argv[1],"com.apple.mobilesafari"],check=True,timeout=60)' "$DEVICE" || true
+          sudo safaridriver --enable
+          safaridriver -p 4444 > "$RUNNER_TEMP/safaridriver.log" 2>&1 &
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:4444/status; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: Take screenshots
+        timeout-minutes: 25
+        run: node scripts/perf/ios-shots.mjs --url "${{ inputs.url }}" --api "${{ inputs.api }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iphone-shots-${{ github.run_id }}
+          path: artifacts/perf/ios-shots/
+          if-no-files-found: warn
