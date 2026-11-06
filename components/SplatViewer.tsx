@@ -12,7 +12,7 @@ import { downloadAsset, type DownloadProgress } from "@/lib/asset-download";
 import { isDesktopApp, openWorksFolder, saveWorkFile, workFolder } from "@/lib/desktop";
 import LiquidSegmented from "@/components/LiquidSegmented";
 import { renderZoom } from "@/lib/ui-scale";
-import { createFrameGovernor, isImmersive, motionPixelRatio, perfProfile, progressiveUltra, readPerfChoice, savePerfChoice, PERF_EVENT, PERF_LABELS, type PerfChoice, type PerfProfile, type PerfTier } from "@/lib/perf";
+import { createFrameGovernor, IMMERSIVE_EVENT, isImmersive, motionPixelRatio, perfProfile, progressiveUltra, readPerfChoice, savePerfChoice, PERF_EVENT, PERF_LABELS, type PerfChoice, type PerfProfile, type PerfTier } from "@/lib/perf";
 
 /**
  * SplatViewer 2.0
@@ -268,6 +268,7 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
   const baseFovRef = useRef(50);
   const previewRef = useRef<PreviewMode>({ kind: "free" });
   const recordingRef = useRef(false);
+  const resumePreviewRef = useRef<() => void>(() => {});
 
   const [ready, setReady] = useState(false);
   const [preset, setPreset] = useState<Preset | "free">("free");
@@ -511,6 +512,7 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
     let ownedViewer: any = null;
     let ownedRenderer: any = null;
     let released = false;
+    let stopVisibility = () => {};
     let rejectContext: (reason: Error) => void = () => {};
     const contextFailure = new Promise<never>((_, reject) => { rejectContext = reject; });
     // Context loss may occur after the initial load promise has already settled.
@@ -522,12 +524,16 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
       clearInterval(elapsedTimer);
       cancelAnimationFrame(raf);
       ownedViewer?.stop?.();
+      stopVisibility();
+      resumePreviewRef.current = () => {};
       setReady(false); setStalled(false); setErr(error.message);
       rejectContext(error);
     };
     const releaseViewer = () => {
       if (released) return;
       released = true;
+      stopVisibility();
+      resumePreviewRef.current = () => {};
       ownedRenderer?.domElement?.removeEventListener('webglcontextlost', contextLost);
       cancelAnimationFrame(raf);
       try { roRef.current?.disconnect?.(); } catch {}
@@ -628,8 +634,15 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
         viewerRef.current = viewer;
         ownedViewer = viewer;
         reuseStaticSplatCenters(viewer.splatMesh);
+        // 缓存 GS 每帧反复读取的布局尺寸；ResizeObserver 负责更新。
+        // 保留原来的 offset 尺寸及 CSS zoom、全屏、导出语义。
+        const renderSize = { x: mount.offsetWidth, y: mount.offsetHeight };
+        viewer.getRenderDimensions = (out: { x: number; y: number }) => {
+          out.x = renderSize.x; out.y = renderSize.y;
+        };
 
         const ro = new ResizeObserver(() => {
+          renderSize.x = mount.offsetWidth; renderSize.y = mount.offsetHeight;
           if (recordingRef.current) return; // Keep export dimensions fixed until encoding finishes.
           const w = mount.clientWidth || 960;
           const h = mount.clientHeight || 600;
@@ -806,7 +819,38 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
           }
           if (sharp) setSharp(false);
         };
-        raf = requestAnimationFrame(tick);
+        // 同时暂停相机和 GS 内部循环；可见时仍按每个 rAF 更新。
+        // 被世界层盖住、切页、滚出视口、后台标签页均暂停。
+        let onScreen = true;
+        const syncVisibility = () => {
+          if (disposed || released || recordingRef.current) return;
+          const visible = onScreen && !document.hidden && !isImmersive();
+          if (visible) {
+            if (!viewer.selfDrivenModeRunning) {
+              viewer.forceRenderNextFrame?.();
+              viewer.start();
+            }
+            if (!raf) raf = requestAnimationFrame(tick);
+          } else {
+            viewer.stop();
+            cancelAnimationFrame(raf); raf = 0; lastTick = 0;
+            governorRef.current?.tick(performance.now(), true);
+          }
+        };
+        const visibility = new IntersectionObserver(([entry]) => {
+          onScreen = entry.isIntersecting;
+          syncVisibility();
+        });
+        visibility.observe(mount);
+        document.addEventListener("visibilitychange", syncVisibility);
+        window.addEventListener(IMMERSIVE_EVENT, syncVisibility);
+        stopVisibility = () => {
+          visibility.disconnect();
+          document.removeEventListener("visibilitychange", syncVisibility);
+          window.removeEventListener(IMMERSIVE_EVENT, syncVisibility);
+        };
+        resumePreviewRef.current = syncVisibility;
+        syncVisibility();
       } catch (e: any) {
         clearInterval(elapsedTimer);
         releaseViewer();
@@ -1107,7 +1151,7 @@ export default function SplatViewer({ plyUrl, jobId, backendUrl, sceneFormat = '
         setSplat(1);
         selectPreset("free");
         if (viewer.controls) viewer.controls.enabled = true;
-        viewer.start();
+        resumePreviewRef.current();
       }
       setRecording(false);
     }

@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import LiquidSegmented from "@/components/LiquidSegmented";
 import { prefersReduced } from "@/lib/motion";
 import { perfProfile } from "@/lib/perf";
+import { decodeLineSegments } from "@/lib/line-decode";
 import styles from "./LineSculpture.module.css";
 
 const SCENES = [{ value: "louvre", label: "卢浮宫" }, { value: "yozakura", label: "夜樱" }] as const;
@@ -143,25 +144,21 @@ export default function LineSculpture({ active = true, custom, variant = "home",
         if ((moving || flight) && visible && activeRef.current) raf = requestAnimationFrame(tick);
       }
 
+      let loadGeneration = 0;
       const load = async (id: SceneId) => {
+        const generation = ++loadGeneration;
+        const cancelled = () => disposed || generation !== loadGeneration;
         setLoading(true);
         const m: Meta = custom ? custom.meta : await (await fetch(`/sculpture/${id}.json`)).json();
         const buf = custom ? custom.bin : await (await fetch(`/sculpture/${m.bin}`)).arrayBuffer();
-        if (disposed) return;
-        const S = m.strokes, P = m.points;
-        const offsets = new Uint32Array(buf, 0, S + 1);
-        const xyzAt = (S + 1) * 4 + S + ((4 - S % 4) % 4);
-        const xyz = new Int16Array(buf, xyzAt, P * 3), rgb = new Uint8Array(buf, xyzAt + P * 6, P * 3);
-        const segs = P - S, pos = new Float32Array(segs * 6), col = new Float32Array(segs * 6);
-        let o = 0;
-        for (let s = 0; s < S; s++) for (let j = offsets[s]; j + 1 < offsets[s + 1]; j++, o += 6) {
-          for (let c = 0; c < 6; c++) { pos[o + c] = xyz[j * 3 + c] * m.posScale; col[o + c] = LUT[rgb[j * 3 + c]]; }
-        }
+        if (cancelled()) return;
+        const decoded = await decodeLineSegments(buf, m.strokes, m.points, m.posScale, LUT, cancelled);
+        if (!decoded) return;
         // setPositions 会逐点算包围盒和包围球（十几万条线段，手机仿真里约 300 毫秒，滚到这里时卡一下）。
         // 坐标是 int16 × posScale，范围已知：跳过逐点计算，直接给一个保守的包围盒，视锥剔除照样正确。
         const geo = new LineSegmentsGeometry();
         geo.computeBoundingBox = () => {}; geo.computeBoundingSphere = () => {};
-        geo.setPositions(pos.subarray(0, o)).setColors(col.subarray(0, o));
+        geo.setPositions(decoded.pos).setColors(decoded.col);
         const half = 32767 * m.posScale;
         geo.boundingBox = new THREE.Box3(new THREE.Vector3(-half, -half, -half), new THREE.Vector3(half, half, half));
         geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), half * Math.sqrt(3));
@@ -173,7 +170,7 @@ export default function LineSculpture({ active = true, custom, variant = "home",
         camera.position.copy(views[0]); camera.lookAt(0, 0, 0); controls.update();
         // 线条着色器在后台编译完再画第一帧（同步编译会在滚动到这里时卡一下）
         await renderer.compileAsync(world, camera).catch(() => {});
-        if (disposed) return;
+        if (cancelled()) return;
         fit(); renderer.render(world, camera); setView("0"); setLoading(false);
       };
 
@@ -184,13 +181,13 @@ export default function LineSculpture({ active = true, custom, variant = "home",
       io.observe(stage);
       const ro = new ResizeObserver(fit); ro.observe(stage);
       apiRef.current = { fly, scatter, load };
-      await load("louvre");
-
       cleanup = () => {
         cancelAnimationFrame(raf); io.disconnect(); ro.disconnect(); controls.dispose();
         if (lines) lines.geometry.dispose(); mat.dispose(); renderer.dispose(); renderer.domElement.remove();
         apiRef.current = null;
       };
+      // 解码分片期间也能卸载：先登记清理，避免取消时留下 WebGL 上下文。
+      await load("louvre");
     }
     return () => { disposed = true; near.disconnect(); cleanup(); };
   }, [mode, custom]);
