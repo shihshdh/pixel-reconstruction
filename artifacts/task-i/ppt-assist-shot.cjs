@@ -10,7 +10,7 @@ const OUT = process.argv[3] || 'C:/Users/ys221/Desktop/pixel-promo/ppt/shots/N6-
 const Q = process.argv[4] || '导出 mp4 按钮在哪？帮我标出来';
 (async () => {
   const browser = await chromium.launch({ channel: 'msedge', headless: true, args: ['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist'] });
-  const context = await browser.newContext({ viewport: { width: 1000, height: 900 }, deviceScaleFactor: 2 });
+  const context = await browser.newContext({ viewport: { width: 1000, height: 900 }, deviceScaleFactor: 1.5 });
   await context.addInitScript(job => {
     localStorage.setItem('ruhua-theme-v2', 'dark');
     localStorage.setItem('ruhua-gallery-v1', JSON.stringify([{ ...job, title: '香港街景', date: '2026/10/22', meta: 'Beam', thumb: new URL(job.file_urls['original.jpg'], job.backend_url).href }]));
@@ -28,15 +28,19 @@ const Q = process.argv[4] || '导出 mp4 按钮在哪？帮我标出来';
   await page.waitForTimeout(2500);
   await page.evaluate(() => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '作品库' && b.getBoundingClientRect().width)?.click());
   await page.waitForTimeout(2500);
-  await page.getByRole('button', { name: /香港街景/ }).first().evaluate(el => el.click());
+  for (let i = 0; i < 3 && !(await page.getByRole('button', { name: /香港街景/ }).count()); i++) {
+    await page.evaluate(() => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '作品库' && b.getBoundingClientRect().width)?.click());
+    await page.waitForTimeout(3000);
+  }
+  await page.getByRole('button', { name: /香港街景/ }).first().evaluate(el => el.click(), null, { timeout: 60000 });
   await page.waitForTimeout(1200);
   await page.getByRole('button', { name: /打开场景/ }).first().evaluate(el => el.click()).catch(() => {});
   await page.waitForFunction(() => !!document.querySelector('[class*=viewer-mount] canvas'), null, { timeout: 60000 }).catch(() => {});
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(9000);
   // 导出卡片滚到视口中间偏下
   await page.evaluate(() => {
     const h = [...document.querySelectorAll('h2, h3, h4')].find(e => e.textContent.trim() === '导出');
-    if (h) { const r = h.getBoundingClientRect(); scrollBy(0, r.top - innerHeight * 0.32); }
+    if (h) { h.scrollIntoView({ block: 'start' }); scrollBy(0, -innerHeight * 0.3); }
   });
   await page.waitForTimeout(1500);
   const chip = page.locator('[aria-label="和大肥鱼聊天"], [aria-label="展开大肥鱼并聊天"]').first();
